@@ -11,10 +11,15 @@ import {
   EdgelessCRUDIdentifier,
   getSurfaceComponent,
 } from '@blocksuite/affine-block-surface';
+import {
+  ConnectorPathGenerator,
+  pointToSegmentDistance,
+} from '@blocksuite/affine-gfx-connector';
 import { createGroupFromSelectedCommand } from '@blocksuite/affine-gfx-group';
 import {
   AttachmentBlockModel,
   BookmarkBlockModel,
+  ConnectorElementModel,
   EmbedLinkedDocBlockSchema,
   EmbedLinkedDocModel,
   EmbedSyncedDocBlockSchema,
@@ -22,7 +27,6 @@ import {
   FrameBlockModel,
   ImageBlockModel,
   isExternalEmbedModel,
-  MindmapElementModel,
   NoteBlockModel,
   ParagraphBlockModel,
 } from '@blocksuite/affine-model';
@@ -34,19 +38,27 @@ import {
   matchModels,
   type ReorderingType,
 } from '@blocksuite/affine-shared/utils';
-import { Bound, getCommonBoundWithRotation } from '@blocksuite/global/gfx';
+import type { IVec } from '@blocksuite/global/gfx';
+import {
+  Bound,
+  getCommonBoundWithRotation,
+  PointLocation,
+} from '@blocksuite/global/gfx';
 import {
   ArrowDownBigBottomIcon,
   ArrowDownBigIcon,
   ArrowUpBigIcon,
   ArrowUpBigTopIcon,
+  BanIcon,
   CopyIcon,
   DeleteIcon,
   DuplicateIcon,
   FrameIcon,
   GroupIcon,
   LinkedPageIcon,
+  PlusIcon,
   ResetIcon,
+  SettingsIcon,
 } from '@blocksuite/icons/lit';
 import type { BlockComponent } from '@blocksuite/std';
 import { GfxBlockElementModel, type GfxModel } from '@blocksuite/std/gfx';
@@ -56,6 +68,7 @@ import { duplicate } from '../../utils/clipboard-utils';
 import { getSortedCloneElements } from '../../utils/clone-utils';
 import { moveConnectors } from '../../utils/connector';
 import { deleteElements } from '../../utils/crud';
+import { PropertiesModal } from './properties-modal';
 import {
   createLinkedDocFromEdgelessElements,
   createLinkedDocFromNote,
@@ -371,6 +384,210 @@ export const moreActions = [
     ],
   },
 
+  // Connector Waypoints Group
+  {
+    id: 'd.waypoints',
+    actions: [
+      {
+        id: 'a.add-waypoint',
+        label: 'Add waypoint',
+        icon: PlusIcon(),
+        when(ctx) {
+          const models = ctx.getSurfaceModels();
+          if (models.length !== 1) return false;
+          return ctx.matchModel(models[0], ConnectorElementModel);
+        },
+        run(ctx) {
+          const models = ctx.getSurfaceModels();
+          if (models.length !== 1) return;
+
+          const model = models[0];
+          if (!ctx.matchModel(model, ConnectorElementModel)) return;
+
+          const connector = model as ConnectorElementModel;
+          const { viewport } = ctx.gfx;
+
+          const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+              cleanup();
+            }
+          };
+
+          const onPointerDown = (e: PointerEvent) => {
+            cleanup();
+
+            const path = connector.absolutePath;
+            if (!path || path.length < 2) return;
+
+            const [x, y] = viewport.toModelCoordFromClientCoord([e.x, e.y]);
+
+            let minDist = Infinity;
+            let segmentIndex = -1;
+            for (let i = 0; i < path.length - 1; i++) {
+              const p0 = path[i];
+              const p1 = path[i + 1];
+              const dist = pointToSegmentDistance(
+                x,
+                y,
+                p0[0],
+                p0[1],
+                p1[0],
+                p1[1]
+              );
+              if (dist < minDist) {
+                minDist = dist;
+                segmentIndex = i;
+              }
+            }
+
+            if (segmentIndex < 0 || minDist > 8) return;
+
+            const start = path[segmentIndex];
+            const end = path[segmentIndex + 1];
+            const midpoint: IVec = [
+              (start[0] + end[0]) / 2,
+              (start[1] + end[1]) / 2,
+            ];
+
+            const newPath = path.map(p => new PointLocation([p[0], p[1]]));
+            // Insert a duplicate midpoint to create a zero-length perpendicular
+            // segment that becomes draggable once expanded.
+            newPath.splice(
+              segmentIndex + 1,
+              0,
+              new PointLocation(midpoint),
+              new PointLocation(midpoint)
+            );
+
+            const waypoints = newPath
+              .slice(1, -1)
+              .map(p => [p[0], p[1]] as IVec);
+
+            ctx.store.transact(() => {
+              ctx.store.captureSync();
+              connector.waypoints =
+                waypoints.length > 0 ? waypoints : undefined;
+            });
+
+            ConnectorPathGenerator.updatePath(
+              connector,
+              null,
+              id =>
+                ctx.gfx.surface?.getElementById(id) ??
+                (ctx.std.store.getModelById(id) as GfxModel | null)
+            );
+
+            ctx.gfx.selection.set({ elements: [], editing: false });
+            queueMicrotask(() => {
+              ctx.gfx.selection.set({
+                elements: [connector.id],
+                editing: false,
+              });
+            });
+          };
+
+          const cleanup = () => {
+            document.removeEventListener('pointerdown', onPointerDown, true);
+            document.removeEventListener('keydown', onKeyDown, true);
+          };
+
+          document.addEventListener('pointerdown', onPointerDown, true);
+          document.addEventListener('keydown', onKeyDown, true);
+        },
+      },
+      {
+        id: 'a.clear-waypoints',
+        label: 'Clear waypoints',
+        icon: BanIcon(),
+        when(ctx) {
+          const models = ctx.getSurfaceModels();
+          if (models.length !== 1) return false;
+          return ctx.matchModel(models[0], ConnectorElementModel);
+        },
+        run(ctx) {
+          const models = ctx.getSurfaceModels();
+          if (models.length !== 1) return;
+
+          const model = models[0];
+          if (!ctx.matchModel(model, ConnectorElementModel)) return;
+
+          ctx.store.transact(() => {
+            ctx.store.captureSync();
+            (model as ConnectorElementModel).waypoints = undefined;
+          });
+          ConnectorPathGenerator.updatePath(
+            model as ConnectorElementModel,
+            null,
+            id =>
+              ctx.gfx.surface?.getElementById(id) ??
+              (ctx.std.store.getModelById(id) as GfxModel | null)
+          );
+          ctx.gfx.selection.set({ elements: [], editing: false });
+          queueMicrotask(() => {
+            ctx.gfx.selection.set({
+              elements: [model.id],
+              editing: false,
+            });
+          });
+        },
+      },
+    ],
+  },
+
+  // Properties Group
+  {
+    id: 'd.z.properties',
+    label: 'Properties',
+    icon: SettingsIcon(),
+    when(ctx) {
+      const models = ctx.getSurfaceModels();
+      // Only show for single selection of shapes or connectors
+      return models.length === 1;
+    },
+    run(ctx) {
+      const models = ctx.getSurfaceModels();
+      if (models.length !== 1) return;
+
+      const model = models[0];
+
+      // Try multiple selectors to find the toolbar element
+      const toolbarElement =
+        document.querySelector('editor-toolbar') ||
+        document.querySelector('affine-toolbar-widget') ||
+        document.querySelector('[aria-label="More menu"]') ||
+        document.querySelector('editor-menu-button');
+
+      let referenceElement: Element;
+      // If still no element, use a virtual reference at the center of viewport
+      if (!toolbarElement) {
+        const virtualElement = {
+          getBoundingClientRect: () => ({
+            x: window.innerWidth / 2,
+            y: 100,
+            width: 0,
+            height: 0,
+            top: 100,
+            left: window.innerWidth / 2,
+            right: window.innerWidth / 2,
+            bottom: 100,
+          }),
+        };
+        referenceElement = virtualElement as Element;
+      } else {
+        referenceElement = toolbarElement as Element;
+      }
+
+      // Create and show the properties modal
+      const modal = new PropertiesModal();
+      modal.host = ctx.host;
+      modal.model = model;
+      modal.referenceElement = referenceElement;
+      modal.abortController = new AbortController();
+
+      document.body.appendChild(modal);
+    },
+  },
+
   // Deleting Group
   {
     id: 'e.delete',
@@ -402,17 +619,7 @@ function reorderElements(
 ) {
   if (!models.length) return;
 
-  const normalizedModels = Array.from(
-    new Map(
-      models.map(model => {
-        const reorderTarget =
-          model.group instanceof MindmapElementModel ? model.group : model;
-        return [reorderTarget.id, reorderTarget];
-      })
-    ).values()
-  );
-
-  for (const model of normalizedModels) {
+  for (const model of models) {
     const index = ctx.gfx.layer.getReorderedIndex(model, type);
 
     // block should be updated in transaction

@@ -60,14 +60,86 @@ export const ConnectorEndpointLocations: IVec[] = [
 ];
 
 export const ConnectorEndpointLocationsOnTriangle: IVec[] = [
-  // At top
+  // At top (apex)
   [0.5, 0],
-  // At right
+  // At right side
   [0.75, 0.5],
-  // At bottom
+  // At bottom: left quarter, center, right quarter
+  [0.25, 1],
   [0.5, 1],
-  // At left
+  [0.75, 1],
+  // At left side
   [0.25, 0.5],
+];
+
+// Extended connection points for rectangle (16 points total)
+export const ConnectorEndpointLocationsOnRectangle: IVec[] = [
+  // Top edge: left quarter, center, right quarter
+  [0.25, 0],
+  [0.5, 0],
+  [0.75, 0],
+  // Top-right corner
+  [1, 0],
+  // Right edge: top quarter, center, bottom quarter
+  [1, 0.25],
+  [1, 0.5],
+  [1, 0.75],
+  // Bottom-right corner
+  [1, 1],
+  // Bottom edge: right quarter, center, left quarter
+  [0.75, 1],
+  [0.5, 1],
+  [0.25, 1],
+  // Bottom-left corner
+  [0, 1],
+  // Left edge: bottom quarter, center, top quarter
+  [0, 0.75],
+  [0, 0.5],
+  [0, 0.25],
+  // Top-left corner
+  [0, 0],
+];
+
+// Extended connection points for diamond (8 points total)
+export const ConnectorEndpointLocationsOnDiamond: IVec[] = [
+  // Top
+  [0.5, 0],
+  // Top-right (halfway between top and right)
+  [0.75, 0.25],
+  // Right
+  [1, 0.5],
+  // Bottom-right (halfway between right and bottom)
+  [0.75, 0.75],
+  // Bottom
+  [0.5, 1],
+  // Bottom-left (halfway between bottom and left)
+  [0.25, 0.75],
+  // Left
+  [0, 0.5],
+  // Top-left (halfway between left and top)
+  [0.25, 0.25],
+];
+
+// Extended connection points for ellipse (8 points total)
+// Points calculated using trigonometry to sit on the actual ellipse curve
+// Formula: x = 0.5 + 0.5 * cos(angle), y = 0.5 + 0.5 * sin(angle)
+export const ConnectorEndpointLocationsOnEllipse: IVec[] = [
+  // Top (270°)
+  [0.5, 0],
+  // Top-right (315°)
+  [0.8536, 0.1464],
+  // Right (0°)
+  [1, 0.5],
+  // Bottom-right (45°)
+  [0.8536, 0.8536],
+  // Bottom (90°)
+  [0.5, 1],
+  // Bottom-left (135°)
+  [0.1464, 0.8536],
+  // Left (180°)
+  [0, 0.5],
+  // Top-left (225°)
+  [0.1464, 0.1464],
 ];
 
 export function isConnectorWithLabel(model: GfxModel | GfxLocalElementModel) {
@@ -130,31 +202,70 @@ export function isConnectorAndBindingsAllSelected(
   return false;
 }
 
+/**
+ * Get connection point locations for a given element based on its shape type
+ */
+export function getConnectionLocationsForElement(ele: GfxModel): IVec[] {
+  // Check if element is a ShapeElementModel and get shape-specific locations
+  if ('shapeType' in ele) {
+    const shapeType = (ele as any).shapeType;
+    switch (shapeType) {
+      case 'rect':
+        return ConnectorEndpointLocationsOnRectangle;
+      case 'triangle':
+        return ConnectorEndpointLocationsOnTriangle;
+      case 'diamond':
+        return ConnectorEndpointLocationsOnDiamond;
+      case 'ellipse':
+        return ConnectorEndpointLocationsOnEllipse;
+      default:
+        return ConnectorEndpointLocations;
+    }
+  }
+  return ConnectorEndpointLocations;
+}
+
 export function getAnchors(ele: GfxModel) {
   const bound = Bound.deserialize(ele.xywh);
-  const offset = 10;
   const anchors: { point: PointLocation; coord: IVec }[] = [];
   const rotate = ele.rotate;
+  const locations = getConnectionLocationsForElement(ele);
 
-  (
-    [
-      [bound.center[0], bound.y - offset],
-      [bound.center[0], bound.maxY + offset],
-      [bound.x - offset, bound.center[1]],
-      [bound.maxX + offset, bound.center[1]],
-    ] satisfies IVec[]
-  )
-    .map(vec => getPointFromBoundsWithRotation({ ...bound, rotate }, vec))
-    .forEach(vec => {
-      const rst = ele.getLineIntersections(bound.center, vec);
-      if (!rst) return;
+  // For each connection location (relative coordinates), calculate the actual point
+  locations.forEach(location => {
+    // Convert relative location to absolute position
+    const absPoint: IVec = [
+      bound.x + location[0] * bound.w,
+      bound.y + location[1] * bound.h,
+    ];
 
-      const originPoint = getPointFromBoundsWithRotation(
-        { ...bound, rotate: -rotate },
-        rst[0]
-      );
-      anchors.push({ point: rst[0], coord: bound.toRelative(originPoint) });
+    // Apply rotation if needed
+    const rotatedPoint = getPointFromBoundsWithRotation(
+      { ...bound, rotate },
+      absPoint
+    );
+
+    // Get the intersection point with the shape's edge
+    const rst = ele.getLineIntersections(bound.center, rotatedPoint);
+    if (!rst) {
+      // If no intersection, use the calculated point directly
+      anchors.push({
+        point: PointLocation.fromVec(rotatedPoint),
+        coord: location,
+      });
+      return;
+    }
+
+    const originPoint = getPointFromBoundsWithRotation(
+      { ...bound, rotate: -rotate },
+      rst[0]
+    );
+    anchors.push({
+      point: PointLocation.fromVec(rst[0]),
+      coord: bound.toRelative(originPoint),
     });
+  });
+
   return anchors;
 }
 
@@ -884,7 +995,7 @@ export class ConnectionOverlay extends Overlay {
   private _setupThemeListener(): void {
     const themeService = this.gfx.std.get(ThemeProvider);
     this._themeDisposer = effect(() => {
-      void themeService.theme$.value;
+      themeService.theme$;
       this._emphasisColor = this._getEmphasisColor();
     });
   }
@@ -912,7 +1023,7 @@ export class ConnectionOverlay extends Overlay {
     const zoom = this.gfx.viewport.zoom;
     const radius = 5 / zoom;
     const color = this._emphasisColor;
-    ctx.globalAlpha = 0.6;
+    ctx.globalAlpha = 0.3; // Reduced from 0.6 to make lighter
     let lineWidth = 1 / zoom;
     if (this.sourceBounds) {
       renderRect(ctx, this.sourceBounds, color, lineWidth);
@@ -921,13 +1032,13 @@ export class ConnectionOverlay extends Overlay {
       renderRect(ctx, this.targetBounds, color, lineWidth);
     }
 
-    lineWidth = 2 / zoom;
+    // Keep lineWidth at 1px instead of 2px for thinner strokes
     this.points.forEach(p => {
       ctx.beginPath();
       ctx.arc(p[0], p[1], radius, 0, PI2);
       ctx.fillStyle = 'white';
       ctx.strokeStyle = color;
-      ctx.lineWidth = lineWidth;
+      ctx.lineWidth = lineWidth; // Now using 1/zoom instead of 2/zoom
       ctx.fill();
       ctx.stroke();
       ctx.closePath();
@@ -939,7 +1050,7 @@ export class ConnectionOverlay extends Overlay {
       ctx.arc(this.highlightPoint[0], this.highlightPoint[1], radius, 0, PI2);
       ctx.fillStyle = color;
       ctx.strokeStyle = color;
-      ctx.lineWidth = lineWidth;
+      ctx.lineWidth = 1 / zoom; // Use 1px stroke for consistency
       ctx.fill();
       ctx.stroke();
       ctx.closePath();
@@ -1285,6 +1396,22 @@ export class ConnectorPathGenerator extends PathGenerator {
       const endBound = end
         ? Bound.from(getBoundWithRotation(rBound(end)))
         : null;
+
+      // Check for user-defined waypoints (only on ConnectorElementModel, not Local)
+      const waypoints =
+        'waypoints' in connector ? connector.waypoints : undefined;
+
+      if (waypoints && waypoints.length > 0) {
+        // Route through waypoints
+        return this._generatePathThroughWaypoints(
+          startPoint,
+          endPoint,
+          startBound,
+          endBound,
+          waypoints
+        );
+      }
+
       const path = this.generateOrthogonalConnectorPath({
         startPoint,
         endPoint,
@@ -1296,6 +1423,123 @@ export class ConnectorPathGenerator extends PathGenerator {
       return this._generateCurveConnectorPath(connector);
     }
     throw new Error('unknown connector mode');
+  }
+
+  /**
+   * Generate a path that routes through user-defined waypoints.
+   * Waypoints are intermediate turn points that the connector must pass through.
+   */
+  private _generatePathThroughWaypoints(
+    startPoint: PointLocation,
+    endPoint: PointLocation,
+    _startBound: Bound | null,
+    _endBound: Bound | null,
+    waypoints: IVec[]
+  ): PointLocation[] {
+    const [, , nextStartPoint, lastEndPoint] =
+      this._prepareOrthogonalConnectorInfo({
+        startPoint,
+        endPoint,
+        startBound: _startBound,
+        endBound: _endBound,
+      });
+
+    const pointsEqual = (a: IVec | PointLocation, b: IVec | PointLocation) =>
+      Math.abs(a[0] - b[0]) < 0.001 && Math.abs(a[1] - b[1]) < 0.001;
+
+    // Build path by connecting: start -> tail anchor -> wp1 -> ... -> tail anchor -> end
+    // Waypoints represent intermediate turn points; tail anchors preserve orientation.
+
+    const fullPath: PointLocation[] = [startPoint];
+
+    // For orthogonal connectors, waypoints define the turn points.
+    // We build a path through them while keeping tail anchors perpendicular.
+
+    const startAnchor = new PointLocation(nextStartPoint);
+    if (!pointsEqual(startPoint, nextStartPoint)) {
+      fullPath.push(startAnchor);
+    }
+
+    let currentPoint = startAnchor;
+
+    // Small tolerance to avoid creating micro-segments from tiny float drift.
+    const axisEpsilon = 0.5;
+
+    waypoints.forEach((wp, index) => {
+      // Create orthogonal path from current point to waypoint
+      // We need to determine if we should go horizontal-then-vertical
+      // or vertical-then-horizontal based on the direction
+
+      const dx = wp[0] - currentPoint[0];
+      const dy = wp[1] - currentPoint[1];
+
+      const prevWaypoint = index > 0 ? waypoints[index - 1] : null;
+      const isDuplicateWaypoint =
+        prevWaypoint &&
+        Math.abs(prevWaypoint[0] - wp[0]) <= axisEpsilon &&
+        Math.abs(prevWaypoint[1] - wp[1]) <= axisEpsilon;
+
+      // For the first segment from start, prefer to exit based on start bound
+      // For subsequent segments, alternate based on previous direction
+
+      // Preserve explicit duplicate waypoints to create a zero-length segment.
+      if (
+        isDuplicateWaypoint &&
+        Math.abs(dx) <= axisEpsilon &&
+        Math.abs(dy) <= axisEpsilon
+      ) {
+        fullPath.push(new PointLocation([currentPoint[0], currentPoint[1]]));
+        return;
+      }
+
+      // If both axes move beyond tolerance, add an elbow.
+      if (Math.abs(dx) > axisEpsilon && Math.abs(dy) > axisEpsilon) {
+        // Need a turn - add intermediate point
+        // Go horizontal first, then vertical
+        const intermediate = new PointLocation([wp[0], currentPoint[1]]);
+        fullPath.push(intermediate);
+      }
+
+      // Snap near-aligned points to avoid tiny segments.
+      const snappedWp: IVec = [
+        Math.abs(dx) <= axisEpsilon ? currentPoint[0] : wp[0],
+        Math.abs(dy) <= axisEpsilon ? currentPoint[1] : wp[1],
+      ];
+      // If snapping collapses the point, skip it.
+      if (
+        Math.abs(snappedWp[0] - currentPoint[0]) <= axisEpsilon &&
+        Math.abs(snappedWp[1] - currentPoint[1]) <= axisEpsilon
+      ) {
+        return;
+      }
+
+      const wpPoint = new PointLocation(snappedWp);
+      fullPath.push(wpPoint);
+      currentPoint = wpPoint;
+    });
+
+    // Final segment: last waypoint (or start anchor) to end anchor/end
+    const endAnchor = new PointLocation(lastEndPoint);
+    const lastPoint = fullPath[fullPath.length - 1];
+    const dx = endAnchor[0] - lastPoint[0];
+    const dy = endAnchor[1] - lastPoint[1];
+
+    if (Math.abs(dx) > axisEpsilon && Math.abs(dy) > axisEpsilon) {
+      // Need a turn to reach end - add intermediate point
+      // Go horizontal first to align X, then vertical
+      const intermediate = new PointLocation([endAnchor[0], lastPoint[1]]);
+      fullPath.push(intermediate);
+    }
+
+    if (!pointsEqual(lastPoint, endAnchor)) {
+      fullPath.push(endAnchor);
+    }
+
+    if (!pointsEqual(endAnchor, endPoint)) {
+      fullPath.push(endPoint);
+    }
+
+    return fullPath;
   }
 
   private _generateCurveConnectorPath(
