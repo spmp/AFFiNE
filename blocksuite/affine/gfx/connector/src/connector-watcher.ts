@@ -53,6 +53,7 @@ export const connectorWatcher: SurfaceMiddleware = (
 
   const pendingList = new Set<ConnectorElementModel>();
   let pendingFlag = false;
+
   const addToUpdateList = (connector: ConnectorElementModel) => {
     pendingList.add(connector);
 
@@ -60,7 +61,9 @@ export const connectorWatcher: SurfaceMiddleware = (
       pendingFlag = true;
       queueMicrotask(() => {
         // First update all connector paths
-        pendingList.forEach(updateConnectorPath);
+        pendingList.forEach(c => {
+          updateConnectorPath(c);
+        });
 
         // Then calculate jumps for connectors that need them
         updateJumpsForConnectors(pendingList);
@@ -80,20 +83,24 @@ export const connectorWatcher: SurfaceMiddleware = (
       if ('type' in element && element.type === 'connector') {
         addToUpdateList(element as ConnectorElementModel);
       } else {
-        surface.getConnectors(id).forEach(addToUpdateList);
+        surface.getConnectors(id).forEach(c => addToUpdateList(c));
       }
     }),
     surface.elementUpdated.subscribe(({ id, props }) => {
       const element = elementGetter(id);
 
       if (props['xywh'] || props['rotate']) {
-        surface.getConnectors(id).forEach(addToUpdateList);
+        surface.getConnectors(id).forEach(c => addToUpdateList(c));
       }
 
       if (
         'type' in element &&
         element.type === 'connector' &&
-        (props['mode'] !== undefined || props['target'] || props['source'])
+        (props['mode'] !== undefined ||
+          props['target'] ||
+          props['source'] ||
+          props['waypoints'] !== undefined ||
+          props['jumpStyle'] !== undefined)
       ) {
         addToUpdateList(element as ConnectorElementModel);
       }
@@ -103,20 +110,18 @@ export const connectorWatcher: SurfaceMiddleware = (
         payload.type === 'add' ||
         (payload.type === 'update' && payload.props.key === 'xywh')
       ) {
-        surface.getConnectors(payload.id).forEach(addToUpdateList);
+        surface.getConnectors(payload.id).forEach(c => addToUpdateList(c));
       }
     }),
   ];
 
-  surface
-    .getElementsByType('connector')
-    .forEach(connector =>
-      updateConnectorPath(connector as ConnectorElementModel)
-    );
+  const initialConnectors = surface.getElementsByType(
+    'connector'
+  ) as ConnectorElementModel[];
+  initialConnectors.forEach(connector => updateConnectorPath(connector));
+  updateJumpsForConnectors(new Set(initialConnectors));
 
   return () => {
-    pendingFlag = false;
-    pendingList.clear();
     disposables.forEach(d => d.unsubscribe());
   };
 };

@@ -13,10 +13,7 @@ import {
 import { PointLocation, SVGPathBuilder } from '@blocksuite/global/gfx';
 
 import { isConnectorWithLabel } from '../connector-manager';
-import { type RoutedPoint, updateConnectorJumps } from '../jump-calculator';
-import { DEFAULT_ARROW_SIZE } from './utils';
-
-const SVG_NS = 'http://www.w3.org/2000/svg';
+import { createConnectorPathWithJumps, DEFAULT_ARROW_SIZE } from './utils';
 
 interface PathBounds {
   minX: number;
@@ -24,15 +21,6 @@ interface PathBounds {
   maxX: number;
   maxY: number;
 }
-
-type RetainedConnectorDom = {
-  defs: SVGDefsElement;
-  label: HTMLDivElement | null;
-  path: SVGPathElement;
-  svg: SVGSVGElement;
-};
-
-const retainedConnectorDom = new WeakMap<HTMLElement, RetainedConnectorDom>();
 
 function calculatePathBounds(path: PointLocation[]): PathBounds {
   if (path.length === 0) {
@@ -87,110 +75,7 @@ function createConnectorPath(
   return pathBuilder.build();
 }
 
-/**
- * Create a connector path with jump rendering at intersection points.
- * Based on draw.io's jump rendering (Graph.js:9161-9292).
- */
-function createConnectorPathWithJumps(
-  routedPoints: RoutedPoint[],
-  jumpStyle: JumpStyle,
-  jumpSize: number,
-  strokeWidth: number
-): string {
-  if (routedPoints.length < 2) return '';
-
-  const pathBuilder = new SVGPathBuilder();
-  const size = (jumpSize - 2) / 2 + strokeWidth;
-  let moveTo = true;
-
-  for (let i = 0; i < routedPoints.length - 1; i++) {
-    const current = routedPoints[i];
-    const next = routedPoints[i + 1];
-
-    if (i === 0 || moveTo) {
-      pathBuilder.moveTo(current.x, current.y);
-      moveTo = false;
-    }
-
-    // Type 1 means jump point (intersection)
-    if (next.type === 1) {
-      // Calculate direction vector and perpendicular offset
-      const dx = next.x - current.x;
-      const dy = next.y - current.y;
-      const len = Math.hypot(dx, dy);
-
-      if (len > 0) {
-        const nx = (dx / len) * size;
-        const ny = (dy / len) * size;
-
-        const p0x = next.x - nx;
-        const p0y = next.y - ny;
-        const p1x = next.x + nx;
-        const p1y = next.y + ny;
-
-        // Determine flip factor for jump direction
-        const f =
-          Math.round(nx) < 0 || (Math.round(nx) === 0 && Math.round(ny) <= 0)
-            ? 1
-            : -1;
-
-        // Render based on jump style
-        switch (jumpStyle) {
-          case 'sharp':
-            // Sharp angle perpendicular to line
-            pathBuilder.lineTo(p0x, p0y);
-            pathBuilder.lineTo(p0x - ny * f, p0y + nx * f);
-            pathBuilder.lineTo(p1x - ny * f, p1y + nx * f);
-            pathBuilder.lineTo(p1x, p1y);
-            break;
-
-          case 'arc': {
-            // Curved arc over intersection
-            const arcF = f * 1.3;
-            pathBuilder.lineTo(p0x, p0y);
-            pathBuilder.curveTo(
-              p0x - ny * arcF,
-              p0y + nx * arcF,
-              p1x - ny * arcF,
-              p1y + nx * arcF,
-              p1x,
-              p1y
-            );
-            break;
-          }
-
-          case 'line':
-            // Crossing lines (X shape)
-            pathBuilder.lineTo(p0x, p0y);
-            pathBuilder.moveTo(p0x + ny * f, p0y - nx * f);
-            pathBuilder.lineTo(p0x - ny * f, p0y + nx * f);
-            pathBuilder.moveTo(p1x - ny * f, p1y + nx * f);
-            pathBuilder.lineTo(p1x + ny * f, p1y - nx * f);
-            pathBuilder.moveTo(p1x, p1y);
-            moveTo = true;
-            break;
-
-          case 'gap':
-            // Gap - just move without drawing
-            pathBuilder.lineTo(p0x, p0y);
-            pathBuilder.moveTo(p1x, p1y);
-            moveTo = true;
-            break;
-
-          default:
-            // 'none' - straight through
-            pathBuilder.lineTo(next.x, next.y);
-            break;
-        }
-      }
-    } else {
-      // Normal waypoint - just draw line
-      pathBuilder.lineTo(next.x, next.y);
-    }
-  }
-
-  return pathBuilder.build();
-}
+// createConnectorPathWithJumps is shared in renderer/utils
 
 function createArrowMarker(
   id: string,
@@ -199,7 +84,10 @@ function createArrowMarker(
   strokeWidth: number,
   isStart: boolean = false
 ): SVGMarkerElement {
-  const marker = document.createElementNS(SVG_NS, 'marker');
+  const marker = document.createElementNS(
+    'http://www.w3.org/2000/svg',
+    'marker'
+  );
   const size = DEFAULT_ARROW_SIZE * (strokeWidth / 2);
 
   marker.id = id;
@@ -213,7 +101,10 @@ function createArrowMarker(
 
   switch (style) {
     case 'Arrow': {
-      const path = document.createElementNS(SVG_NS, 'path');
+      const path = document.createElementNS(
+        'http://www.w3.org/2000/svg',
+        'path'
+      );
       path.setAttribute(
         'd',
         isStart ? 'M 20 5 L 10 10 L 20 15 Z' : 'M 0 5 L 10 10 L 0 15 Z'
@@ -224,7 +115,10 @@ function createArrowMarker(
       break;
     }
     case 'Triangle': {
-      const path = document.createElementNS(SVG_NS, 'path');
+      const path = document.createElementNS(
+        'http://www.w3.org/2000/svg',
+        'path'
+      );
       path.setAttribute(
         'd',
         isStart ? 'M 20 7 L 12 10 L 20 13 Z' : 'M 0 7 L 8 10 L 0 13 Z'
@@ -235,7 +129,10 @@ function createArrowMarker(
       break;
     }
     case 'Circle': {
-      const circle = document.createElementNS(SVG_NS, 'circle');
+      const circle = document.createElementNS(
+        'http://www.w3.org/2000/svg',
+        'circle'
+      );
       circle.setAttribute('cx', '10');
       circle.setAttribute('cy', '10');
       circle.setAttribute('r', '4');
@@ -245,7 +142,10 @@ function createArrowMarker(
       break;
     }
     case 'Diamond': {
-      const path = document.createElementNS(SVG_NS, 'path');
+      const path = document.createElementNS(
+        'http://www.w3.org/2000/svg',
+        'path'
+      );
       path.setAttribute('d', 'M 10 6 L 14 10 L 10 14 L 6 10 Z');
       path.setAttribute('fill', color);
       path.setAttribute('stroke', color);
@@ -257,64 +157,13 @@ function createArrowMarker(
   return marker;
 }
 
-function clearRetainedConnectorDom(element: HTMLElement) {
-  retainedConnectorDom.delete(element);
-  element.replaceChildren();
-}
-
-function getRetainedConnectorDom(element: HTMLElement): RetainedConnectorDom {
-  const existing = retainedConnectorDom.get(element);
-
-  if (existing) {
-    return existing;
-  }
-
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.style.position = 'absolute';
-  svg.style.overflow = 'visible';
-  svg.style.pointerEvents = 'none';
-
-  const defs = document.createElementNS(SVG_NS, 'defs');
-  const path = document.createElementNS(SVG_NS, 'path');
-  path.setAttribute('fill', 'none');
-  path.setAttribute('stroke-linecap', 'round');
-  path.setAttribute('stroke-linejoin', 'round');
-
-  svg.append(defs, path);
-  element.replaceChildren(svg);
-
-  const retained = {
-    svg,
-    defs,
-    path,
-    label: null,
-  };
-  retainedConnectorDom.set(element, retained);
-
-  return retained;
-}
-
-function getOrCreateLabelElement(retained: RetainedConnectorDom) {
-  if (retained.label) {
-    return retained.label;
-  }
-
-  const label = document.createElement('div');
-  retained.svg.insertAdjacentElement('afterend', label);
-  retained.label = label;
-
-  return label;
-}
-
 function renderConnectorLabel(
   model: ConnectorElementModel,
-  retained: RetainedConnectorDom,
+  container: HTMLElement,
   renderer: DomRenderer,
   zoom: number
 ) {
   if (!isConnectorWithLabel(model) || !model.labelXYWH) {
-    retained.label?.remove();
-    retained.label = null;
     return;
   }
 
@@ -330,7 +179,8 @@ function renderConnectorLabel(
     },
   } = model;
 
-  const labelElement = getOrCreateLabelElement(retained);
+  // Create label element
+  const labelElement = document.createElement('div');
   labelElement.style.position = 'absolute';
   labelElement.style.left = `${lx * zoom}px`;
   labelElement.style.top = `${ly * zoom}px`;
@@ -363,7 +213,11 @@ function renderConnectorLabel(
   labelElement.style.wordWrap = 'break-word';
 
   // Add text content
-  labelElement.textContent = model.text ? model.text.toString() : '';
+  if (model.text) {
+    labelElement.textContent = model.text.toString();
+  }
+
+  container.append(labelElement);
 }
 
 /**
@@ -388,16 +242,20 @@ export const connectorBaseDomRenderer = (
     rearEndpointStyle,
     strokeWidth,
     stroke,
-    jumpStyle = 'none',
-    jumpSize = 10,
   } = model;
+  // jumpStyle and jumpSize only exist on ConnectorElementModel, not LocalConnectorElementModel
+  const jumpStyle: JumpStyle =
+    'jumpStyle' in model ? (model.jumpStyle as JumpStyle) : 'none';
+  const jumpSize: number =
+    'jumpSize' in model ? (model.jumpSize as number) : 10;
 
+  // Clear previous content
+  element.innerHTML = '';
+
+  // Early return if no path points
   if (!points || points.length < 2) {
-    clearRetainedConnectorDom(element);
     return;
   }
-
-  const retained = getRetainedConnectorDom(element);
 
   // Calculate bounds for the SVG viewBox
   const pathBounds = calculatePathBounds(points);
@@ -407,7 +265,8 @@ export const connectorBaseDomRenderer = (
   const offsetX = pathBounds.minX - padding;
   const offsetY = pathBounds.minY - padding;
 
-  const { defs, path, svg } = retained;
+  // Create SVG element
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.style.position = 'absolute';
   svg.style.left = `${offsetX * zoom}px`;
   svg.style.top = `${offsetY * zoom}px`;
@@ -417,43 +276,49 @@ export const connectorBaseDomRenderer = (
   svg.style.pointerEvents = 'none';
   svg.setAttribute('viewBox', `0 0 ${svgWidth / zoom} ${svgHeight / zoom}`);
 
+  // Create defs for markers
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+  svg.append(defs);
+
   const strokeColor = renderer.getColorValue(
     stroke,
     DefaultTheme.connectorColor,
     true
   );
 
-  const markers: SVGMarkerElement[] = [];
+  // Create markers for endpoints
   let startMarkerId = '';
   let endMarkerId = '';
 
   if (frontEndpointStyle !== 'None') {
     startMarkerId = `start-marker-${model.id}`;
-    markers.push(
-      createArrowMarker(
-        startMarkerId,
-        frontEndpointStyle,
-        strokeColor,
-        strokeWidth,
-        true
-      )
+    const startMarker = createArrowMarker(
+      startMarkerId,
+      frontEndpointStyle,
+      strokeColor,
+      strokeWidth,
+      true
     );
+    defs.append(startMarker);
   }
 
   if (rearEndpointStyle !== 'None') {
     endMarkerId = `end-marker-${model.id}`;
-    markers.push(
-      createArrowMarker(
-        endMarkerId,
-        rearEndpointStyle,
-        strokeColor,
-        strokeWidth,
-        false
-      )
+    const endMarker = createArrowMarker(
+      endMarkerId,
+      rearEndpointStyle,
+      strokeColor,
+      strokeWidth,
+      false
     );
+    defs.append(endMarker);
   }
 
-  defs.replaceChildren(...markers);
+  // Create path element
+  const pathElement = document.createElementNS(
+    'http://www.w3.org/2000/svg',
+    'path'
+  );
 
   // Adjust points relative to the SVG coordinate system
   const adjustedPoints = points.map(point => {
@@ -505,29 +370,28 @@ export const connectorBaseDomRenderer = (
     pathData = createConnectorPath(adjustedPoints, mode);
   }
 
-  path.setAttribute('d', pathData);
-  path.setAttribute('stroke', strokeColor);
-  path.setAttribute('stroke-width', String(strokeWidth));
-  path.setAttribute('fill', 'none');
-  path.setAttribute('stroke-linecap', 'round');
-  path.setAttribute('stroke-linejoin', 'round');
+  pathElement.setAttribute('d', pathData);
+  pathElement.setAttribute('stroke', strokeColor);
+  pathElement.setAttribute('stroke-width', String(strokeWidth));
+  pathElement.setAttribute('fill', 'none');
+  pathElement.setAttribute('stroke-linecap', 'round');
+  pathElement.setAttribute('stroke-linejoin', 'round');
 
   // Apply stroke style
   if (strokeStyle === 'dash') {
-    path.setAttribute('stroke-dasharray', '12,12');
-  } else {
-    path.removeAttribute('stroke-dasharray');
+    pathElement.setAttribute('stroke-dasharray', '12,12');
   }
+
+  // Apply markers
   if (startMarkerId) {
-    path.setAttribute('marker-start', `url(#${startMarkerId})`);
-  } else {
-    path.removeAttribute('marker-start');
+    pathElement.setAttribute('marker-start', `url(#${startMarkerId})`);
   }
   if (endMarkerId) {
-    path.setAttribute('marker-end', `url(#${endMarkerId})`);
-  } else {
-    path.removeAttribute('marker-end');
+    pathElement.setAttribute('marker-end', `url(#${endMarkerId})`);
   }
+
+  svg.append(pathElement);
+  element.append(svg);
 
   // Set element size and position
   element.style.width = `${model.w * zoom}px`;
@@ -542,11 +406,7 @@ export const connectorDomRenderer = (
   renderer: DomRenderer
 ): void => {
   connectorBaseDomRenderer(model, element, renderer);
-
-  const retained = retainedConnectorDom.get(element);
-  if (!retained) return;
-
-  renderConnectorLabel(model, retained, renderer, renderer.viewport.zoom);
+  renderConnectorLabel(model, element, renderer, renderer.viewport.zoom);
 };
 
 /**
