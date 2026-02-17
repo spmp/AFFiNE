@@ -188,6 +188,9 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
    */
   override getNearestPoint(point: IVec): IVec {
     const { mode, absolutePath: path } = this;
+    if (path.length < 2) {
+      return [this.x + this.w / 2, this.y + this.h / 2];
+    }
 
     if (path.length === 0) {
       const { x, y } = this;
@@ -200,7 +203,7 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
       return Vec.nearestPointOnLineSegment(first, last, point, true);
     }
 
-    if (mode === ConnectorMode.Orthogonal) {
+    if (mode === ConnectorMode.Orthogonal || mode === ConnectorMode.Rounded) {
       const points = path.map<IVec>(p => [p[0], p[1]]);
       return Polyline.nearestPoint(points, point);
     }
@@ -221,6 +224,9 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
    */
   getOffsetDistanceByPoint(point: IVec, bounds?: Bound) {
     const { mode, absolutePath: path } = this;
+    if (path.length < 2) {
+      return 0.5;
+    }
 
     let { x, y, w, h } = this;
     if (bounds) {
@@ -245,7 +251,7 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
       return pl / fl;
     }
 
-    if (mode === ConnectorMode.Orthogonal) {
+    if (mode === ConnectorMode.Orthogonal || mode === ConnectorMode.Rounded) {
       const points = path.map<IVec>(p => [p[0], p[1]]);
       const p = Polyline.nearestPoint(points, point);
       const pl = Polyline.lenAtPoint(points, p);
@@ -264,6 +270,9 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
    */
   getPointByOffsetDistance(offsetDistance = 0.5, bounds?: Bound): IVec {
     const { mode, absolutePath: path } = this;
+    if (path.length < 2) {
+      return [this.x + this.w / 2, this.y + this.h / 2];
+    }
 
     if (mode === ConnectorMode.Straight) {
       const first = path[0];
@@ -283,7 +292,7 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
       return [x + w / 2, y + h / 2];
     }
 
-    if (mode === ConnectorMode.Orthogonal) {
+    if (mode === ConnectorMode.Orthogonal || mode === ConnectorMode.Rounded) {
       const points = path.map<IVec>(p => [p[0], p[1]]);
       const point = Polyline.pointAt(points, offsetDistance);
       if (point) return point;
