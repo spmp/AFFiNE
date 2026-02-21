@@ -163,12 +163,36 @@ export function configureSocketAuthMethod(
   authMethod = cb;
 }
 
+const LOGGED_ENDPOINTS = new Set<string>();
+
+function logEndpoint(endpoint: string, isSelfHosted: boolean) {
+  if (LOGGED_ENDPOINTS.has(endpoint)) {
+    return;
+  }
+  LOGGED_ENDPOINTS.add(endpoint);
+  console.info('[nbstore] cloud socket endpoint', {
+    endpoint,
+    isSelfHosted,
+  });
+  try {
+    const url = new URL(endpoint);
+    console.info('[nbstore] cloud socket parsed', {
+      origin: url.origin,
+      pathname: url.pathname,
+      search: url.search,
+    });
+  } catch (error) {
+    console.error('[nbstore] cloud socket invalid endpoint', endpoint, error);
+  }
+}
+
 class SocketManager {
   private readonly socketIOManager: SocketIOManager;
   socket: Socket;
   refCount = 0;
 
   constructor(endpoint: string, isSelfHosted: boolean) {
+    logEndpoint(endpoint, isSelfHosted);
     this.socketIOManager = new SocketIOManager(endpoint, {
       autoConnect: false,
       transports: isSelfHosted ? ['polling', 'websocket'] : ['websocket'], // self-hosted server may not support websocket

@@ -92,5 +92,19 @@ export class HttpConnection extends DummyConnection {
     private readonly requestHeaders?: Record<string, string>
   ) {
     super();
+    try {
+      const url = new URL(this.serverBaseUrl);
+      console.info('[nbstore] cloud http base url', {
+        origin: url.origin,
+        pathname: url.pathname,
+        search: url.search,
+      });
+    } catch (error) {
+      console.error(
+        '[nbstore] cloud http invalid base url',
+        this.serverBaseUrl,
+        error
+      );
+    }
   }
 }
