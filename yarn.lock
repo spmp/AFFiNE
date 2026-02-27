@@ -3291,6 +3291,7 @@ __metadata:
     "@blocksuite/affine-block-surface": "workspace:*"
     "@blocksuite/affine-components": "workspace:*"
     "@blocksuite/affine-ext-loader": "workspace:*"
+    "@blocksuite/affine-gfx-shape": "workspace:*"
     "@blocksuite/affine-model": "workspace:*"
     "@blocksuite/affine-rich-text": "workspace:*"
     "@blocksuite/affine-shared": "workspace:*"
