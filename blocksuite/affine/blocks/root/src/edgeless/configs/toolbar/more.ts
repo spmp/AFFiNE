@@ -27,6 +27,7 @@ import {
   FrameBlockModel,
   ImageBlockModel,
   isExternalEmbedModel,
+  MindmapElementModel,
   NoteBlockModel,
   ParagraphBlockModel,
 } from '@blocksuite/affine-model';
@@ -58,7 +59,6 @@ import {
   LinkedPageIcon,
   PlusIcon,
   ResetIcon,
-  SettingsIcon,
 } from '@blocksuite/icons/lit';
 import type { BlockComponent } from '@blocksuite/std';
 import { GfxBlockElementModel, type GfxModel } from '@blocksuite/std/gfx';
@@ -68,7 +68,6 @@ import { duplicate } from '../../utils/clipboard-utils';
 import { getSortedCloneElements } from '../../utils/clone-utils';
 import { moveConnectors } from '../../utils/connector';
 import { deleteElements } from '../../utils/crud';
-import { PropertiesModal } from './properties-modal';
 import {
   createLinkedDocFromEdgelessElements,
   createLinkedDocFromNote,
@@ -534,60 +533,6 @@ export const moreActions = [
     ],
   },
 
-  // Properties Group
-  {
-    id: 'd.z.properties',
-    label: 'Properties',
-    icon: SettingsIcon(),
-    when(ctx) {
-      const models = ctx.getSurfaceModels();
-      // Only show for single selection of shapes or connectors
-      return models.length === 1;
-    },
-    run(ctx) {
-      const models = ctx.getSurfaceModels();
-      if (models.length !== 1) return;
-
-      const model = models[0];
-
-      // Try multiple selectors to find the toolbar element
-      const toolbarElement =
-        document.querySelector('editor-toolbar') ||
-        document.querySelector('affine-toolbar-widget') ||
-        document.querySelector('[aria-label="More menu"]') ||
-        document.querySelector('editor-menu-button');
-
-      let referenceElement: Element;
-      // If still no element, use a virtual reference at the center of viewport
-      if (!toolbarElement) {
-        const virtualElement = {
-          getBoundingClientRect: () => ({
-            x: window.innerWidth / 2,
-            y: 100,
-            width: 0,
-            height: 0,
-            top: 100,
-            left: window.innerWidth / 2,
-            right: window.innerWidth / 2,
-            bottom: 100,
-          }),
-        };
-        referenceElement = virtualElement as Element;
-      } else {
-        referenceElement = toolbarElement as Element;
-      }
-
-      // Create and show the properties modal
-      const modal = new PropertiesModal();
-      modal.host = ctx.host;
-      modal.model = model;
-      modal.referenceElement = referenceElement;
-      modal.abortController = new AbortController();
-
-      document.body.appendChild(modal);
-    },
-  },
-
   // Deleting Group
   {
     id: 'e.delete',
@@ -619,7 +564,17 @@ function reorderElements(
 ) {
   if (!models.length) return;
 
-  for (const model of models) {
+  const normalizedModels = Array.from(
+    new Map(
+      models.map(model => {
+        const reorderTarget =
+          model.group instanceof MindmapElementModel ? model.group : model;
+        return [reorderTarget.id, reorderTarget];
+      })
+    ).values()
+  );
+
+  for (const model of normalizedModels) {
     const index = ctx.gfx.layer.getReorderedIndex(model, type);
 
     // block should be updated in transaction

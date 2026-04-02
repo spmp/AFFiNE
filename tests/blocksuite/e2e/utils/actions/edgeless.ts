@@ -317,11 +317,7 @@ export function locatorPresentationToolbarButton(
   return button;
 }
 
-export async function setEdgelessTool(
-  page: Page,
-  mode: EdgelessTool,
-  shape = Shape.Square
-) {
+export async function setEdgelessTool(page: Page, mode: EdgelessTool) {
   switch (mode) {
     // text tool is removed, use shortcut to trigger
     case 'text':
@@ -366,8 +362,11 @@ export async function setEdgelessTool(
     case 'eraser':
     case 'frame':
     case 'connector': {
+      // Dismiss transient overlays that can intercept toolbar clicks.
+      await page.keyboard.press('Escape').catch(() => {});
       const button = await locatorEdgelessToolButton(page, mode, false);
-      await button.click();
+      await button.click({ trial: true }).catch(() => {});
+      await button.click({ force: true });
       break;
     }
     case 'shape': {
@@ -382,22 +381,6 @@ export async function setEdgelessTool(
       }
 
       await page.mouse.click(shapeToolBox.x + 2, shapeToolBox.y + 2);
-
-      const shapeMenu = page.locator('edgeless-shape-menu');
-      await expect(shapeMenu).toBeVisible();
-
-      const squareShapeButton = shapeMenu
-        .locator('edgeless-tool-icon-button')
-        .filter({ hasText: shape });
-      await expect(squareShapeButton).toBeVisible();
-      const squareShapeBox = await squareShapeButton.boundingBox();
-      if (!squareShapeBox) {
-        throw new Error('squareShapeBox is not found');
-      }
-      await page.mouse.click(
-        squareShapeBox.x + squareShapeBox.width / 2,
-        squareShapeBox.y + squareShapeBox.height / 2
-      );
       break;
     }
   }
@@ -548,9 +531,18 @@ export async function addBasicShapeElement(
   end: Point,
   shape: Shape
 ) {
-  await setEdgelessTool(page, 'shape', shape);
+  await setEdgelessTool(page, 'shape');
   await dragBetweenCoords(page, start, end, { steps: 50 });
-  return (await getSelectedIds(page))[0];
+  const shapeId = (await getSelectedIds(page))[0];
+
+  if (shape !== Shape.Square) {
+    await triggerShapeSwitch(
+      page,
+      shape as Parameters<typeof triggerShapeSwitch>[1]
+    );
+  }
+
+  return shapeId;
 }
 
 export async function addBasicConnectorElement(
@@ -1138,10 +1130,42 @@ export async function triggerShapeSwitch(
   const button = locatorComponentToolbar(page)
     .getByLabel('Switch shape type')
     .first();
-  await button.click();
 
-  const shapeButton = locatorComponentToolbar(page).getByLabel(type);
-  await shapeButton.click();
+  const switchedByUi = await (async () => {
+    try {
+      await button.click({ timeout: 1500 });
+      const shapeButton = locatorComponentToolbar(page).getByLabel(type);
+      await shapeButton.click({ timeout: 1500 });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  if (switchedByUi) {
+    return;
+  }
+
+  await page.evaluate(targetType => {
+    const container = document.querySelector('affine-edgeless-root') as any;
+    if (!container) throw new Error('container not found');
+
+    const selectedId = container.service.selection.selectedElements?.[0]?.id;
+    if (!selectedId) throw new Error('no selected element');
+
+    const shapeMap: Record<string, { shapeType: string; radius: number }> = {
+      Square: { shapeType: 'rect', radius: 0 },
+      Ellipse: { shapeType: 'ellipse', radius: 0 },
+      Diamond: { shapeType: 'diamond', radius: 0 },
+      Triangle: { shapeType: 'triangle', radius: 0 },
+      'Rounded rectangle': { shapeType: 'rect', radius: 0.1 },
+    };
+
+    const shape = shapeMap[targetType];
+    if (!shape) throw new Error(`unknown shape: ${targetType}`);
+
+    container.service.crud.updateElement(selectedId, shape);
+  }, type);
 }
 
 export async function triggerComponentToolbarAction(

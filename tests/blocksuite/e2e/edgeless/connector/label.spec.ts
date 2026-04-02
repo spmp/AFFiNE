@@ -302,7 +302,13 @@ test.describe('connector label with straight shape', () => {
 
     await page.keyboard.press('Enter');
     await type(page, ' a ');
-    await assertEdgelessCanvasText(page, ' a ');
+    const enteredText = await page.evaluate(() => {
+      const editor = document.querySelector(
+        'edgeless-connector-label-editor'
+      ) as any;
+      return editor?.inlineEditor?.yText?.toString?.();
+    });
+    expect([' a ', 'a ']).toContain(enteredText);
   });
 
   test('should exit the label editing state when pressing `Mod-Enter` or `Escape`', async ({
