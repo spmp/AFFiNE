@@ -4,6 +4,7 @@ import { StoreExtensionManager } from '@blocksuite/affine/ext-loader';
 import { getInternalStoreExtensions } from '@blocksuite/affine/extensions/store';
 
 import { FeatureFlagStoreExtension } from '../store-extensions/feature-flag';
+import { getPrivateStoreExtensions } from './private-extensions';
 
 interface Configure {
   init: () => Configure;
@@ -27,6 +28,7 @@ class StoreProvider {
   constructor() {
     this._manager = new StoreExtensionManager([
       ...getInternalStoreExtensions(),
+      ...getPrivateStoreExtensions(),
       AIStoreExtension,
       FeatureFlagStoreExtension,
     ]);

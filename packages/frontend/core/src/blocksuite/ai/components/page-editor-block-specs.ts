@@ -4,7 +4,12 @@ import { BlockViewIdentifier } from '@blocksuite/affine/std';
 import type { ExtensionType } from '@blocksuite/affine/store';
 import { literal } from 'lit/static-html.js';
 
-const manager = new ViewExtensionManager([...getInternalViewExtensions()]);
+import { getPrivateViewExtensions } from '../../manager/private-extensions';
+
+const manager = new ViewExtensionManager([
+  ...getInternalViewExtensions(),
+  ...getPrivateViewExtensions(),
+]);
 const customPageEditorBlockSpecs: ExtensionType[] = [
   ...manager.get('page'),
   {

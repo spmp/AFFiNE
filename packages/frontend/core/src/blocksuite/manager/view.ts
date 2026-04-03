@@ -40,6 +40,8 @@ import { LinkedDocViewExtension } from '@blocksuite/affine/widgets/linked-doc/vi
 import type { FrameworkProvider } from '@toeverything/infra';
 import type { TemplateResult } from 'lit';
 
+import { getPrivateViewExtensions } from './private-extensions';
+
 type Configure = {
   init: () => Configure;
 
@@ -84,6 +86,7 @@ class ViewProvider {
   constructor() {
     this._manager = new ViewExtensionManager([
       ...getInternalViewExtensions(),
+      ...getPrivateViewExtensions(),
 
       AffineThemeViewExtension,
       AffineEditorViewExtension,
