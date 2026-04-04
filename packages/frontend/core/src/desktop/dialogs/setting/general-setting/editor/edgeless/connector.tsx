@@ -91,13 +91,20 @@ export const ConnectorSettings = () => {
     () => [
       {
         value: ConnectorMode.Orthogonal as any,
+        testId: 'connector-shape-elbowed-trigger',
         label:
           t[
             'com.affine.settings.editorSettings.edgeless.connecter.connector-shape.elbowed'
           ](),
       },
       {
+        value: ConnectorMode.Rounded as any,
+        testId: 'connector-shape-rounded-trigger',
+        label: 'Rounded',
+      },
+      {
         value: ConnectorMode.Curve as any,
+        testId: 'connector-shape-curve-trigger',
         label:
           t[
             'com.affine.settings.editorSettings.edgeless.connecter.connector-shape.curve'
@@ -105,6 +112,7 @@ export const ConnectorSettings = () => {
       },
       {
         value: ConnectorMode.Straight as any,
+        testId: 'connector-shape-straight-trigger',
         label:
           t[
             'com.affine.settings.editorSettings.edgeless.connecter.connector-shape.straight'
@@ -153,6 +161,16 @@ export const ConnectorSettings = () => {
     (value: number[]) => {
       editorSetting.set('connector', {
         strokeWidth: value[0],
+      });
+    },
+    [editorSetting]
+  );
+
+  const cornerRadius = settings.connector.cornerRadius;
+  const setCornerRadius = useCallback(
+    (value: number[]) => {
+      editorSetting.set('connector', {
+        cornerRadius: value[0],
       });
     },
     [editorSetting]
@@ -473,6 +491,21 @@ export const ConnectorSettings = () => {
               {String(settings.connector.rearEndpointStyle)}
             </MenuTrigger>
           }
+        />
+      </SettingRow>
+      <SettingRow
+        name="Corner radius"
+        desc={''}
+        data-testid="connector-corner-radius-row"
+      >
+        <Slider
+          data-testid="connector-corner-radius-slider"
+          value={[cornerRadius]}
+          onValueChange={setCornerRadius}
+          min={4}
+          max={36}
+          step={4}
+          nodes={[4, 12, 20, 28, 36]}
         />
       </SettingRow>
       <SettingRow
