@@ -116,7 +116,7 @@ export class EdgelessShapeMenu extends SignalWatcher(
     const shapeName: ShapeName = this._shapeName$.value;
     const propsStore = this.edgeless.std.get(EditPropsStore);
     const shapeProps =
-      propsStore.lastProps$.value[`shape:${shapeName}`] ??
+      propsStore.lastProps$.value[this._getShapeLastPropsKey(shapeName)] ??
       propsStore.lastProps$.value['shape:rect'];
     const { shapeStyle, fillColor, strokeColor, radius } = shapeProps;
     return {
@@ -182,17 +182,23 @@ export class EdgelessShapeMenu extends SignalWatcher(
     props: Parameters<EditPropsStore['recordLastProps']>[1]
   ) {
     const propsStore = this.edgeless.std.get(EditPropsStore);
-    propsStore.recordLastProps('shape:rect', props);
-    if (shapeName !== ShapeType.Rect) {
-      propsStore.recordLastProps(`shape:${shapeName}`, props);
-    }
+    propsStore.recordLastProps(this._getShapeLastPropsKey(shapeName), props);
+  }
+
+  private _getShapeLastPropsKey(shapeName: ShapeName) {
+    const normalized =
+      shapeName === ShapeType.Rect || shapeName === ShapeType.Ellipse
+        ? shapeName
+        : ShapeType.Triangle;
+
+    return `shape:${normalized}` as const;
   }
 
   private readonly _setShapeStyle = (shapeStyle: ShapeStyle) => {
     const { shapeName } = this._props$.value;
     this.edgeless.std
       .get(EditPropsStore)
-      .recordLastProps(`shape:${shapeName}`, {
+      .recordLastProps(this._getShapeLastPropsKey(shapeName), {
         shapeStyle,
       });
     this.onChange(shapeName);
