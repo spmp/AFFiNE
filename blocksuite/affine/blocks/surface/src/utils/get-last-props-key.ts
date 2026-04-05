@@ -30,11 +30,7 @@ export function getLastPropsKey(
 }
 
 function normalizeShapeLastPropsName(shapeName: ShapeName): ShapeName {
-  if (
-    shapeName === ShapeType.Rect ||
-    shapeName === ShapeType.Ellipse ||
-    shapeName === 'roundedRect'
-  ) {
+  if (shapeName === ShapeType.Rect || shapeName === ShapeType.Ellipse) {
     return shapeName;
   }
 
