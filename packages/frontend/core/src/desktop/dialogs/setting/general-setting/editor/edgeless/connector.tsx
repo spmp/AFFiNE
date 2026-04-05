@@ -140,12 +140,7 @@ export const ConnectorSettings = () => {
       {
         value: StrokeStyle.Dot,
         testId: 'connector-border-style-dot-trigger',
-        label: 'Dotted',
-      },
-      {
-        value: StrokeStyle.None,
-        testId: 'connector-border-style-none-trigger',
-        label: 'None',
+        label: 'Dot',
       },
     ],
     [t]
