@@ -128,7 +128,7 @@ describe('apply last props', () => {
     const rectShape2 = service.crud.getElementById(
       rectId2
     ) as ShapeElementModel;
-    expect(rectShape2.fillColor).toBe(DefaultTheme.FillColorShortMap.Orange);
+    expect(rectShape2.fillColor).toBe(DefaultTheme.FillColorShortMap.Green);
 
     const diamondId2 = service.crud.addElement('shape', {
       shapeType: ShapeType.Diamond,

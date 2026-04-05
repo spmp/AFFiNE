@@ -42,6 +42,10 @@ export class EdgelessPenMenu extends EdgelessToolbarToolMixin(
 ) {
   private _palettes = filterShapePalettes(shapePalettes, 'line');
 
+  private get _paletteCount() {
+    return Math.max(1, this._palettes.length);
+  }
+
   private readonly _memoryKey = 'pen';
 
   private _paletteIndex = 0;
@@ -49,7 +53,6 @@ export class EdgelessPenMenu extends EdgelessToolbarToolMixin(
   private _activeColorKey: string | undefined;
 
   private _loadedWorkspaceId: string | undefined;
-
   static override styles = css`
     :host {
       display: flex;
