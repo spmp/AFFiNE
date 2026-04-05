@@ -140,13 +140,12 @@ export const ConnectorSettings = () => {
       {
         value: StrokeStyle.Dot,
         testId: 'connector-border-style-dot-trigger',
-        label: 'Dot',
+        label: 'Dotted',
       },
       {
         value: StrokeStyle.None,
         testId: 'connector-border-style-none-trigger',
-        label:
-          t['com.affine.settings.editorSettings.edgeless.note.border.none'](),
+        label: 'None',
       },
     ],
     [t]

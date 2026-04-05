@@ -244,3 +244,28 @@ test('reset keeps default line and fill visibility from theme palettes', async (
   expect(resetPaletteState?.showInLine).toBe(false);
   expect(resetPaletteState?.showInFill).toBe(true);
 });
+
+test('Connector border style includes dotted and none in editor settings', async ({
+  page,
+}) => {
+  await openHomePage(page);
+  await waitForEditorLoad(page);
+  await openEditorSetting(page);
+
+  const solid = page.getByTestId('connector-border-style-solid-trigger');
+  const dashed = page.getByTestId('connector-border-style-dash-trigger');
+  const dotted = page.getByTestId('connector-border-style-dot-trigger');
+  const none = page.getByTestId('connector-border-style-none-trigger');
+
+  await solid.scrollIntoViewIfNeeded();
+  await expect(solid).toBeVisible();
+  await expect(dashed).toBeVisible();
+  await expect(dotted).toBeVisible();
+  await expect(none).toBeVisible();
+
+  await dotted.click();
+  await expect(dotted).toHaveAttribute('data-state', 'checked');
+
+  await none.click();
+  await expect(none).toHaveAttribute('data-state', 'checked');
+});
