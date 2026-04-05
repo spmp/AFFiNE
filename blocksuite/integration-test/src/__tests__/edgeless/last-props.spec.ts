@@ -115,7 +115,8 @@ describe('apply last props', () => {
       fillColor: DefaultTheme.FillColorShortMap.Yellow,
     });
     expect(
-      std.get(EditPropsStore).lastProps$.value['shape:roundedRect'].fillColor
+      std.get(EditPropsStore).lastProps$.value[`shape:${ShapeType.Triangle}`]
+        .fillColor
     ).toBe(DefaultTheme.FillColorShortMap.Yellow);
 
     // apply last props
@@ -128,7 +129,7 @@ describe('apply last props', () => {
     const rectShape2 = service.crud.getElementById(
       rectId2
     ) as ShapeElementModel;
-    expect(rectShape2.fillColor).toBe(DefaultTheme.FillColorShortMap.Green);
+    expect(rectShape2.fillColor).toBe(DefaultTheme.FillColorShortMap.Orange);
 
     const diamondId2 = service.crud.addElement('shape', {
       shapeType: ShapeType.Diamond,

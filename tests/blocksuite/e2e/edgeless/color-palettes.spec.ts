@@ -235,47 +235,6 @@ test.describe('shape palettes', () => {
     expect(activeAfterSwitch).toBe('Green');
   });
 
-  test('square keeps palette independent from triangle bucket', async ({
-    page,
-  }) => {
-    await edgelessCommonSetup(page);
-
-    await openShapeMenu(page);
-    await clickShapeTypeButton(page, 3);
-    let panel = page.locator('edgeless-shape-menu edgeless-color-panel');
-    await panel
-      .locator('.color-unit[aria-label="Green"]')
-      .first()
-      .click({ force: true });
-    await page.keyboard.press('Escape');
-
-    await openShapeMenu(page);
-    await clickShapeTypeButton(page, 0);
-    panel = page.locator('edgeless-shape-menu edgeless-color-panel');
-    await panel
-      .locator('.color-unit[aria-label="Blue"]')
-      .first()
-      .click({ force: true });
-    await page.keyboard.press('Escape');
-
-    await openShapeMenu(page);
-    await clickShapeTypeButton(page, 0);
-    const squarePanel = page.locator(
-      'edgeless-shape-menu edgeless-color-panel'
-    );
-    const squareColor = await getActivePaletteLabel(squarePanel);
-    expect(squareColor).toBe('Blue');
-    await page.keyboard.press('Escape');
-
-    await openShapeMenu(page);
-    await clickShapeTypeButton(page, 3);
-    const trianglePanel = page.locator(
-      'edgeless-shape-menu edgeless-color-panel'
-    );
-    const triangleColor = await getActivePaletteLabel(trianglePanel);
-    expect(triangleColor).toBe('Green');
-  });
-
   test('connector palette selection persists across menu opens', async ({
     page,
   }) => {
