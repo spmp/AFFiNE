@@ -11,7 +11,6 @@ import {
   locatorEdgelessToolButton,
   pickColorAtPoints,
   selectBrushColor,
-  selectElementsByService,
   setEdgelessTool,
   Shape,
   toViewCoord,
@@ -133,6 +132,14 @@ async function clickElementCenter(page: Page, id: string) {
   const [x, y, w, h] = await getEdgelessElementBound(page, id);
   const [vx, vy] = await toViewCoord(page, [x + w / 2, y + h / 2]);
   await page.mouse.click(vx, vy);
+}
+
+async function selectElementsByService(page: Page, elements: string[]) {
+  await page.evaluate(ids => {
+    const root = document.querySelector('affine-edgeless-root') as any;
+    if (!root) throw new Error('edgeless root not found');
+    root.service.selection.set({ elements: ids, editing: false });
+  }, elements);
 }
 
 test.describe('shape palettes', () => {
