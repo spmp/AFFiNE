@@ -203,6 +203,29 @@ test.describe('shape palettes', () => {
     expect(activeAfterBlue).toBe('Blue');
   });
 
+  test('shape palette selection persists when switching tools', async ({
+    page,
+  }) => {
+    await edgelessCommonSetup(page);
+
+    await openShapeMenu(page);
+    const shapePanel = page.locator('edgeless-shape-menu edgeless-color-panel');
+    await expect(shapePanel).toBeVisible();
+    await shapePanel
+      .locator('.color-unit[aria-label="Green"]')
+      .first()
+      .click({ force: true });
+
+    await setEdgelessTool(page, 'connector');
+    await setEdgelessTool(page, 'shape');
+
+    const reopenedPanel = page.locator(
+      'edgeless-shape-menu edgeless-color-panel'
+    );
+    const activeAfterSwitch = await getActivePaletteLabel(reopenedPanel);
+    expect(activeAfterSwitch).toBe('Green');
+  });
+
   test('connector palette selection persists across menu opens', async ({
     page,
   }) => {
