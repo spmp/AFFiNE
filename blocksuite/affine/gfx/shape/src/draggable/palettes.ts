@@ -20,6 +20,13 @@ export type ShapePalette = {
   styles: ShapePaletteStyle[];
 };
 
+export const SHAPE_PALETTES_STORAGE_VERSION = 1;
+export const SHAPE_PALETTES_STORAGE_EVENT = 'affine:shape-palettes-updated';
+
+export function getShapePalettesStorageKey(workspaceId: string) {
+  return `affine:workspace:${workspaceId}:shape-palettes:v${SHAPE_PALETTES_STORAGE_VERSION}`;
+}
+
 export const shapePaletteKeys = DefaultTheme.FillColorShortPalettes.map(
   palette => palette.key
 );
@@ -266,7 +273,15 @@ export const shapePalettes: ShapePalette[] = [
 ];
 
 export function getShapePaletteData(index: number) {
-  const palette = shapePalettes[index % shapePalettes.length];
+  return getShapePaletteDataFrom(shapePalettes, index);
+}
+
+export function getShapePaletteDataFrom(
+  palettes: ShapePalette[],
+  index: number
+) {
+  const source = palettes.length ? palettes : shapePalettes;
+  const palette = source[index % source.length];
   const stylesByKey = new Map(
     shapePaletteKeys.map((key, styleIndex) => [key, palette.styles[styleIndex]])
   );
@@ -304,4 +319,26 @@ export function getShapePaletteData(index: number) {
     ringPalettes,
     gradientPalettes,
   };
+}
+
+export function readStoredShapePalettes(
+  workspaceId: string | undefined
+): ShapePalette[] | null {
+  if (!workspaceId || typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(getShapePalettesStorageKey(workspaceId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ShapePalette[];
+    if (!Array.isArray(parsed) || !parsed.length) return null;
+    const valid = parsed.filter(
+      palette =>
+        palette &&
+        typeof palette.id === 'string' &&
+        Array.isArray(palette.styles) &&
+        palette.styles.length >= shapePaletteKeys.length
+    );
+    return valid.length ? valid : null;
+  } catch {
+    return null;
+  }
 }

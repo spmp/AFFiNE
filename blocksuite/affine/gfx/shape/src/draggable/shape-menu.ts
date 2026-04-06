@@ -37,7 +37,10 @@ import { ShapeTool } from '../shape-tool';
 import { ShapeComponentConfig } from '../toolbar';
 import { getToolPaletteMemory, setToolPaletteMemory } from './palette-memory';
 import {
-  getShapePaletteData,
+  getShapePaletteDataFrom,
+  getShapePalettesStorageKey,
+  readStoredShapePalettes,
+  SHAPE_PALETTES_STORAGE_EVENT,
   shapePaletteKeys,
   shapePalettes,
   type ShapePaletteStyle,
@@ -103,10 +106,15 @@ export class EdgelessShapeMenu extends SignalWatcher(
 
   private readonly _paletteIndex$ = signal(0);
 
+  private readonly _palettes$ = signal(shapePalettes);
+
   private readonly _activeColorKey$ = signal<string | undefined>(undefined);
 
   private readonly _activePalettes$ = computed(() => {
-    return getShapePaletteData(this._paletteIndex$.value);
+    return getShapePaletteDataFrom(
+      this._palettes$.value,
+      this._paletteIndex$.value
+    );
   });
 
   @property({ attribute: false })
@@ -224,7 +232,7 @@ export class EdgelessShapeMenu extends SignalWatcher(
   };
 
   private readonly _togglePalette = () => {
-    const presetCount = shapePalettes.length;
+    const presetCount = this._palettes$.value.length;
     const nextIndex = (this._paletteIndex$.value + 1) % presetCount;
     this._paletteIndex$.value = nextIndex;
     this._activeColorKey$.value = undefined;
@@ -315,9 +323,34 @@ export class EdgelessShapeMenu extends SignalWatcher(
   override connectedCallback(): void {
     super.connectedCallback();
 
+    const workspaceId = this.edgeless.store.workspace.id;
+    const reloadPalettes = () => {
+      const stored = readStoredShapePalettes(workspaceId);
+      this._palettes$.value = stored ?? shapePalettes;
+      const count = this._palettes$.value.length;
+      this._paletteIndex$.value = count ? this._paletteIndex$.value % count : 0;
+    };
+
     const memory = getToolPaletteMemory(this._memoryKey);
     this._paletteIndex$.value = memory.index;
     this._activeColorKey$.value = memory.activeKey;
+    reloadPalettes();
+
+    if (typeof window !== 'undefined') {
+      this.disposables.addFromEvent(
+        window,
+        SHAPE_PALETTES_STORAGE_EVENT,
+        () => {
+          reloadPalettes();
+        }
+      );
+      this.disposables.addFromEvent(window, 'storage', (event: Event) => {
+        const storageEvent = event as StorageEvent;
+        if (storageEvent.key === getShapePalettesStorageKey(workspaceId)) {
+          reloadPalettes();
+        }
+      });
+    }
 
     const gfx = this.edgeless.std.get(GfxControllerIdentifier);
     this._disposables.add(
