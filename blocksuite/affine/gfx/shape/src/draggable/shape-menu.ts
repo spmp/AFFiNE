@@ -317,10 +317,14 @@ export class EdgelessShapeMenu extends SignalWatcher(
     const workspaceId = this.edgeless.store.workspace.id;
     const reloadPalettes = () => {
       const stored = readStoredShapePalettes(workspaceId);
+<<<<<<< HEAD
       this._palettes$.value = filterShapePalettes(
         stored ?? shapePalettes,
         'fill'
       );
+=======
+      this._palettes$.value = stored ?? shapePalettes;
+>>>>>>> 044157094a (feat(palettes): sync settings palettes to shape toolbar with persistent workspace storage)
       const count = this._palettes$.value.length;
       this._paletteIndex$.value = count ? this._paletteIndex$.value % count : 0;
     };

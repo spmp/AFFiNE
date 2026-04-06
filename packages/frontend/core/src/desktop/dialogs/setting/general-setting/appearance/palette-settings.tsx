@@ -407,6 +407,14 @@ function SwatchStyleMenu({
       onMouseDown={event => event.stopPropagation()}
       onClick={event => event.stopPropagation()}
     >
+<<<<<<< HEAD
+=======
+      <div className={styles.swatchHint}>
+        {editable
+          ? 'Same color and line controls as the shape drawing menu.'
+          : 'Standard palettes are read-only. Clone to edit.'}
+      </div>
+>>>>>>> 044157094a (feat(palettes): sync settings palettes to shape toolbar with persistent workspace storage)
       {createElement('edgeless-shape-color-picker', {
         ref: pickerRef,
         inline: true,
@@ -458,6 +466,7 @@ export const PaletteSettings = () => {
         buildLegacyStorageKey(workspace.id),
         JSON.stringify(nextPalettes)
       );
+<<<<<<< HEAD
       const syncedShapePalettes: ShapePalette[] = nextPalettes.map(palette => ({
         id: palette.id,
         showInLine: palette.showInLine,
@@ -475,6 +484,24 @@ export const PaletteSettings = () => {
               : swatch.gradientDirection,
         })),
       }));
+=======
+      const syncedShapePalettes: ShapePalette[] = nextPalettes
+        .filter(palette => palette.showInFill)
+        .map(palette => ({
+          id: palette.id,
+          styles: palette.swatches.map(swatch => ({
+            fill: swatch.fillColor,
+            stroke: swatch.strokeColor,
+            strokeWidth: swatch.strokeWidth as LineWidth,
+            strokeStyle: swatch.strokeStyle as StrokeStyle,
+            gradientFinal: swatch.gradientFinal,
+            gradientDirection:
+              swatch.gradientDirection === 'none'
+                ? undefined
+                : swatch.gradientDirection,
+          })),
+        }));
+>>>>>>> 044157094a (feat(palettes): sync settings palettes to shape toolbar with persistent workspace storage)
       if (typeof window !== 'undefined') {
         localStorage.setItem(
           getShapePalettesStorageKey(workspace.id),
