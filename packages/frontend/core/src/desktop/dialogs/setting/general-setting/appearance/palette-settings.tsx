@@ -9,6 +9,7 @@ import {
   DefaultTheme,
   type LineWidth,
   type Palette,
+  resolveColor,
   type StrokeStyle,
 } from '@blocksuite/affine/model';
 import {
@@ -79,12 +80,12 @@ const STANDARD_PALETTES: PaletteDef[] = shapePalettes.map(palette => ({
     const style = palette.styles[index];
     return buildSwatch(
       key,
-      String(style.fill),
-      String(style.stroke),
+      resolveColor(style.fill, ColorScheme.Light),
+      resolveColor(style.stroke, ColorScheme.Light),
       true,
       (style.strokeStyle as PaletteStrokeStyle) ?? 'solid',
       style.strokeWidth ?? 2,
-      String(style.gradientFinal ?? style.fill),
+      resolveColor(style.gradientFinal ?? style.fill, ColorScheme.Light),
       style.gradientDirection ?? 'none'
     );
   }),
@@ -376,11 +377,6 @@ function SwatchStyleMenu({
       onMouseDown={event => event.stopPropagation()}
       onClick={event => event.stopPropagation()}
     >
-      <div className={styles.swatchHint}>
-        {editable
-          ? 'Same color and line controls as the shape drawing menu.'
-          : 'Standard palettes are read-only. Clone to edit.'}
-      </div>
       {createElement('edgeless-shape-color-picker', {
         ref: pickerRef,
         inline: true,

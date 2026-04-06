@@ -86,6 +86,7 @@ export class EdgelessShapeColorPicker extends WithDisposable(
 
     .pickers {
       display: flex;
+      flex-direction: column;
       align-self: stretch;
       gap: 12px;
     }
