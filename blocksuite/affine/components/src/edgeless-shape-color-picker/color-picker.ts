@@ -41,26 +41,40 @@ type ColorType =
   | 'gradientFinal';
 type GradientDirection =
   | 'none'
-  | 'n'
-  | 'ne'
-  | 'e'
-  | 'se'
-  | 's'
-  | 'sw'
-  | 'w'
-  | 'nw';
+  | 'N'
+  | 'NE'
+  | 'E'
+  | 'SE'
+  | 'S'
+  | 'SW'
+  | 'W'
+  | 'NW';
 
 const GRADIENT_DIRECTIONS: Array<{ key: GradientDirection; label: string }> = [
   { key: 'none', label: '' },
-  { key: 'n', label: 'N' },
-  { key: 'ne', label: 'NE' },
-  { key: 'e', label: 'E' },
-  { key: 'se', label: 'SE' },
-  { key: 's', label: 'S' },
-  { key: 'sw', label: 'SW' },
-  { key: 'w', label: 'W' },
-  { key: 'nw', label: 'NW' },
+  { key: 'N', label: 'N' },
+  { key: 'NE', label: 'NE' },
+  { key: 'E', label: 'E' },
+  { key: 'SE', label: 'SE' },
+  { key: 'S', label: 'S' },
+  { key: 'SW', label: 'SW' },
+  { key: 'W', label: 'W' },
+  { key: 'NW', label: 'NW' },
 ];
+
+function normalizeGradientDirection(direction?: string): GradientDirection {
+  if (!direction) return 'none';
+  const normalized = direction.toUpperCase();
+  if (normalized === 'N') return 'N';
+  if (normalized === 'NE') return 'NE';
+  if (normalized === 'E') return 'E';
+  if (normalized === 'SE') return 'SE';
+  if (normalized === 'S') return 'S';
+  if (normalized === 'SW') return 'SW';
+  if (normalized === 'W') return 'W';
+  if (normalized === 'NW') return 'NW';
+  return 'none';
+}
 
 export class EdgelessShapeColorPicker extends WithDisposable(
   SignalWatcher(LitElement)
@@ -290,7 +304,9 @@ export class EdgelessShapeColorPicker extends WithDisposable(
 
   override willUpdate(changedProperties: PropertyValues<this>) {
     if (changedProperties.has('payload')) {
-      this.gradientDirection$.value = this.payload.gradientDirection ?? 'none';
+      this.gradientDirection$.value = normalizeGradientDirection(
+        this.payload.gradientDirection
+      );
     }
   }
 
