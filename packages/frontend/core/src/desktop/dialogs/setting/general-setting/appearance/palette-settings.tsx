@@ -240,6 +240,22 @@ function getGradientPreview(
   return `linear-gradient(${cssDirection[direction]}, ${swatch.fillColor}, ${swatch.gradientFinal})`;
 }
 
+function toStoredColor(value: unknown): string | null {
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (value && typeof value === 'object') {
+    try {
+      return resolveColor(value as any, ColorScheme.Light);
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
 const swatchMenuContentOptions: MenuProps['contentOptions'] = {
   align: 'center',
   side: 'top',
@@ -279,15 +295,19 @@ function SwatchStyleMenu({
 
     const onPickFillColor = (event: Event) => {
       if (!editable) return;
-      const color = (event as CustomEvent<any>).detail?.detail?.value;
-      if (typeof color !== 'string') return;
+      const color = toStoredColor(
+        (event as CustomEvent<any>).detail?.detail?.value
+      );
+      if (!color) return;
       onPatch({ fillColor: color });
     };
 
     const onPickGradientFinalColor = (event: Event) => {
       if (!editable) return;
-      const color = (event as CustomEvent<any>).detail?.detail?.value;
-      if (typeof color !== 'string') return;
+      const color = toStoredColor(
+        (event as CustomEvent<any>).detail?.detail?.value
+      );
+      if (!color) return;
       onPatch({ gradientFinal: color });
     };
 
@@ -302,8 +322,10 @@ function SwatchStyleMenu({
 
     const onPickStrokeColor = (event: Event) => {
       if (!editable) return;
-      const color = (event as CustomEvent<any>).detail?.detail?.value;
-      if (typeof color !== 'string') return;
+      const color = toStoredColor(
+        (event as CustomEvent<any>).detail?.detail?.value
+      );
+      if (!color) return;
       onPatch({ strokeColor: color });
     };
 
