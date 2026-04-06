@@ -1,8 +1,12 @@
 import { adjustColorAlpha } from '@blocksuite/affine-components/color-picker';
 import {
-  getShapePaletteData,
+  filterShapePalettes,
+  getShapePaletteDataFrom,
+  getShapePalettesStorageKey,
   getToolPaletteMemory,
+  readStoredShapePalettes,
   setToolPaletteMemory,
+  SHAPE_PALETTES_STORAGE_EVENT,
   shapePaletteKeys,
   shapePalettes,
 } from '@blocksuite/affine-gfx-shape';
@@ -36,7 +40,7 @@ import type { Pen, PenMap } from './types';
 export class EdgelessPenMenu extends EdgelessToolbarToolMixin(
   SignalWatcher(LitElement)
 ) {
-  private readonly _paletteCount = Math.max(1, shapePalettes.length - 1);
+  private _palettes = filterShapePalettes(shapePalettes, 'line');
 
   private readonly _memoryKey = 'pen';
 
@@ -130,9 +134,44 @@ export class EdgelessPenMenu extends EdgelessToolbarToolMixin(
   override connectedCallback(): void {
     super.connectedCallback();
     const memory = getToolPaletteMemory(this._memoryKey);
-    this._paletteIndex = memory.index;
+    this._reloadPalettes();
+    this._paletteIndex = memory.index % this._paletteCount;
     this._activeColorKey = memory.activeKey;
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener(
+        SHAPE_PALETTES_STORAGE_EVENT,
+        this._reloadPalettes
+      );
+      window.addEventListener('storage', this._onStorage);
+    }
   }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    if (typeof window !== 'undefined') {
+      window.removeEventListener(
+        SHAPE_PALETTES_STORAGE_EVENT,
+        this._reloadPalettes
+      );
+      window.removeEventListener('storage', this._onStorage);
+    }
+  }
+
+  private readonly _onStorage = (event: StorageEvent) => {
+    if (
+      event.key === getShapePalettesStorageKey(this.edgeless.store.workspace.id)
+    ) {
+      this._reloadPalettes();
+    }
+  };
+
+  private readonly _reloadPalettes = () => {
+    const stored = readStoredShapePalettes(this.edgeless.store.workspace.id);
+    this._palettes = filterShapePalettes(stored ?? shapePalettes, 'line');
+    this._paletteIndex = this._paletteIndex % this._paletteCount;
+    this.requestUpdate();
+  };
 
   private readonly _togglePalette = () => {
     this._paletteIndex = (this._paletteIndex + 1) % this._paletteCount;
@@ -146,7 +185,8 @@ export class EdgelessPenMenu extends EdgelessToolbarToolMixin(
 
   private _resolveActiveKey(color: Color) {
     if (typeof color !== 'string') return undefined;
-    const { strokePalettes } = getShapePaletteData(
+    const { strokePalettes } = getShapePaletteDataFrom(
+      this._palettes,
       this._paletteIndex % this._paletteCount
     );
     const index = strokePalettes.findIndex(p => p.value === color);
@@ -187,7 +227,8 @@ export class EdgelessPenMenu extends EdgelessToolbarToolMixin(
         value: { type, color, lineWidth },
       },
     } = this;
-    const { strokePalettes } = getShapePaletteData(
+    const { strokePalettes } = getShapePaletteDataFrom(
+      this._palettes,
       this._paletteIndex % this._paletteCount
     );
     const activeKey = this._activeColorKey ?? this._resolveActiveKey(color);
@@ -293,4 +334,8 @@ export class EdgelessPenMenu extends EdgelessToolbarToolMixin(
     tip: string;
     shortcut: string;
   }>;
+
+  get _paletteCount() {
+    return Math.max(1, this._palettes.length);
+  }
 }
