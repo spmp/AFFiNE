@@ -92,7 +92,13 @@ async function openShapeMenu(page: Page) {
 
 async function clickShapeTypeButton(page: Page, index: number) {
   await page
+<<<<<<< HEAD
     .locator('edgeless-shape-menu .shape-type-container edgeless-tool-icon-button')
+=======
+    .locator(
+      'edgeless-shape-menu .shape-type-container edgeless-tool-icon-button'
+    )
+>>>>>>> b5d507ee51 (fix(color-palettes): read active shape key before saving menu styles)
     .nth(index)
     .click({ force: true });
 }
@@ -233,6 +239,47 @@ test.describe('shape palettes', () => {
     );
     const activeAfterSwitch = await getActivePaletteLabel(reopenedPanel);
     expect(activeAfterSwitch).toBe('Green');
+  });
+
+  test('square keeps palette independent from triangle bucket', async ({
+    page,
+  }) => {
+    await edgelessCommonSetup(page);
+
+    await openShapeMenu(page);
+    await clickShapeTypeButton(page, 3);
+    let panel = page.locator('edgeless-shape-menu edgeless-color-panel');
+    await panel
+      .locator('.color-unit[aria-label="Green"]')
+      .first()
+      .click({ force: true });
+    await page.keyboard.press('Escape');
+
+    await openShapeMenu(page);
+    await clickShapeTypeButton(page, 0);
+    panel = page.locator('edgeless-shape-menu edgeless-color-panel');
+    await panel
+      .locator('.color-unit[aria-label="Blue"]')
+      .first()
+      .click({ force: true });
+    await page.keyboard.press('Escape');
+
+    await openShapeMenu(page);
+    await clickShapeTypeButton(page, 0);
+    const squarePanel = page.locator(
+      'edgeless-shape-menu edgeless-color-panel'
+    );
+    const squareColor = await getActivePaletteLabel(squarePanel);
+    expect(squareColor).toBe('Blue');
+    await page.keyboard.press('Escape');
+
+    await openShapeMenu(page);
+    await clickShapeTypeButton(page, 3);
+    const trianglePanel = page.locator(
+      'edgeless-shape-menu edgeless-color-panel'
+    );
+    const triangleColor = await getActivePaletteLabel(trianglePanel);
+    expect(triangleColor).toBe('Green');
   });
 
   test('connector palette selection persists across menu opens', async ({
