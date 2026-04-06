@@ -144,7 +144,7 @@ export class EdgelessShapeMenu extends SignalWatcher(
       activeKey: key,
     });
 
-    const { shapeName } = this._props$.value;
+    const shapeName = this._shapeName$.value;
     const nextProps: {
       filled: boolean;
       fillColor: Color;
@@ -195,7 +195,7 @@ export class EdgelessShapeMenu extends SignalWatcher(
   }
 
   private readonly _setShapeStyle = (shapeStyle: ShapeStyle) => {
-    const { shapeName } = this._props$.value;
+    const shapeName = this._shapeName$.value;
     this.edgeless.std
       .get(EditPropsStore)
       .recordLastProps(this._getShapeLastPropsKey(shapeName), {
@@ -370,7 +370,10 @@ export class EdgelessShapeMenu extends SignalWatcher(
                     .active=${shapeName === name}
                     .activeMode=${'background'}
                     .iconSize=${'20px'}
-                    @click=${() => this.onChange(name)}
+                    @click=${() => {
+                      this._shapeName$.value = name;
+                      this.onChange(name);
+                    }}
                   >
                     ${shapeStyle === ShapeStyle.General
                       ? generalIcon
