@@ -144,7 +144,7 @@ export class EdgelessShapeMenu extends SignalWatcher(
       activeKey: key,
     });
 
-    const shapeName = this._shapeName$.value;
+    const shapeName = this._getActiveShapeName();
     const nextProps: {
       filled: boolean;
       fillColor: Color;
@@ -194,8 +194,25 @@ export class EdgelessShapeMenu extends SignalWatcher(
     return `shape:${normalized}` as const;
   }
 
+  private _getActiveShapeName() {
+    const option = this.edgeless.std
+      .get(GfxControllerIdentifier)
+      .tool.currentToolOption$.peek();
+
+    if (option && option.toolType === ShapeTool) {
+      const shapeName = (option as ToolOptionWithType<ShapeTool>).options
+        ?.shapeName;
+      if (shapeName) {
+        this._shapeName$.value = shapeName;
+        return shapeName;
+      }
+    }
+
+    return this._shapeName$.value;
+  }
+
   private readonly _setShapeStyle = (shapeStyle: ShapeStyle) => {
-    const shapeName = this._shapeName$.value;
+    const shapeName = this._getActiveShapeName();
     this.edgeless.std
       .get(EditPropsStore)
       .recordLastProps(this._getShapeLastPropsKey(shapeName), {
