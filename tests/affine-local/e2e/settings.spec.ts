@@ -103,3 +103,67 @@ test('Open experimental features panel', async ({ page }) => {
   const settings = page.getByTestId('experimental-settings');
   await expect(settings).toBeVisible();
 });
+
+test('palette gradient direction is clickable in appearance settings', async ({
+  page,
+}) => {
+  await openHomePage(page);
+  await waitForEditorLoad(page);
+  await openSettingModal(page);
+  await openAppearancePanel(page);
+
+  await page.getByRole('button', { name: 'Add palette' }).click();
+
+  await page.locator('button[aria-label*="swatch"]').last().click();
+
+  await page.getByRole('button', { name: 'Gradient' }).first().click();
+
+  const noneDirectionButton = page.locator('[data-direction="none"]').first();
+  await expect(noneDirectionButton).toHaveClass(/active/);
+
+  const directionButton = page.locator('[data-direction="NE"]').first();
+  await directionButton.click();
+
+  await expect(directionButton).toHaveClass(/active/);
+});
+
+test('custom palette order persists after reload', async ({ page }) => {
+  await openHomePage(page);
+  await waitForEditorLoad(page);
+  await openSettingModal(page);
+  await openAppearancePanel(page);
+
+  await page.getByRole('button', { name: 'Add palette' }).click();
+  await page.getByRole('button', { name: 'Add palette' }).click();
+
+  const customInputs = page.getByTestId('palette-name-input');
+  await customInputs.first().fill('Persisted A');
+  await customInputs.nth(1).fill('Persisted B');
+
+  const editableCards = page
+    .getByTestId('palette-card')
+    .filter({ has: page.getByTestId('palette-name-input') });
+  await editableCards.nth(1).dragTo(editableCards.first());
+
+  const storageStateBefore = await page.evaluate(() => {
+    const paletteKey = Object.keys(localStorage).find(
+      key => key.startsWith('affine:workspace:') && key.includes(':palettes:v1')
+    );
+    if (!paletteKey) {
+      throw new Error('workspace palette storage key not found');
+    }
+    return {
+      paletteKey,
+      value: localStorage.getItem(paletteKey),
+    };
+  });
+
+  await page.reload();
+  await waitForEditorLoad(page);
+
+  const storageStateAfter = await page.evaluate(key => {
+    return localStorage.getItem(key);
+  }, storageStateBefore.paletteKey);
+
+  expect(storageStateAfter).toBe(storageStateBefore.value);
+});
