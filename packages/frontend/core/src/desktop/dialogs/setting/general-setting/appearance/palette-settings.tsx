@@ -47,6 +47,7 @@ type PaletteSwatch = {
   id: string;
   fillColor: string;
   strokeColor: string;
+  ringColor?: string;
   gradientFinal: string;
   gradientDirection: PaletteGradientDirection;
   filled: boolean;
@@ -86,7 +87,10 @@ const STANDARD_PALETTES: PaletteDef[] = shapePalettes.map(palette => ({
       (style.strokeStyle as PaletteStrokeStyle) ?? 'solid',
       style.strokeWidth ?? 2,
       resolveColor(style.gradientFinal ?? style.fill, ColorScheme.Light),
-      style.gradientDirection ?? 'none'
+      style.gradientDirection ?? 'none',
+      style.ringColor
+        ? resolveColor(style.ringColor, ColorScheme.Light)
+        : undefined
     );
   }),
 }));
@@ -99,12 +103,14 @@ function buildSwatch(
   strokeStyle: PaletteStrokeStyle = 'solid',
   strokeWidth = 2,
   gradientFinal = fillColor,
-  gradientDirection: PaletteGradientDirection = 'none'
+  gradientDirection: PaletteGradientDirection = 'none',
+  ringColor?: string
 ): PaletteSwatch {
   return {
     id,
     fillColor,
     strokeColor,
+    ringColor,
     gradientFinal,
     gradientDirection,
     filled,
@@ -173,6 +179,8 @@ function sanitizePalettes(raw: unknown): PaletteDef[] | null {
           id: String(swatch.id ?? `swatch-${index}`),
           fillColor,
           strokeColor: String(swatch.strokeColor ?? '#000000'),
+          ringColor:
+            typeof swatch.ringColor === 'string' ? swatch.ringColor : undefined,
           gradientFinal: String(swatch.gradientFinal ?? fillColor),
           gradientDirection: normalizeGradientDirection(
             swatch.gradientDirection
@@ -457,6 +465,7 @@ export const PaletteSettings = () => {
         styles: palette.swatches.map(swatch => ({
           fill: swatch.fillColor,
           stroke: swatch.strokeColor,
+          ringColor: swatch.ringColor,
           strokeWidth: swatch.strokeWidth as LineWidth,
           strokeStyle: swatch.strokeStyle as StrokeStyle,
           gradientFinal: swatch.gradientFinal,
