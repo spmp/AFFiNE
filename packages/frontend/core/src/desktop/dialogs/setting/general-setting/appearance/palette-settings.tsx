@@ -1,4 +1,4 @@
-import { Button, Menu, Switch } from '@affine/component';
+import { Button, Menu, type MenuProps, Switch } from '@affine/component';
 import { SettingWrapper } from '@affine/component/setting-components';
 import {
   WorkspaceLocalState,
@@ -238,6 +238,11 @@ function getGradientPreview(
 
   return `linear-gradient(${cssDirection[direction]}, ${swatch.fillColor}, ${swatch.gradientFinal})`;
 }
+
+const swatchMenuContentOptions: MenuProps['contentOptions'] = {
+  align: 'center',
+  side: 'top',
+};
 
 function SwatchStyleMenu({
   editable,
@@ -631,6 +636,8 @@ export const PaletteSettings = () => {
                   return (
                     <Menu
                       key={swatch.id}
+                      noPortal
+                      contentOptions={swatchMenuContentOptions}
                       items={
                         <SwatchStyleMenu
                           editable={palette.editable}
