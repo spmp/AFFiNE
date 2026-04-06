@@ -173,15 +173,23 @@ export class EdgelessConnectorMenu extends EdgelessToolbarToolMixin(
   }
 
   private readonly _onStorage = (event: StorageEvent) => {
-    if (
-      event.key === getShapePalettesStorageKey(this.edgeless.store.workspace.id)
-    ) {
+    const workspaceId = this.edgeless?.store?.workspace?.id;
+    if (!workspaceId) return;
+    if (event.key === getShapePalettesStorageKey(workspaceId)) {
       this._reloadPalettes();
     }
   };
 
   private readonly _reloadPalettes = () => {
-    const stored = readStoredShapePalettes(this.edgeless.store.workspace.id);
+    const workspaceId = this.edgeless?.store?.workspace?.id;
+    if (!workspaceId) {
+      this._palettes = filterShapePalettes(shapePalettes, 'line');
+      this._paletteIndex = this._paletteIndex % this._paletteCount;
+      this.requestUpdate();
+      return;
+    }
+
+    const stored = readStoredShapePalettes(workspaceId);
     this._palettes = filterShapePalettes(stored ?? shapePalettes, 'line');
     this._paletteIndex = this._paletteIndex % this._paletteCount;
     this.requestUpdate();
