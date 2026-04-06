@@ -398,6 +398,23 @@ test.describe('shape palettes', () => {
       );
       clickColor(fillPanel, 'MediumGreen');
 
+      const gradientToggle = Array.from(
+        root.querySelectorAll('.mode-button')
+      ).find(button => button.textContent?.trim() === 'Gradient');
+      if (!gradientToggle) throw new Error('gradient toggle not found');
+      (gradientToggle as HTMLElement).click();
+
+      const gradientFillPanel = root.querySelector(
+        'edgeless-color-panel[aria-label="Fill color"]'
+      );
+      clickColor(gradientFillPanel, 'MediumBlue');
+
+      const directionButton = root.querySelector(
+        '[data-direction="NE"]'
+      ) as HTMLElement | null;
+      if (!directionButton) throw new Error('gradient direction NE not found');
+      directionButton.click();
+
       const strokePanel = root.querySelector(
         'edgeless-color-panel[aria-label="Border color"]'
       );
@@ -436,6 +453,8 @@ test.describe('shape palettes', () => {
     );
     const newShapeProps = await getShapeProps(page, newShapeId);
     expect(newShapeProps.fillColor).toBe(baseProps.fillColor);
+    expect(newShapeProps.gradientFinal).toBe(baseProps.gradientFinal);
+    expect(newShapeProps.gradientDirection).toBe(baseProps.gradientDirection);
     expect(newShapeProps.strokeColor).toBe(baseProps.strokeColor);
     expect(newShapeProps.strokeWidth).toBe(baseProps.strokeWidth);
     expect(newShapeProps.strokeStyle).toBe(baseProps.strokeStyle);
