@@ -1,4 +1,4 @@
-import { type ShapeName, ShapeType } from '@blocksuite/affine-model';
+import type { ShapeName } from '@blocksuite/affine-model';
 import { EdgelessToolbarToolMixin } from '@blocksuite/affine-widget-edgeless-toolbar';
 import { SignalWatcher } from '@blocksuite/global/lit';
 import { css, html, LitElement } from 'lit';
@@ -33,9 +33,6 @@ export class EdgelessShapeToolButton extends EdgelessToolbarToolMixin(
   private readonly _handleWrapperClick = () => {
     if (this.tryDisposePopper()) return;
 
-    this.setEdgelessTool(this.type, {
-      shapeName: ShapeType.Rect,
-    });
     if (!this.popper) this._toggleMenu();
   };
 
