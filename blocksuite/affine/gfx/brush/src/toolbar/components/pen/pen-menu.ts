@@ -42,17 +42,12 @@ export class EdgelessPenMenu extends EdgelessToolbarToolMixin(
 ) {
   private _palettes = filterShapePalettes(shapePalettes, 'line');
 
-  private get _paletteCount() {
-    return Math.max(1, this._palettes.length);
-  }
-
   private readonly _memoryKey = 'pen';
 
   private _paletteIndex = 0;
 
   private _activeColorKey: string | undefined;
 
-  private _loadedWorkspaceId: string | undefined;
   static override styles = css`
     :host {
       display: flex;
@@ -140,7 +135,6 @@ export class EdgelessPenMenu extends EdgelessToolbarToolMixin(
     super.connectedCallback();
     const memory = getToolPaletteMemory(this._memoryKey);
     this._reloadPalettes();
-    queueMicrotask(() => this._reloadPalettes());
     this._paletteIndex = memory.index % this._paletteCount;
     this._activeColorKey = memory.activeKey;
 
@@ -165,36 +159,19 @@ export class EdgelessPenMenu extends EdgelessToolbarToolMixin(
   }
 
   private readonly _onStorage = (event: StorageEvent) => {
-    const workspaceId = this.edgeless?.store?.workspace?.id;
-    if (!workspaceId) return;
-    if (event.key === getShapePalettesStorageKey(workspaceId)) {
+    if (
+      event.key === getShapePalettesStorageKey(this.edgeless.store.workspace.id)
+    ) {
       this._reloadPalettes();
     }
   };
 
   private readonly _reloadPalettes = () => {
-    const workspaceId = this.edgeless?.store?.workspace?.id;
-    if (!workspaceId) {
-      this._palettes = filterShapePalettes(shapePalettes, 'line');
-      this._paletteIndex = this._paletteIndex % this._paletteCount;
-      this.requestUpdate();
-      return;
-    }
-
-    this._loadedWorkspaceId = workspaceId;
-
-    const stored = readStoredShapePalettes(workspaceId);
+    const stored = readStoredShapePalettes(this.edgeless.store.workspace.id);
     this._palettes = filterShapePalettes(stored ?? shapePalettes, 'line');
     this._paletteIndex = this._paletteIndex % this._paletteCount;
     this.requestUpdate();
   };
-
-  private _ensureWorkspacePalettesLoaded() {
-    const workspaceId = this.edgeless?.store?.workspace?.id;
-    if (workspaceId && workspaceId !== this._loadedWorkspaceId) {
-      this._reloadPalettes();
-    }
-  }
 
   private readonly _togglePalette = () => {
     this._paletteIndex = (this._paletteIndex + 1) % this._paletteCount;
@@ -238,7 +215,6 @@ export class EdgelessPenMenu extends EdgelessToolbarToolMixin(
   override type = [BrushTool, HighlighterTool];
 
   override render() {
-    this._ensureWorkspacePalettesLoaded();
     const {
       _theme$: { value: theme },
       colors$: {

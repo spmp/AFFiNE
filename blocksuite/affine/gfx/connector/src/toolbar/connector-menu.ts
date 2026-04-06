@@ -133,8 +133,6 @@ export class EdgelessConnectorMenu extends EdgelessToolbarToolMixin(
 
   private _activeColorKey: string | undefined;
 
-  private _loadedWorkspaceId: string | undefined;
-
   private _palettes = filterShapePalettes(shapePalettes, 'line');
 
   private readonly _props$ = computed(() => {
@@ -151,7 +149,6 @@ export class EdgelessConnectorMenu extends EdgelessToolbarToolMixin(
     super.connectedCallback();
     const memory = getToolPaletteMemory(this._memoryKey);
     this._reloadPalettes();
-    queueMicrotask(() => this._reloadPalettes());
     this._paletteIndex = memory.index % this._paletteCount;
     this._activeColorKey = memory.activeKey;
 
@@ -176,36 +173,19 @@ export class EdgelessConnectorMenu extends EdgelessToolbarToolMixin(
   }
 
   private readonly _onStorage = (event: StorageEvent) => {
-    const workspaceId = this.edgeless?.store?.workspace?.id;
-    if (!workspaceId) return;
-    if (event.key === getShapePalettesStorageKey(workspaceId)) {
+    if (
+      event.key === getShapePalettesStorageKey(this.edgeless.store.workspace.id)
+    ) {
       this._reloadPalettes();
     }
   };
 
   private readonly _reloadPalettes = () => {
-    const workspaceId = this.edgeless?.store?.workspace?.id;
-    if (!workspaceId) {
-      this._palettes = filterShapePalettes(shapePalettes, 'line');
-      this._paletteIndex = this._paletteIndex % this._paletteCount;
-      this.requestUpdate();
-      return;
-    }
-
-    this._loadedWorkspaceId = workspaceId;
-
-    const stored = readStoredShapePalettes(workspaceId);
+    const stored = readStoredShapePalettes(this.edgeless.store.workspace.id);
     this._palettes = filterShapePalettes(stored ?? shapePalettes, 'line');
     this._paletteIndex = this._paletteIndex % this._paletteCount;
     this.requestUpdate();
   };
-
-  private _ensureWorkspacePalettesLoaded() {
-    const workspaceId = this.edgeless?.store?.workspace?.id;
-    if (workspaceId && workspaceId !== this._loadedWorkspaceId) {
-      this._reloadPalettes();
-    }
-  }
 
   private readonly _togglePalette = () => {
     this._paletteIndex = (this._paletteIndex + 1) % this._paletteCount;
@@ -230,7 +210,6 @@ export class EdgelessConnectorMenu extends EdgelessToolbarToolMixin(
   override type = ConnectorTool;
 
   override render() {
-    this._ensureWorkspacePalettesLoaded();
     const { stroke, strokeWidth, mode } = this._props$.value;
     const { strokePalettes } = getShapePaletteDataFrom(
       this._palettes,
