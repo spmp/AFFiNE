@@ -137,6 +137,7 @@ export class EdgelessPenMenu extends EdgelessToolbarToolMixin(
     super.connectedCallback();
     const memory = getToolPaletteMemory(this._memoryKey);
     this._reloadPalettes();
+    queueMicrotask(() => this._reloadPalettes());
     this._paletteIndex = memory.index % this._paletteCount;
     this._activeColorKey = memory.activeKey;
 
