@@ -16,6 +16,10 @@ describe('getLastPropsKey', () => {
     expect(getLastPropsKey('shape', shapeModelProps(ShapeType.Ellipse))).toBe(
       'shape:ellipse'
     );
+
+    expect(getLastPropsKey('shape', shapeModelProps(ShapeType.Rect, 0.1))).toBe(
+      'shape:roundedRect'
+    );
   });
 
   it('maps non-rect and non-ellipse shapes to triangle key', () => {
@@ -24,10 +28,6 @@ describe('getLastPropsKey', () => {
     );
 
     expect(getLastPropsKey('shape', shapeModelProps(ShapeType.Diamond))).toBe(
-      'shape:triangle'
-    );
-
-    expect(getLastPropsKey('shape', shapeModelProps(ShapeType.Rect, 0.1))).toBe(
       'shape:triangle'
     );
   });

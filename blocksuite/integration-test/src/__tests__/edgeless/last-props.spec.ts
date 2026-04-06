@@ -115,8 +115,7 @@ describe('apply last props', () => {
       fillColor: DefaultTheme.FillColorShortMap.Yellow,
     });
     expect(
-      std.get(EditPropsStore).lastProps$.value[`shape:${ShapeType.Triangle}`]
-        .fillColor
+      std.get(EditPropsStore).lastProps$.value['shape:roundedRect'].fillColor
     ).toBe(DefaultTheme.FillColorShortMap.Yellow);
 
     // apply last props
