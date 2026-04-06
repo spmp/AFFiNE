@@ -17,6 +17,8 @@ export type ShapePaletteStyle = {
 
 export type ShapePalette = {
   id: string;
+  showInLine?: boolean;
+  showInFill?: boolean;
   styles: ShapePaletteStyle[];
 };
 
@@ -211,30 +213,44 @@ const deepStyles = applyDefaultTail(
 export const shapePalettes: ShapePalette[] = [
   {
     id: 'affine',
+    showInLine: true,
+    showInFill: true,
     styles: affineStyles,
   },
   {
     id: 'dio0',
+    showInLine: true,
+    showInFill: true,
     styles: dio0Styles,
   },
   {
     id: 'dio4',
+    showInLine: true,
+    showInFill: true,
     styles: dio4Styles,
   },
   {
     id: 'dio1',
+    showInLine: true,
+    showInFill: true,
     styles: dio1Styles,
   },
   {
     id: 'dio2',
+    showInLine: true,
+    showInFill: true,
     styles: dio2Styles,
   },
   {
     id: 'dio3',
+    showInLine: true,
+    showInFill: true,
     styles: dio3Styles,
   },
   {
     id: 'dio5',
+    showInLine: true,
+    showInFill: true,
     styles: dio5Styles,
   },
 ];
@@ -308,4 +324,17 @@ export function readStoredShapePalettes(
   } catch {
     return null;
   }
+}
+
+export function filterShapePalettes(
+  palettes: ShapePalette[],
+  target: 'line' | 'fill'
+) {
+  const filtered = palettes.filter(palette =>
+    target === 'line'
+      ? palette.showInLine !== false
+      : palette.showInFill !== false
+  );
+
+  return filtered.length ? filtered : shapePalettes;
 }

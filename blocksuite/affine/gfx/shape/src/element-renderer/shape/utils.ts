@@ -67,8 +67,12 @@ export const resolveGradientFill = (
     x1 * width,
     y1 * height
   );
-  gradient.addColorStop(0, fillColor);
-  gradient.addColorStop(1, gradientFinalColor);
+  try {
+    gradient.addColorStop(0, fillColor);
+    gradient.addColorStop(1, gradientFinalColor);
+  } catch {
+    return fillColor;
+  }
   return gradient;
 };
 

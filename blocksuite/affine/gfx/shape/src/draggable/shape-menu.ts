@@ -37,6 +37,7 @@ import { ShapeTool } from '../shape-tool';
 import { ShapeComponentConfig } from '../toolbar';
 import { getToolPaletteMemory, setToolPaletteMemory } from './palette-memory';
 import {
+  filterShapePalettes,
   getShapePaletteDataFrom,
   getShapePalettesStorageKey,
   readStoredShapePalettes,
@@ -326,7 +327,10 @@ export class EdgelessShapeMenu extends SignalWatcher(
     const workspaceId = this.edgeless.store.workspace.id;
     const reloadPalettes = () => {
       const stored = readStoredShapePalettes(workspaceId);
-      this._palettes$.value = stored ?? shapePalettes;
+      this._palettes$.value = filterShapePalettes(
+        stored ?? shapePalettes,
+        'fill'
+      );
       const count = this._palettes$.value.length;
       this._paletteIndex$.value = count ? this._paletteIndex$.value % count : 0;
     };

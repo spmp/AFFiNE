@@ -450,22 +450,22 @@ export const PaletteSettings = () => {
         buildLegacyStorageKey(workspace.id),
         JSON.stringify(nextPalettes)
       );
-      const syncedShapePalettes: ShapePalette[] = nextPalettes
-        .filter(palette => palette.showInFill)
-        .map(palette => ({
-          id: palette.id,
-          styles: palette.swatches.map(swatch => ({
-            fill: swatch.fillColor,
-            stroke: swatch.strokeColor,
-            strokeWidth: swatch.strokeWidth as LineWidth,
-            strokeStyle: swatch.strokeStyle as StrokeStyle,
-            gradientFinal: swatch.gradientFinal,
-            gradientDirection:
-              swatch.gradientDirection === 'none'
-                ? undefined
-                : swatch.gradientDirection,
-          })),
-        }));
+      const syncedShapePalettes: ShapePalette[] = nextPalettes.map(palette => ({
+        id: palette.id,
+        showInLine: palette.showInLine,
+        showInFill: palette.showInFill,
+        styles: palette.swatches.map(swatch => ({
+          fill: swatch.fillColor,
+          stroke: swatch.strokeColor,
+          strokeWidth: swatch.strokeWidth as LineWidth,
+          strokeStyle: swatch.strokeStyle as StrokeStyle,
+          gradientFinal: swatch.gradientFinal,
+          gradientDirection:
+            swatch.gradientDirection === 'none'
+              ? undefined
+              : swatch.gradientDirection,
+        })),
+      }));
       if (typeof window !== 'undefined') {
         localStorage.setItem(
           getShapePalettesStorageKey(workspace.id),
