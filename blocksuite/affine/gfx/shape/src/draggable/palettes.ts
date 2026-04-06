@@ -61,6 +61,7 @@ const defaultTailStyles: ShapePaletteStyle[] = [
   {
     fill: whiteFill,
     stroke: whiteFill,
+    ringColor: greyStroke,
   },
   {
     fill: blackFill,
@@ -73,8 +74,14 @@ const defaultTailStyles: ShapePaletteStyle[] = [
   },
 ];
 
-const withDefaultTail = (styles: ShapePaletteStyle[]) =>
-  ensureLength([...styles, ...defaultTailStyles.map(item => ({ ...item }))]);
+const withDefaultTail = (styles: ShapePaletteStyle[]) => {
+  const normalized = ensureLength(styles.map(item => ({ ...item })));
+  const tailStart = shapePaletteKeys.length - 3;
+  for (let i = 0; i < 3; i++) {
+    normalized[tailStart + i] = { ...defaultTailStyles[i] };
+  }
+  return normalized;
+};
 
 const affineStyles = withDefaultTail(
   DefaultTheme.FillColorShortPalettes.map((palette, index) => ({
