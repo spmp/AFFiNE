@@ -153,7 +153,11 @@ export class EdgelessShapeMenu extends SignalWatcher(
       activeKey: key,
     });
 
+<<<<<<< HEAD
     const shapeName = this._getActiveShapeName();
+=======
+    const shapeName = this._shapeName$.value;
+>>>>>>> 8cc1f80af9 (fix(color-palettes): persist square style with immediate shape selection)
     const nextProps: {
       filled: boolean;
       fillColor: Color;
@@ -221,7 +225,7 @@ export class EdgelessShapeMenu extends SignalWatcher(
   }
 
   private readonly _setShapeStyle = (shapeStyle: ShapeStyle) => {
-    const shapeName = this._getActiveShapeName();
+    const shapeName = this._shapeName$.value;
     this.edgeless.std
       .get(EditPropsStore)
       .recordLastProps(this._getShapeLastPropsKey(shapeName), {
