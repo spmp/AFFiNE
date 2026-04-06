@@ -14,8 +14,9 @@ import {
   stopPropagation,
 } from '@blocksuite/affine-shared/utils';
 import { SignalWatcher, WithDisposable } from '@blocksuite/global/lit';
+import { BanIcon } from '@blocksuite/icons/lit';
 import { batch, signal } from '@preact/signals-core';
-import { css, html, LitElement } from 'lit';
+import { css, html, LitElement, type PropertyValues } from 'lit';
 import { property, query } from 'lit/decorators.js';
 import { choose } from 'lit-html/directives/choose.js';
 import { repeat } from 'lit-html/directives/repeat.js';
@@ -34,26 +35,41 @@ import type { LineDetailType } from '../edgeless-line-styles-panel';
 import type { EditorMenuButton } from '../toolbar';
 
 type TabType = 'normal' | 'custom';
+type FillMode = 'fill' | 'gradient';
+type ColorType =
+  | Extract<keyof ShapeProps, 'fillColor' | 'strokeColor'>
+  | 'gradientFinal';
+type GradientDirection =
+  | 'none'
+  | 'n'
+  | 'ne'
+  | 'e'
+  | 'se'
+  | 's'
+  | 'sw'
+  | 'w'
+  | 'nw';
 
-type ColorType = Extract<keyof ShapeProps, 'fillColor' | 'strokeColor'>;
-
-type PickerType = {
-  label: string;
-  type: ColorType;
-  value: string;
-  hollowCircle: boolean;
-  onPick: (e: ColorEvent) => void;
-};
-
-const PANEL_MEMORY = new Map<
-  string,
-  { tabType: TabType; colorType: ColorType }
->();
+const GRADIENT_DIRECTIONS: Array<{ key: GradientDirection; label: string }> = [
+  { key: 'none', label: '' },
+  { key: 'n', label: 'N' },
+  { key: 'ne', label: 'NE' },
+  { key: 'e', label: 'E' },
+  { key: 'se', label: 'SE' },
+  { key: 's', label: 'S' },
+  { key: 'sw', label: 'SW' },
+  { key: 'w', label: 'W' },
+  { key: 'nw', label: 'NW' },
+];
 
 export class EdgelessShapeColorPicker extends WithDisposable(
   SignalWatcher(LitElement)
 ) {
   static override styles = css`
+    :host {
+      display: block;
+    }
+
     .pickers {
       display: flex;
       align-self: stretch;
@@ -69,24 +85,92 @@ export class EdgelessShapeColorPicker extends WithDisposable(
     .picker-label {
       color: ${unsafeCSSVarV2('text/secondary')};
       font-weight: 400;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .mode-button {
+      border: 1px solid transparent;
+      background: transparent;
+      color: ${unsafeCSSVarV2('text/secondary')};
+      border-radius: 6px;
+      line-height: 22px;
+      font-size: 12px;
+      padding: 0 10px;
+      cursor: pointer;
+    }
+
+    .mode-button:hover {
+      background: ${unsafeCSSVarV2('layer/background/hoverOverlay')};
+    }
+
+    .mode-button.active {
+      color: ${unsafeCSSVarV2('text/emphasis')};
+      border-color: ${unsafeCSSVarV2('layer/insideBorder/border')};
+      background: ${unsafeCSSVarV2('layer/background/secondary')};
+    }
+
+    .gradient-directions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 0 0;
+      flex-wrap: wrap;
+    }
+
+    .direction-button {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      border: 1px solid transparent;
+      background: transparent;
+      color: ${unsafeCSSVarV2('text/secondary')};
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      cursor: pointer;
+      padding: 0;
+    }
+
+    .direction-button.active {
+      border-color: var(--affine-primary-color);
+      background: ${unsafeCSSVarV2('layer/background/secondary')};
+      color: ${unsafeCSSVarV2('text/emphasis')};
+    }
+
+    .direction-button.none svg {
+      width: 12px;
+      height: 12px;
+      color: currentColor;
     }
   `;
 
   tabType$ = signal<TabType>('normal');
-
   colorType$ = signal<ColorType>('fillColor');
-
-  private _persistPanelMemory() {
-    PANEL_MEMORY.set(this.memoryKey, {
-      tabType: this.tabType$.peek(),
-      colorType: this.colorType$.peek(),
-    });
-  }
+  fillMode$ = signal<FillMode>('fill');
+  gradientDirection$ = signal<GradientDirection>('none');
 
   readonly #pickFillColor = (e: ColorEvent) => {
     e.stopPropagation();
     this.dispatchEvent(
       new CustomEvent<PickColorEvent>('pickFillColor', {
+        detail: {
+          type: 'pick',
+          detail: e.detail,
+        },
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+      })
+    );
+  };
+
+  readonly #pickGradientFinalColor = (e: ColorEvent) => {
+    e.stopPropagation();
+    this.dispatchEvent(
+      new CustomEvent<PickColorEvent>('pickGradientFinalColor', {
         detail: {
           type: 'pick',
           detail: e.detail,
@@ -113,21 +197,6 @@ export class EdgelessShapeColorPicker extends WithDisposable(
     );
   };
 
-  readonly #pickColor = (detail: PickColorEvent) => {
-    const type =
-      this.colorType$.peek() === 'fillColor'
-        ? 'pickFillColor'
-        : 'pickStrokeColor';
-    this.dispatchEvent(
-      new CustomEvent<PickColorEvent>(type, {
-        detail,
-        bubbles: true,
-        composed: true,
-        cancelable: true,
-      })
-    );
-  };
-
   readonly #pickStrokeStyle = (e: CustomEvent<LineDetailType>) => {
     e.stopPropagation();
     this.dispatchEvent(
@@ -140,16 +209,43 @@ export class EdgelessShapeColorPicker extends WithDisposable(
     );
   };
 
+  readonly #pickGradientDirection = (direction: GradientDirection) => {
+    this.gradientDirection$.value = direction;
+    this.dispatchEvent(
+      new CustomEvent<GradientDirection>('pickGradientDirection', {
+        detail: direction,
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+      })
+    );
+  };
+
+  readonly #pickColor = (detail: PickColorEvent) => {
+    const target = this.colorType$.peek();
+    const eventType =
+      target === 'fillColor'
+        ? 'pickFillColor'
+        : target === 'gradientFinal'
+          ? 'pickGradientFinalColor'
+          : 'pickStrokeColor';
+
+    this.dispatchEvent(
+      new CustomEvent<PickColorEvent>(eventType, {
+        detail,
+        bubbles: true,
+        composed: true,
+        cancelable: true,
+      })
+    );
+  };
+
   #calcCustomButtonStyle(color: string, isCustomColor: boolean) {
     return calcCustomButtonStyle(color, isCustomColor, this);
   }
 
-  #calcCustomButtonState(
-    color: string,
-    theme: ColorScheme,
-    palettes: Palette[]
-  ) {
-    return !palettes
+  #calcCustomButtonState(color: string, theme: ColorScheme) {
+    return !this.palettes
       .map(({ value }) => resolveColor(value, theme))
       .includes(color);
   }
@@ -159,7 +255,6 @@ export class EdgelessShapeColorPicker extends WithDisposable(
       this.tabType$.value = 'custom';
       this.colorType$.value = type;
     });
-    this._persistPanelMemory();
   }
 
   get fillColorWithoutAlpha() {
@@ -177,38 +272,37 @@ export class EdgelessShapeColorPicker extends WithDisposable(
   }
 
   override firstUpdated() {
-    const memory = PANEL_MEMORY.get(this.memoryKey);
-    if (memory) {
-      batch(() => {
-        this.tabType$.value = memory.tabType;
-        this.colorType$.value =
-          this.strokeOnly && memory.colorType === 'fillColor'
-            ? 'strokeColor'
-            : memory.colorType;
-      });
-    } else if (this.strokeOnly) {
-      this.colorType$.value = 'strokeColor';
+    if (this.inline || !this.menuButton) {
+      return;
     }
 
     this.disposables.addFromEvent(
       this.menuButton,
       'toggle',
       (e: CustomEvent<boolean>) => {
-        if (!e.detail) {
-          this._persistPanelMemory();
+        const opened = e.detail;
+        if (!opened && this.tabType$.peek() === 'custom') {
+          this.tabType$.value = 'normal';
         }
       }
     );
   }
 
-  override render() {
+  override willUpdate(changedProperties: PropertyValues<this>) {
+    if (changedProperties.has('payload')) {
+      this.gradientDirection$.value = this.payload.gradientDirection ?? 'none';
+    }
+  }
+
+  #renderContent() {
     const {
       tabType$: { value: tabType },
       colorType$: { value: colorType },
+      fillMode$: { value: fillMode },
       palettes,
-      fillColorWithoutAlpha,
       payload: {
         fillColor,
+        gradientFinal,
         strokeColor,
         strokeWidth,
         strokeStyle,
@@ -216,36 +310,199 @@ export class EdgelessShapeColorPicker extends WithDisposable(
         originalStrokeColor,
         theme,
         enableCustomColor,
+        enableGradient,
       },
-      strokeOnly,
     } = this;
 
-    const pickers: PickerType[] = strokeOnly
-      ? [
-          {
-            label: 'Border color',
-            type: 'strokeColor',
-            value: strokeColor,
-            hollowCircle: true,
-            onPick: this.#pickStrokeColor,
+    const effectiveGradientDirection = this.gradientDirection$.value;
+
+    const showGradient = enableGradient ?? true;
+
+    const fillDisplayColor =
+      fillMode === 'gradient' ? (gradientFinal ?? fillColor) : fillColor;
+
+    return html`<div class="pickers" data-orientation="vertical">
+      ${choose(tabType, [
+        [
+          'normal',
+          () => html`
+            <div class="picker-label">
+              <button
+                type="button"
+                class="mode-button ${fillMode === 'fill' ? 'active' : ''}"
+                @click=${(e: MouseEvent) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  batch(() => {
+                    this.fillMode$.value = 'fill';
+                    this.colorType$.value = 'fillColor';
+                  });
+                }}
+              >
+                Fill color
+              </button>
+              ${when(showGradient, () => {
+                return html`<button
+                  type="button"
+                  class="mode-button ${fillMode === 'gradient' ? 'active' : ''}"
+                  @click=${(e: MouseEvent) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    batch(() => {
+                      this.fillMode$.value = 'gradient';
+                      this.colorType$.value = 'gradientFinal';
+                    });
+                  }}
+                >
+                  Gradient
+                </button>`;
+              })}
+            </div>
+
+            <edgeless-color-panel
+              aria-label="Fill color"
+              role="listbox"
+              .hasTransparent=${false}
+              .hollowCircle=${false}
+              .value=${fillDisplayColor}
+              .theme=${theme}
+              .palettes=${palettes}
+              @select=${fillMode === 'gradient'
+                ? this.#pickGradientFinalColor
+                : this.#pickFillColor}
+            >
+              ${when(enableCustomColor, () => {
+                const isCustomColor = this.#calcCustomButtonState(
+                  fillDisplayColor,
+                  theme
+                );
+                const styleInfo = this.#calcCustomButtonStyle(
+                  fillDisplayColor,
+                  isCustomColor
+                );
+                return html`
+                  <edgeless-color-custom-button
+                    slot="custom"
+                    style=${styleMap(styleInfo)}
+                    ?active=${isCustomColor}
+                    @click=${() =>
+                      this.#switchToCustomWith(
+                        fillMode === 'gradient' ? 'gradientFinal' : 'fillColor'
+                      )}
+                  ></edgeless-color-custom-button>
+                `;
+              })}
+            </edgeless-color-panel>
+
+            ${when(showGradient && fillMode === 'gradient', () => {
+              return html`<div class="gradient-directions">
+                ${repeat(
+                  GRADIENT_DIRECTIONS,
+                  item => item.key,
+                  item =>
+                    html`<editor-icon-button
+                      class="direction-button ${item.key === 'none'
+                        ? 'none'
+                        : ''} ${effectiveGradientDirection === item.key
+                        ? 'active'
+                        : ''}"
+                      data-direction=${item.key}
+                      .tooltip=${item.key === 'none'
+                        ? 'No gradient direction'
+                        : `Gradient ${item.label}`}
+                      @click=${(e: MouseEvent) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        this.#pickGradientDirection(item.key);
+                      }}
+                    >
+                      ${item.key === 'none' ? BanIcon() : item.label}
+                    </editor-icon-button>`
+                )}
+              </div>`;
+            })}
+
+            <div class="picker-label">Border color</div>
+            <edgeless-color-panel
+              aria-label="Border color"
+              role="listbox"
+              .hasTransparent=${false}
+              .hollowCircle=${true}
+              .value=${strokeColor}
+              .theme=${theme}
+              .palettes=${palettes}
+              @select=${this.#pickStrokeColor}
+            >
+              ${when(enableCustomColor, () => {
+                const isCustomColor = this.#calcCustomButtonState(
+                  strokeColor,
+                  theme
+                );
+                const styleInfo = this.#calcCustomButtonStyle(
+                  strokeColor,
+                  isCustomColor
+                );
+                return html`
+                  <edgeless-color-custom-button
+                    slot="custom"
+                    style=${styleMap(styleInfo)}
+                    ?active=${isCustomColor}
+                    @click=${() => this.#switchToCustomWith('strokeColor')}
+                  ></edgeless-color-custom-button>
+                `;
+              })}
+            </edgeless-color-panel>
+
+            <div class="picker-label">Border style</div>
+            <edgeless-line-styles-panel
+              class="picker"
+              .lineSize=${strokeWidth}
+              .lineStyle=${strokeStyle}
+              @select=${this.#pickStrokeStyle}
+            ></edgeless-line-styles-panel>
+          `,
+        ],
+        [
+          'custom',
+          () => {
+            const isFillColor = colorType === 'fillColor';
+            const isGradientFinal = colorType === 'gradientFinal';
+            const targetColor = isFillColor
+              ? fillColor
+              : isGradientFinal
+                ? (gradientFinal ?? fillColor)
+                : strokeColor;
+            const originalColor = isFillColor
+              ? originalFillColor
+              : isGradientFinal
+                ? (gradientFinal ?? originalFillColor)
+                : originalStrokeColor;
+
+            const packed = packColorsWith(theme, targetColor, originalColor);
+            const type = packed.type === 'palette' ? 'normal' : packed.type;
+            const modes = packed.colors.map(
+              preprocessColor(window.getComputedStyle(this))
+            );
+
+            return html`
+              <edgeless-color-picker
+                class="custom"
+                .pick=${this.#pickColor}
+                .colors=${{ type, modes }}
+              ></edgeless-color-picker>
+            `;
           },
-        ]
-      : [
-          {
-            label: 'Fill color',
-            type: 'fillColor',
-            value: fillColor,
-            hollowCircle: false,
-            onPick: this.#pickFillColor,
-          },
-          {
-            label: 'Border color',
-            type: 'strokeColor',
-            value: strokeColor,
-            hollowCircle: true,
-            onPick: this.#pickStrokeColor,
-          },
-        ];
+        ],
+      ])}
+    </div>`;
+  }
+
+  override render() {
+    const tabType = this.tabType$.value;
+
+    if (this.inline) {
+      return this.#renderContent();
+    }
 
     return html`
       <editor-menu-button
@@ -254,99 +511,12 @@ export class EdgelessShapeColorPicker extends WithDisposable(
         .button=${html`
           <editor-icon-button aria-label="Color" .tooltip="${'Color'}">
             <edgeless-color-button
-              .color=${fillColorWithoutAlpha}
+              .color=${this.fillColorWithoutAlpha}
             ></edgeless-color-button>
           </editor-icon-button>
         `}
       >
-        <div class="pickers" data-orientation="vertical">
-          ${choose(tabType, [
-            [
-              'normal',
-              () => {
-                return html`
-                  ${repeat(
-                    pickers,
-                    item => item.type,
-                    ({ label, type, value, onPick, hollowCircle }) => html`
-                      <div class="picker-label">${label}</div>
-                      <edgeless-color-panel
-                        aria-label="${label}"
-                        role="listbox"
-                        .hasTransparent=${false}
-                        .hollowCircle=${hollowCircle}
-                        .value=${value}
-                        .theme=${theme}
-                        .palettes=${palettes}
-                        @select=${onPick}
-                      >
-                        ${when(enableCustomColor, () => {
-                          const isCustomColor = this.#calcCustomButtonState(
-                            value,
-                            theme,
-                            palettes
-                          );
-                          const styleInfo = this.#calcCustomButtonStyle(
-                            value,
-                            isCustomColor
-                          );
-                          return html`
-                            <edgeless-color-custom-button
-                              slot="custom"
-                              style=${styleMap(styleInfo)}
-                              ?active=${isCustomColor}
-                              @click=${() => {
-                                this.colorType$.value = type;
-                                this.#switchToCustomWith(type);
-                              }}
-                            ></edgeless-color-custom-button>
-                          `;
-                        })}
-                      </edgeless-color-panel>
-                    `
-                  )}
-                  ${when(
-                    !strokeOnly,
-                    () => html`
-                      <div class="picker-label">Border style</div>
-                      <edgeless-line-styles-panel
-                        class="picker"
-                        .lineSize=${strokeWidth}
-                        .lineStyle=${strokeStyle}
-                        @select=${this.#pickStrokeStyle}
-                      ></edgeless-line-styles-panel>
-                    `
-                  )}
-                `;
-              },
-            ],
-            [
-              'custom',
-              () => {
-                const isFillColor = colorType === 'fillColor';
-                const packed = packColorsWith(
-                  theme,
-                  isFillColor && !strokeOnly ? fillColor : strokeColor,
-                  isFillColor && !strokeOnly
-                    ? originalFillColor
-                    : originalStrokeColor
-                );
-                const type = packed.type === 'palette' ? 'normal' : packed.type;
-                const modes = packed.colors.map(
-                  preprocessColor(window.getComputedStyle(this))
-                );
-
-                return html`
-                  <edgeless-color-picker
-                    class="custom"
-                    .pick=${this.#pickColor}
-                    .colors=${{ type, modes }}
-                  ></edgeless-color-picker>
-                `;
-              },
-            ],
-          ])}
-        </div>
+        ${this.#renderContent()}
       </editor-menu-button>
     `;
   }
@@ -357,20 +527,20 @@ export class EdgelessShapeColorPicker extends WithDisposable(
     strokeColor: string;
     strokeWidth: LineWidth;
     strokeStyle: StrokeStyle;
+    gradientFinal?: string;
+    gradientDirection?: GradientDirection;
     originalFillColor: Color;
     originalStrokeColor: Color;
     theme: ColorScheme;
     enableCustomColor: boolean;
+    enableGradient?: boolean;
   };
 
   @property({ attribute: false })
   accessor palettes: Palette[] = DefaultTheme.Palettes;
 
-  @property({ attribute: false })
-  accessor strokeOnly = false;
-
-  @property({ attribute: false })
-  accessor memoryKey = 'shape';
+  @property({ type: Boolean })
+  accessor inline = false;
 
   @query('editor-menu-button')
   accessor menuButton!: EditorMenuButton;
