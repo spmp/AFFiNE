@@ -66,6 +66,7 @@ const defaultTailStyles: ShapePaletteStyle[] = [
   {
     fill: blackFill,
     stroke: blackFill,
+    ringColor: whiteFill,
   },
   {
     fill: transparentFill,

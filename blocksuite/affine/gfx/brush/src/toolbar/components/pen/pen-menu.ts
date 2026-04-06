@@ -48,6 +48,8 @@ export class EdgelessPenMenu extends EdgelessToolbarToolMixin(
 
   private _activeColorKey: string | undefined;
 
+  private _loadedWorkspaceId: string | undefined;
+
   static override styles = css`
     :host {
       display: flex;
@@ -175,11 +177,20 @@ export class EdgelessPenMenu extends EdgelessToolbarToolMixin(
       return;
     }
 
+    this._loadedWorkspaceId = workspaceId;
+
     const stored = readStoredShapePalettes(workspaceId);
     this._palettes = filterShapePalettes(stored ?? shapePalettes, 'line');
     this._paletteIndex = this._paletteIndex % this._paletteCount;
     this.requestUpdate();
   };
+
+  private _ensureWorkspacePalettesLoaded() {
+    const workspaceId = this.edgeless?.store?.workspace?.id;
+    if (workspaceId && workspaceId !== this._loadedWorkspaceId) {
+      this._reloadPalettes();
+    }
+  }
 
   private readonly _togglePalette = () => {
     this._paletteIndex = (this._paletteIndex + 1) % this._paletteCount;
@@ -223,6 +234,7 @@ export class EdgelessPenMenu extends EdgelessToolbarToolMixin(
   override type = [BrushTool, HighlighterTool];
 
   override render() {
+    this._ensureWorkspacePalettesLoaded();
     const {
       _theme$: { value: theme },
       colors$: {
