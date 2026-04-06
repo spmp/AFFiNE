@@ -167,3 +167,22 @@ test('custom palette order persists after reload', async ({ page }) => {
 
   expect(storageStateAfter).toBe(storageStateBefore.value);
 });
+
+test('custom palette persists when switching setting tabs', async ({
+  page,
+}) => {
+  await openHomePage(page);
+  await waitForEditorLoad(page);
+  await openSettingModal(page);
+  await openAppearancePanel(page);
+
+  await page.getByRole('button', { name: 'Add palette' }).click();
+  await page.getByTestId('palette-name-input').first().fill('Tab Persisted');
+
+  await page.getByTestId('editor-panel-trigger').click();
+  await openAppearancePanel(page);
+
+  await expect(page.getByTestId('palette-name-input').first()).toHaveValue(
+    'Tab Persisted'
+  );
+});

@@ -11,6 +11,13 @@ import {
   type Palette,
   type StrokeStyle,
 } from '@blocksuite/affine/model';
+import {
+  getShapePalettesStorageKey,
+  SHAPE_PALETTES_STORAGE_EVENT,
+  type ShapePalette,
+  shapePaletteKeys,
+  shapePalettes,
+} from '@blocksuite/affine-gfx-shape';
 import { useService } from '@toeverything/infra';
 import {
   createElement,
@@ -62,59 +69,26 @@ function buildLegacyStorageKey(workspaceId: string) {
   return `affine:workspace:${workspaceId}:palettes:v${VERSION}`;
 }
 
-const STANDARD_PALETTES: PaletteDef[] = [
-  {
-    id: 'std-01',
-    name: 'Classic',
-    editable: false,
-    showInLine: true,
-    showInFill: true,
-    swatches: [
-      buildSwatch('a1', '#f8cecc', '#b85450'),
-      buildSwatch('a2', '#ffe6cc', '#d79b00'),
-      buildSwatch('a3', '#fff2cc', '#d6b656'),
-      buildSwatch('a4', '#d5e8d4', '#82b366'),
-      buildSwatch('a5', '#dae8fc', '#6c8ebf'),
-      buildSwatch('a6', '#e1d5e7', '#9673a6'),
-      buildSwatch('a7', '#f5f5f5', '#666666'),
-      buildSwatch('a8', '#ffffff', '#36393d'),
-    ],
-  },
-  {
-    id: 'std-02',
-    name: 'Flat',
-    editable: false,
-    showInLine: true,
-    showInFill: true,
-    swatches: [
-      buildSwatch('b1', '#ea6b66', '#ea6b66', false, 'dash', 3),
-      buildSwatch('b2', '#ffa500', '#ffa500', false, 'dash', 3),
-      buildSwatch('b3', '#ffd966', '#ffd966', false, 'dash', 3),
-      buildSwatch('b4', '#97d077', '#97d077', false, 'dash', 3),
-      buildSwatch('b5', '#67ab9f', '#67ab9f', false, 'dash', 3),
-      buildSwatch('b6', '#7ea6e0', '#7ea6e0', false, 'dash', 3),
-      buildSwatch('b7', '#8c6c9c', '#8c6c9c', false, 'dash', 3),
-      buildSwatch('b8', '#b5739d', '#b5739d', false, 'dash', 3),
-    ],
-  },
-  {
-    id: 'std-03',
-    name: 'Mono',
-    editable: false,
-    showInLine: true,
-    showInFill: false,
-    swatches: [
-      buildSwatch('c1', '#111111', '#111111', false, 'solid', 2),
-      buildSwatch('c2', '#333333', '#333333', false, 'solid', 2),
-      buildSwatch('c3', '#555555', '#555555', false, 'solid', 2),
-      buildSwatch('c4', '#777777', '#777777', false, 'solid', 2),
-      buildSwatch('c5', '#999999', '#999999', false, 'solid', 2),
-      buildSwatch('c6', '#bbbbbb', '#bbbbbb', false, 'solid', 2),
-      buildSwatch('c7', '#dddddd', '#dddddd', false, 'solid', 2),
-      buildSwatch('c8', '#f5f5f5', '#f5f5f5', false, 'solid', 2),
-    ],
-  },
-];
+const STANDARD_PALETTES: PaletteDef[] = shapePalettes.map(palette => ({
+  id: `std-${palette.id}`,
+  name: palette.id,
+  editable: false,
+  showInLine: true,
+  showInFill: true,
+  swatches: shapePaletteKeys.map((key, index) => {
+    const style = palette.styles[index];
+    return buildSwatch(
+      key,
+      String(style.fill),
+      String(style.stroke),
+      true,
+      (style.strokeStyle as PaletteStrokeStyle) ?? 'solid',
+      style.strokeWidth ?? 2,
+      String(style.gradientFinal ?? style.fill),
+      style.gradientDirection ?? 'none'
+    );
+  }),
+}));
 
 function buildSwatch(
   id: string,
@@ -122,14 +96,16 @@ function buildSwatch(
   strokeColor: string,
   filled = true,
   strokeStyle: PaletteStrokeStyle = 'solid',
-  strokeWidth = 2
+  strokeWidth = 2,
+  gradientFinal = fillColor,
+  gradientDirection: PaletteGradientDirection = 'none'
 ): PaletteSwatch {
   return {
     id,
     fillColor,
     strokeColor,
-    gradientFinal: fillColor,
-    gradientDirection: 'none',
+    gradientFinal,
+    gradientDirection,
     filled,
     strokeStyle,
     strokeWidth,
@@ -400,7 +376,10 @@ function SwatchStyleMenu({
           ? 'Same color and line controls as the shape drawing menu.'
           : 'Standard palettes are read-only. Clone to edit.'}
       </div>
-      {createElement('edgeless-shape-color-picker', { ref: pickerRef })}
+      {createElement('edgeless-shape-color-picker', {
+        ref: pickerRef,
+        inline: true,
+      })}
       <div className={styles.swatchField}>
         Filled
         {editable ? (
@@ -441,13 +420,54 @@ export const PaletteSettings = () => {
     setPalettes(stored ?? cloneStandardPalettes());
   }, [workspace.id, workspaceLocalState]);
 
-  useEffect(() => {
-    workspaceLocalState.set(PALETTE_STORAGE_KEY, palettes);
-    localStorage.setItem(
-      buildLegacyStorageKey(workspace.id),
-      JSON.stringify(palettes)
-    );
-  }, [palettes, workspace.id, workspaceLocalState]);
+  const persistPalettes = useCallback(
+    (nextPalettes: PaletteDef[]) => {
+      workspaceLocalState.set(PALETTE_STORAGE_KEY, nextPalettes);
+      localStorage.setItem(
+        buildLegacyStorageKey(workspace.id),
+        JSON.stringify(nextPalettes)
+      );
+      const syncedShapePalettes: ShapePalette[] = nextPalettes
+        .filter(palette => palette.showInFill)
+        .map(palette => ({
+          id: palette.id,
+          styles: palette.swatches.map(swatch => ({
+            fill: swatch.fillColor,
+            stroke: swatch.strokeColor,
+            strokeWidth: swatch.strokeWidth as LineWidth,
+            strokeStyle: swatch.strokeStyle as StrokeStyle,
+            gradientFinal: swatch.gradientFinal,
+            gradientDirection:
+              swatch.gradientDirection === 'none'
+                ? undefined
+                : swatch.gradientDirection,
+          })),
+        }));
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(
+          getShapePalettesStorageKey(workspace.id),
+          JSON.stringify(syncedShapePalettes)
+        );
+        window.dispatchEvent(
+          new CustomEvent(SHAPE_PALETTES_STORAGE_EVENT, {
+            detail: { workspaceId: workspace.id },
+          })
+        );
+      }
+    },
+    [workspace.id, workspaceLocalState]
+  );
+
+  const updatePalettes = useCallback(
+    (updater: (prev: PaletteDef[]) => PaletteDef[]) => {
+      setPalettes(prev => {
+        const next = updater(prev);
+        persistPalettes(next);
+        return next;
+      });
+    },
+    [persistPalettes]
+  );
 
   const customCount = useMemo(
     () => palettes.filter(palette => palette.editable).length,
@@ -457,41 +477,47 @@ export const PaletteSettings = () => {
   const addPalette = useCallback(() => {
     const nextId = `custom-${Date.now()}`;
     const nextName = `Custom ${customCount + 1}`;
-    setPalettes(prev => [...prev, clonePalette(prev[0], nextId, nextName)]);
-  }, [customCount]);
+    updatePalettes(prev => [...prev, clonePalette(prev[0], nextId, nextName)]);
+  }, [customCount, updatePalettes]);
 
   const resetPalettes = useCallback(() => {
-    setPalettes(cloneStandardPalettes());
-  }, []);
+    updatePalettes(() => cloneStandardPalettes());
+  }, [updatePalettes]);
 
-  const cloneById = useCallback((id: string) => {
-    setPalettes(prev => {
-      const source = prev.find(palette => palette.id === id);
-      if (!source) return prev;
-      const nextId = `custom-${Date.now()}`;
-      const nextName = `${source.name} copy`;
-      return [...prev, clonePalette(source, nextId, nextName)];
-    });
-  }, []);
+  const cloneById = useCallback(
+    (id: string) => {
+      updatePalettes(prev => {
+        const source = prev.find(palette => palette.id === id);
+        if (!source) return prev;
+        const nextId = `custom-${Date.now()}`;
+        const nextName = `${source.name} copy`;
+        return [...prev, clonePalette(source, nextId, nextName)];
+      });
+    },
+    [updatePalettes]
+  );
 
-  const deleteById = useCallback((id: string) => {
-    setPalettes(prev => prev.filter(palette => palette.id !== id));
-  }, []);
+  const deleteById = useCallback(
+    (id: string) => {
+      updatePalettes(prev => prev.filter(palette => palette.id !== id));
+    },
+    [updatePalettes]
+  );
 
   const updatePalette = useCallback(
     (id: string, patch: Partial<PaletteDef>) => {
-      setPalettes(prev =>
+      updatePalettes(prev =>
         prev.map(palette =>
           palette.id === id ? { ...palette, ...patch } : palette
         )
       );
     },
-    []
+    [updatePalettes]
   );
 
   const updateSwatch = useCallback(
     (paletteId: string, swatchId: string, patch: Partial<PaletteSwatch>) => {
-      setPalettes(prev =>
+      updatePalettes(prev =>
         prev.map(palette => {
           if (palette.id !== paletteId) return palette;
           return {
@@ -503,7 +529,7 @@ export const PaletteSettings = () => {
         })
       );
     },
-    []
+    [updatePalettes]
   );
 
   return (
