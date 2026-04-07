@@ -93,7 +93,7 @@ const affineStyles = withDefaultTail(
   }))
 );
 
-const dio0Styles = withDefaultTail([
+const materialLightStyle = withDefaultTail([
   { fill: '#f8cecc', stroke: '#b85450' },
   { fill: '#ffe6cc', stroke: '#d79b00' },
   { fill: '#fff2cc', stroke: '#d6b656' },
@@ -104,56 +104,23 @@ const dio0Styles = withDefaultTail([
   { fill: '#f5f5f5', stroke: '#666666' },
 ]);
 
-const dio1Styles = withDefaultTail([
-  { fill: '#60a917', stroke: '#2d7600' },
-  { fill: '#008a00', stroke: '#005700' },
-  { fill: '#1ba1e2', stroke: '#006eaf' },
-  { fill: '#0050ef', stroke: '#001dbc' },
-  { fill: '#6a00ff', stroke: '#3700cc' },
-  { fill: '#d80073', stroke: '#a50040' },
-  { fill: '#a20025', stroke: '#6f0000' },
-  { fill: '#aa00ff', stroke: '#7700cc' },
-]);
-
-const dio2Styles = withDefaultTail([
-  { fill: '#e51400', stroke: '#b20000' },
-  { fill: '#fa6800', stroke: '#c73500' },
-  { fill: '#f0a30a', stroke: '#bd7000' },
-  { fill: '#e3c800', stroke: '#b09500' },
-  { fill: '#6d8764', stroke: '#3a5431' },
-  { fill: '#647687', stroke: '#314354' },
-  { fill: '#76608a', stroke: '#432d57' },
-  { fill: '#c8a27a', stroke: '#8a5a2b' },
-]);
-
-const dio3Styles = withDefaultTail([
-  { fill: '#fad7ac', stroke: '#b46504' },
-  { fill: '#fad9d5', stroke: '#ae4132' },
-  { fill: '#b0e3e6', stroke: '#0e8088' },
-  { fill: '#b1ddf0', stroke: '#10739e' },
-  { fill: '#d0cee2', stroke: '#56517e' },
-  { fill: '#bac8d3', stroke: '#23445d' },
-  { fill: '#d0cee2', stroke: '#56517e' },
-  { fill: '#b1ddf0', stroke: '#10739e' },
-]);
-
-const dio4Styles = withDefaultTail([
+const materialLightGradientStyle = withDefaultTail([
   {
     fill: '#f8cecc',
     stroke: '#b85450',
-    gradientFinal: '#ea6b66',
+    gradientFinal: '#e36863',
     gradientDirection: 'S',
   },
   {
-    fill: '#ffcd28',
+    fill: '#FFE6CC',
     stroke: '#d79b00',
-    gradientFinal: '#ffa500',
+    gradientFinal: '#FFB940',
     gradientDirection: 'S',
   },
   {
-    fill: '#fff2cc',
+    fill: '#FFF2CC',
     stroke: '#d6b656',
-    gradientFinal: '#ffd966',
+    gradientFinal: '#FADD4B',
     gradientDirection: 'S',
   },
   {
@@ -165,19 +132,19 @@ const dio4Styles = withDefaultTail([
   {
     fill: '#dae8fc',
     stroke: '#6c8ebf',
-    gradientFinal: '#7ea6e0',
+    gradientFinal: '#88B4F2',
     gradientDirection: 'S',
   },
   {
     fill: '#e6d0de',
     stroke: '#996185',
-    gradientFinal: '#d5739d',
+    gradientFinal: '#D5739D',
     gradientDirection: 'S',
   },
   {
-    fill: '#e1d5e7',
-    stroke: '#9673a6',
-    gradientFinal: '#b5739d',
+    fill: '#F5DFF5',
+    stroke: '#994D96',
+    gradientFinal: '#FAA0F4',
     gradientDirection: 'S',
   },
   {
@@ -188,15 +155,26 @@ const dio4Styles = withDefaultTail([
   },
 ]);
 
-const dio5Styles = withDefaultTail([
-  { fill: '#eeeeee', stroke: '#36393d' },
-  { fill: '#f9f7ed', stroke: '#36393d' },
-  { fill: '#ffcc99', stroke: '#36393d' },
-  { fill: '#cce5ff', stroke: '#36393d' },
-  { fill: '#ffff88', stroke: '#36393d' },
-  { fill: '#cdeb8b', stroke: '#36393d' },
-  { fill: '#ffcccc', stroke: '#36393d' },
-  { fill: '#cce5ff', stroke: '#36393d' },
+const boldStyle = withDefaultTail([
+  { fill: '#a20025', stroke: '#6f0000' },
+  { fill: '#d80073', stroke: '#a50040' },
+  { fill: '#6a00ff', stroke: '#3700cc' },
+  { fill: '#0050ef', stroke: '#001dbc' },
+  { fill: '#1ba1e2', stroke: '#006eaf' },
+  { fill: '#008a00', stroke: '#005700' },
+  { fill: '#60a917', stroke: '#2d7600' },
+  { fill: '#FFDE3B', stroke: '#B09929' },
+]);
+
+const mutedStyle = withDefaultTail([
+  { fill: '#e51400', stroke: '#b20000' },
+  { fill: '#fa6800', stroke: '#c73500' },
+  { fill: '#f0a30a', stroke: '#bd7000' },
+  { fill: '#e3c800', stroke: '#b09500' },
+  { fill: '#6d8764', stroke: '#3a5431' },
+  { fill: '#647687', stroke: '#314354' },
+  { fill: '#76608a', stroke: '#432d57' },
+  { fill: '#A0522D', stroke: '#6D1F00' },
 ]);
 
 // Line style example
@@ -226,40 +204,28 @@ export const shapePalettes: ShapePalette[] = [
     styles: affineStyles,
   },
   {
-    id: 'dio0',
+    id: 'material-light',
     showInLine: true,
     showInFill: true,
-    styles: dio0Styles,
+    styles: materialLightStyle,
   },
   {
-    id: 'dio4',
-    showInLine: true,
+    id: 'material-gradient',
+    showInLine: false,
     showInFill: true,
-    styles: dio4Styles,
+    styles: materialLightGradientStyle,
   },
   {
-    id: 'dio1',
+    id: 'bold',
     showInLine: true,
     showInFill: true,
-    styles: dio1Styles,
+    styles: boldStyle,
   },
   {
-    id: 'dio2',
+    id: 'muted',
     showInLine: true,
     showInFill: true,
-    styles: dio2Styles,
-  },
-  {
-    id: 'dio3',
-    showInLine: true,
-    showInFill: true,
-    styles: dio3Styles,
-  },
-  {
-    id: 'dio5',
-    showInLine: true,
-    showInFill: true,
-    styles: dio5Styles,
+    styles: mutedStyle,
   },
 ];
 
