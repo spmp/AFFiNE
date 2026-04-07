@@ -639,8 +639,11 @@ export const PaletteSettings = () => {
 
               <div className={styles.visibilityRow}>
                 <label className={styles.visibilityItem}>
-                  Line visibility
+                  <span data-testid="line-visibility-label">
+                    Line visibility
+                  </span>
                   <Switch
+                    data-testid="line-visibility-switch"
                     checked={palette.showInLine}
                     onChange={checked =>
                       updatePalette(palette.id, { showInLine: checked })
@@ -648,8 +651,11 @@ export const PaletteSettings = () => {
                   />
                 </label>
                 <label className={styles.visibilityItem}>
-                  Fill visibility
+                  <span data-testid="fill-visibility-label">
+                    Fill visibility
+                  </span>
                   <Switch
+                    data-testid="fill-visibility-switch"
                     checked={palette.showInFill}
                     onChange={checked =>
                       updatePalette(palette.id, { showInFill: checked })
