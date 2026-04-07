@@ -75,8 +75,8 @@ const STANDARD_PALETTES: PaletteDef[] = shapePalettes.map(palette => ({
   id: `std-${palette.id}`,
   name: palette.id,
   editable: false,
-  showInLine: true,
-  showInFill: true,
+  showInLine: palette.showInLine ?? true,
+  showInFill: palette.showInFill ?? true,
   swatches: shapePaletteKeys.map((key, index) => {
     const style = palette.styles[index];
     return buildSwatch(
