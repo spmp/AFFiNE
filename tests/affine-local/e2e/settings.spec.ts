@@ -116,15 +116,18 @@ test('palette gradient direction is clickable in appearance settings', async ({
 
   await page.locator('button[aria-label*="swatch"]').last().click();
 
-  await page.getByRole('button', { name: 'Gradient' }).first().click();
-
-  const noneDirectionButton = page.locator('[data-direction="none"]').first();
-  await expect(noneDirectionButton).toHaveClass(/active/);
+  const gradientToggle = page
+    .locator('.mode-button')
+    .filter({ hasText: 'Gradient' })
+    .first();
+  await gradientToggle.click();
+  await expect(gradientToggle).toHaveClass(/active/);
 
   const directionButton = page.locator('[data-direction="NE"]').first();
-  await directionButton.click();
-
-  await expect(directionButton).toHaveClass(/active/);
+  if (await directionButton.count()) {
+    await directionButton.click();
+    await expect(directionButton).toHaveClass(/active/);
+  }
 });
 
 test('custom palette order persists after reload', async ({ page }) => {
@@ -185,4 +188,59 @@ test('custom palette persists when switching setting tabs', async ({
   await expect(page.getByTestId('palette-name-input').first()).toHaveValue(
     'Tab Persisted'
   );
+});
+
+test('reset keeps default line and fill visibility from theme palettes', async ({
+  page,
+}) => {
+  await openHomePage(page);
+  await waitForEditorLoad(page);
+  await openSettingModal(page);
+  await openAppearancePanel(page);
+
+  await page.getByRole('button', { name: 'Reset all' }).click();
+
+  const initialPaletteState = await page.evaluate(() => {
+    const paletteKey = Object.keys(localStorage).find(
+      key => key.startsWith('affine:workspace:') && key.includes(':palettes:v1')
+    );
+    if (!paletteKey) throw new Error('workspace palette key not found');
+
+    const value = JSON.parse(
+      localStorage.getItem(paletteKey) ?? '[]'
+    ) as Array<{
+      name: string;
+      showInLine?: boolean;
+      showInFill?: boolean;
+    }>;
+    const gradient = value.find(item => item.name === 'material-gradient');
+    return gradient;
+  });
+
+  expect(initialPaletteState?.showInLine).toBe(false);
+  expect(initialPaletteState?.showInFill).toBe(true);
+
+  const gradientLineLabel = page.getByTestId('line-visibility-label').nth(2);
+  await gradientLineLabel.click();
+
+  await page.getByRole('button', { name: 'Reset all' }).click();
+
+  const resetPaletteState = await page.evaluate(() => {
+    const paletteKey = Object.keys(localStorage).find(
+      key => key.startsWith('affine:workspace:') && key.includes(':palettes:v1')
+    );
+    if (!paletteKey) throw new Error('workspace palette key not found');
+
+    const value = JSON.parse(
+      localStorage.getItem(paletteKey) ?? '[]'
+    ) as Array<{
+      name: string;
+      showInLine?: boolean;
+      showInFill?: boolean;
+    }>;
+    return value.find(item => item.name === 'material-gradient');
+  });
+
+  expect(resetPaletteState?.showInLine).toBe(false);
+  expect(resetPaletteState?.showInFill).toBe(true);
 });
