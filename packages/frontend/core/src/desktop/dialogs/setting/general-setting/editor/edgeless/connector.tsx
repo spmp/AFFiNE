@@ -142,6 +142,12 @@ export const ConnectorSettings = () => {
         testId: 'connector-border-style-dot-trigger',
         label: 'Dot',
       },
+      {
+        value: StrokeStyle.None,
+        testId: 'connector-border-style-none-trigger',
+        label:
+          t['com.affine.settings.editorSettings.edgeless.note.border.none'](),
+      },
     ],
     [t]
   );
