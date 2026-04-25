@@ -32,6 +32,7 @@ import type {
   ToolbarActions,
   ToolbarContext,
 } from '@blocksuite/affine-shared/services';
+import type { ConnectorElementModel } from '@blocksuite/affine-model';
 import {
   matchModels,
   type ReorderingType,
