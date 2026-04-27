@@ -11,6 +11,7 @@ import {
 import {
   type ConnectionOverlay,
   ConnectorPathGenerator,
+  getConnectableRelativePosition,
 } from '@blocksuite/affine-gfx-connector';
 import { mountShapeTextEditor } from '@blocksuite/affine-gfx-shape';
 import type {
