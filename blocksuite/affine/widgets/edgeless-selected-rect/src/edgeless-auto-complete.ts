@@ -11,7 +11,6 @@ import {
 import {
   type ConnectionOverlay,
   ConnectorPathGenerator,
-  getConnectableRelativePosition,
 } from '@blocksuite/affine-gfx-connector';
 import { mountShapeTextEditor } from '@blocksuite/affine-gfx-shape';
 import type {
@@ -339,13 +338,11 @@ export class EdgelessAutoComplete extends WithDisposable(LitElement) {
       endPosition,
       nextShape
     );
-    const startPoint = getConnectableRelativePosition(
-      curShape,
-      startConnectionPosition
+    const startPoint = PointLocation.fromVec(
+      startBound.getRelativePoint(startConnectionPosition)
     );
-    const endPoint = getConnectableRelativePosition(
-      nextShape,
-      endConnectionPosition
+    const endPoint = PointLocation.fromVec(
+      nextBound.getRelativePoint(endConnectionPosition)
     );
 
     return this._pathGenerator.generateOrthogonalConnectorPath({
