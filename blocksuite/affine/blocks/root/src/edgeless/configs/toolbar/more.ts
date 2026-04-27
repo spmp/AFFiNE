@@ -19,7 +19,7 @@ import { createGroupFromSelectedCommand } from '@blocksuite/affine-gfx-group';
 import {
   AttachmentBlockModel,
   BookmarkBlockModel,
-  ConnectorElementModel,
+  type ConnectorElementModel,
   EmbedLinkedDocBlockSchema,
   EmbedLinkedDocModel,
   EmbedSyncedDocBlockSchema,
@@ -36,7 +36,6 @@ import type {
   ToolbarActions,
   ToolbarContext,
 } from '@blocksuite/affine-shared/services';
-import type { ConnectorElementModel } from '@blocksuite/affine-model';
 import {
   matchModels,
   type ReorderingType,
