@@ -492,7 +492,8 @@ export class EdgelessShapeBrowserPanel extends WithDisposable(LitElement) {
     setTimeout(focusNow, 0);
   }
 
-  private _getFilteredItems() {
+  private _getFilteredItems(includeSearchableLibraries = true) {
+    void includeSearchableLibraries;
     return SHAPE_BROWSER_ITEMS;
   }
   private _getShapesForCategory(category: ShapeCategory) {
@@ -638,9 +639,21 @@ export class EdgelessShapeBrowserPanel extends WithDisposable(LitElement) {
     const effectiveCategory =
       selectedCategory ?? availableCategories[0]?.id ?? 'general';
     const shapesInCategory = this._getShapesForCategory(effectiveCategory);
+    const baseItems = this._getFilteredItems(false);
+    const baseCategoryCounts = new Map<string, number>();
+    baseItems.forEach(shape => {
+      baseCategoryCounts.set(
+        shape.category,
+        (baseCategoryCounts.get(shape.category) ?? 0) + 1
+      );
+    });
+    const maxBaseCategoryItemCount = Math.max(
+      1,
+      ...baseCategoryCounts.values()
+    );
     const layout = getShapeBrowserLayout(
       this._viewportWidth,
-      Math.max(1, SHAPE_BROWSER_ITEMS.length)
+      maxBaseCategoryItemCount
     );
     const appTheme = this.edgeless?.std?.get(ThemeProvider)?.app$?.value;
 
