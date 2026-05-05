@@ -18,6 +18,7 @@ import {
 import type { ColorEvent } from '@blocksuite/affine-shared/utils';
 import { SignalWatcher, WithDisposable } from '@blocksuite/global/lit';
 import {
+  ArrowDownSmallIcon,
   ArrowUpSmallIcon,
   StyleGeneralIcon,
   StyleScribbleIcon,
@@ -72,6 +73,15 @@ export class EdgelessShapeMenu extends SignalWatcher(
       fill: none;
       stroke: var(--affine-icon-color);
     }
+    .more-shapes-button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .more-shapes-button svg {
+      fill: none;
+      stroke: var(--affine-icon-color);
+    }
     .color-panel-container {
       display: flex;
       align-items: center;
@@ -114,9 +124,7 @@ export class EdgelessShapeMenu extends SignalWatcher(
   private readonly _props$ = computed(() => {
     const shapeName: ShapeName = this._shapeName$.value;
     const propsStore = this.edgeless.std.get(EditPropsStore);
-    const shapeProps =
-      propsStore.lastProps$.value[this._getShapeLastPropsKey(shapeName)] ??
-      propsStore.lastProps$.value['shape:rect'];
+    const shapeProps = propsStore.lastProps$.value['shape:rect'];
     const { shapeStyle, fillColor, strokeColor, radius } = shapeProps;
     return {
       shapeStyle,
@@ -177,22 +185,21 @@ export class EdgelessShapeMenu extends SignalWatcher(
   };
 
   private _recordShapeProps(
-    shapeName: ShapeName,
+    _shapeName: ShapeName,
     props: Parameters<EditPropsStore['recordLastProps']>[1]
   ) {
     const propsStore = this.edgeless.std.get(EditPropsStore);
-    propsStore.recordLastProps(this._getShapeLastPropsKey(shapeName), props);
+    propsStore.recordLastProps('shape:rect', {
+      ...props,
+      flipX: false,
+      flipY: false,
+    });
   }
 
   private _getShapeLastPropsKey(shapeName: ShapeName) {
-    const normalized =
-      shapeName === ShapeType.Rect ||
-      shapeName === ShapeType.Ellipse ||
-      shapeName === 'roundedRect'
-        ? shapeName
-        : ShapeType.Triangle;
-
-    return `shape:${normalized}` as const;
+    return shapeName === ShapeType.Rect
+      ? 'shape:rect'
+      : (`shape:${shapeName}` as const);
   }
 
   private _getActiveShapeName() {
@@ -214,11 +221,7 @@ export class EdgelessShapeMenu extends SignalWatcher(
 
   private readonly _setShapeStyle = (shapeStyle: ShapeStyle) => {
     const shapeName = this._getActiveShapeName();
-    this.edgeless.std
-      .get(EditPropsStore)
-      .recordLastProps(this._getShapeLastPropsKey(shapeName), {
-        shapeStyle,
-      });
+    this._recordShapeProps(shapeName, { shapeStyle });
     this.onChange(shapeName);
   };
 
@@ -428,6 +431,16 @@ export class EdgelessShapeMenu extends SignalWatcher(
                 `;
               }
             )}
+            <edgeless-tool-icon-button
+              class="more-shapes-button"
+              .tooltip=${this.browserOpen ? 'Close' : 'More shapes'}
+              .active=${this.browserOpen}
+              .activeMode=${'background'}
+              .iconSize=${'20px'}
+              @click=${() => this.onMoreClick?.()}
+            >
+              ${this.browserOpen ? ArrowDownSmallIcon() : ArrowUpSmallIcon()}
+            </edgeless-tool-icon-button>
           </div>
           <menu-divider .vertical=${true}></menu-divider>
           <div class="color-panel-container">
@@ -462,4 +475,10 @@ export class EdgelessShapeMenu extends SignalWatcher(
 
   @property({ attribute: false })
   accessor onChange!: (name: ShapeName) => void;
+
+  @property({ attribute: false })
+  accessor onMoreClick: (() => void) | undefined;
+
+  @property({ attribute: false })
+  accessor browserOpen = false;
 }

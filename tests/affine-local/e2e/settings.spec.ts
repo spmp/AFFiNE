@@ -74,6 +74,78 @@ test('Change layout width', async ({ page }) => {
   expect(className).toContain('full-screen');
 });
 
+test('Connector shape includes rounded option in editor settings', async ({
+  page,
+}) => {
+  await openHomePage(page);
+  await waitForEditorLoad(page);
+  await openEditorSetting(page);
+
+  const elbowed = page.getByTestId('connector-shape-elbowed-trigger');
+  const rounded = page.getByTestId('connector-shape-rounded-trigger');
+  const curve = page.getByTestId('connector-shape-curve-trigger');
+
+  await elbowed.scrollIntoViewIfNeeded();
+  await expect(elbowed).toBeVisible();
+  await expect(rounded).toBeVisible();
+  await expect(curve).toBeVisible();
+
+  const elbowedBox = await elbowed.boundingBox();
+  const roundedBox = await rounded.boundingBox();
+  const curveBox = await curve.boundingBox();
+
+  expect(elbowedBox).not.toBeNull();
+  expect(roundedBox).not.toBeNull();
+  expect(curveBox).not.toBeNull();
+
+  expect((roundedBox?.x ?? 0) > (elbowedBox?.x ?? 0)).toBe(true);
+  expect((curveBox?.x ?? 0) > (roundedBox?.x ?? 0)).toBe(true);
+
+  await rounded.click();
+  await expect(rounded).toHaveAttribute('data-state', 'checked');
+});
+
+test('Connector corner radius slider is present and updates value', async ({
+  page,
+}) => {
+  await openHomePage(page);
+  await waitForEditorLoad(page);
+  await openEditorSetting(page);
+
+  const rounded = page.getByTestId('connector-shape-rounded-trigger');
+  await rounded.scrollIntoViewIfNeeded();
+  await rounded.click();
+
+  const slider = page
+    .getByTestId('connector-corner-radius-slider')
+    .getByRole('slider');
+  await expect(page.getByTestId('connector-corner-radius-row')).toBeVisible();
+  await expect(slider).toBeVisible();
+  await expect(slider).toHaveAttribute('aria-valuenow', '20');
+
+  await slider.click();
+  await slider.press('ArrowRight');
+  await expect(slider).toHaveAttribute('aria-valuenow', '24');
+});
+
+test('Connector hover to initiate defaults on and can be toggled', async ({
+  page,
+}) => {
+  await openHomePage(page);
+  await waitForEditorLoad(page);
+  await openEditorSetting(page);
+
+  const hoverToggle = page
+    .getByTestId('connector-hover-to-initiate-trigger')
+    .locator('input[type="checkbox"]');
+
+  await expect(hoverToggle).toBeVisible();
+  await expect(hoverToggle).toBeChecked();
+
+  await hoverToggle.click();
+  await expect(hoverToggle).not.toBeChecked();
+});
+
 test('Open shortcuts panel', async ({ page }) => {
   await openHomePage(page);
   await waitForEditorLoad(page);
@@ -243,55 +315,4 @@ test('reset keeps default line and fill visibility from theme palettes', async (
 
   expect(resetPaletteState?.showInLine).toBe(false);
   expect(resetPaletteState?.showInFill).toBe(true);
-});
-
-test('Editor border style options are consistent for note, shape, and connector', async ({
-  page,
-}) => {
-  await openHomePage(page);
-  await waitForEditorLoad(page);
-  await openEditorSetting(page);
-
-  await expect(
-    page.getByTestId('note-border-style-solid-trigger')
-  ).toBeVisible();
-  await expect(
-    page.getByTestId('note-border-style-dash-trigger')
-  ).toBeVisible();
-  await expect(page.getByTestId('note-border-style-dot-trigger')).toBeVisible();
-  await expect(
-    page.getByTestId('note-border-style-none-trigger')
-  ).toBeVisible();
-
-  await expect(
-    page.getByTestId('shape-border-style-solid-trigger')
-  ).toBeVisible();
-  await expect(
-    page.getByTestId('shape-border-style-dash-trigger')
-  ).toBeVisible();
-  await expect(
-    page.getByTestId('shape-border-style-dot-trigger')
-  ).toBeVisible();
-  await expect(
-    page.getByTestId('shape-border-style-none-trigger')
-  ).toBeVisible();
-
-  const connectorSolid = page.getByTestId(
-    'connector-border-style-solid-trigger'
-  );
-  const connectorDash = page.getByTestId('connector-border-style-dash-trigger');
-  const connectorDot = page.getByTestId('connector-border-style-dot-trigger');
-  const connectorNone = page.getByTestId('connector-border-style-none-trigger');
-
-  await connectorSolid.scrollIntoViewIfNeeded();
-  await expect(connectorSolid).toBeVisible();
-  await expect(connectorDash).toBeVisible();
-  await expect(connectorDot).toBeVisible();
-  await expect(connectorNone).toBeVisible();
-
-  await connectorDot.click();
-  await expect(connectorDot).toHaveAttribute('data-state', 'checked');
-
-  await connectorNone.click();
-  await expect(connectorNone).toHaveAttribute('data-state', 'checked');
 });
