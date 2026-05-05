@@ -492,8 +492,11 @@ export class EdgelessShapeBrowserPanel extends WithDisposable(LitElement) {
     setTimeout(focusNow, 0);
   }
 
+  private _getFilteredItems() {
+    return SHAPE_BROWSER_ITEMS;
+  }
   private _getShapesForCategory(category: ShapeCategory) {
-    let shapes = SHAPE_BROWSER_ITEMS.filter(
+    let shapes = this._getFilteredItems().filter(
       shape => shape.category === category
     );
 
@@ -515,14 +518,14 @@ export class EdgelessShapeBrowserPanel extends WithDisposable(LitElement) {
     name: string;
   }> {
     const shapes = this._searchKeyword
-      ? SHAPE_BROWSER_ITEMS.filter(shape => {
+      ? this._getFilteredItems().filter(shape => {
           const keyword = this._searchKeyword.toLowerCase();
           return (
             String(shape.name).toLowerCase().includes(keyword) ||
             (shape.tooltip ?? '').toLowerCase().includes(keyword)
           );
         })
-      : SHAPE_BROWSER_ITEMS;
+      : this._getFilteredItems();
     const categoryMap = new Map<string, string>();
     shapes.forEach(shape => {
       if (!categoryMap.has(shape.category)) {
