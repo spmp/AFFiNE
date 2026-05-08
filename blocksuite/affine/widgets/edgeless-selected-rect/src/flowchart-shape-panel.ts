@@ -119,21 +119,7 @@ export class EdgelessFlowchartShapePanel extends WithDisposable(LitElement) {
 
   private _computeNextBound() {
     const connected = this._getConnectedElements();
-    const bound = nextBound(this.direction, this.current, connected);
-    const currentBound = this.current.elementBound;
-
-    switch (this.direction) {
-      case Direction.Top:
-      case Direction.Bottom:
-        bound.x = currentBound.x + (currentBound.w - bound.w) / 2;
-        break;
-      case Direction.Left:
-      case Direction.Right:
-        bound.y = currentBound.y + (currentBound.h - bound.h) / 2;
-        break;
-    }
-
-    return bound;
+    return nextBound(this.direction, this.current, connected);
   }
 
   private _addConnector(sourceId: string, targetId: string) {
