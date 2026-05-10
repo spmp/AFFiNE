@@ -759,6 +759,8 @@ export class PropertiesModal extends SignalWatcher(WithDisposable(LitElement)) {
     const gradientColor = model.gradientFinal ?? model.fillColor;
     const textValue = model.text?.toString() ?? '';
     const shadowEnabled = Boolean(model.shadow);
+    const showStencilSelector =
+      model.shapeType === ShapeType.DrawioStencil || Boolean(model.stencilName);
     const shadowValue = model.shadow ?? {
       blur: 4,
       offsetX: 0,
@@ -916,22 +918,24 @@ export class PropertiesModal extends SignalWatcher(WithDisposable(LitElement)) {
             model.lockAspectRatio ?? false,
             value => this._updateProperty('lockAspectRatio', value)
           )}
-          ${this._renderSelectRow(
-            'Stencil name',
-            model.stencilName ?? 'none',
-            [
-              { value: 'none', label: 'None' },
-              ...STENCIL_SHAPE_NAMES.map(name => ({
-                value: name,
-                label: name,
-              })),
-            ],
-            value =>
-              this._updateProperty(
-                'stencilName',
-                value === 'none' ? undefined : value
+          ${showStencilSelector
+            ? this._renderSelectRow(
+                'Stencil name',
+                model.stencilName ?? 'none',
+                [
+                  { value: 'none', label: 'None' },
+                  ...STENCIL_SHAPE_NAMES.map(name => ({
+                    value: name,
+                    label: name,
+                  })),
+                ],
+                value =>
+                  this._updateProperty(
+                    'stencilName',
+                    value === 'none' ? undefined : value
+                  )
               )
-          )}
+            : null}
           ${this._renderCheckboxRow('Shadow', shadowEnabled, value =>
             this._updateProperty('shadow', value ? shadowValue : null)
           )}
