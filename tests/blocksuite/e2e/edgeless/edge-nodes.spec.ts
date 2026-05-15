@@ -107,7 +107,9 @@ test.describe('edge nodes', () => {
     expect(alpha).toBeGreaterThan(0);
   });
 
-  test('clicking an edge node starts a connector', async ({ page }) => {
+  test('single-clicking a hovered edge node starts a connector', async ({
+    page,
+  }) => {
     await edgelessCommonSetup(page);
     const shapeId = await createRectShape(page);
     if (!shapeId) throw new Error('shapeId is not found');
@@ -116,9 +118,8 @@ test.describe('edge nodes', () => {
     await page.mouse.move(anchor.x, anchor.y);
     await page.waitForTimeout(150);
 
-    await page.mouse.down();
-    await page.mouse.move(anchor.x + 120, anchor.y + 80);
-    await page.mouse.up();
+    await page.mouse.click(anchor.x, anchor.y);
+    await page.waitForTimeout(100);
 
     const connector = await page.evaluate(() => {
       const root = document.querySelector('affine-edgeless-root') as any;

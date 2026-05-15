@@ -239,15 +239,9 @@ export class EdgelessConnectorAnchorsWidget extends WidgetComponent {
           std.get(EditPropsStore).lastProps$.value.connector.mode ??
           DEFAULT_CONNECTOR_MODE;
         gfx.tool.setTool(ConnectorTool, { mode: lastMode });
-        const tool = gfx.tool.get(ConnectorTool) as ConnectorTool & {
-          quickConnectFromAnchor?: (
-            point: IVec,
-            element: GfxModel,
-            position: IVec
-          ) => void;
-        };
+        const tool = gfx.tool.get(ConnectorTool);
         const anchor = this._hoverConnection;
-        if (anchor?.position && tool.quickConnectFromAnchor) {
+        if (anchor?.position) {
           tool.quickConnectFromAnchor(
             [state.x, state.y],
             this._hoveredElement,
