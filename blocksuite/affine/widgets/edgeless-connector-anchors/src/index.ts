@@ -128,6 +128,10 @@ export class EdgelessConnectorAnchorsWidget extends WidgetComponent {
   }
 
   override firstUpdated() {
+    this.style.pointerEvents = 'none';
+    this.tabIndex = -1;
+    this.setAttribute('aria-hidden', 'true');
+
     const { _disposables } = this;
     const gfx = this._gfx;
     const std = this.std;
