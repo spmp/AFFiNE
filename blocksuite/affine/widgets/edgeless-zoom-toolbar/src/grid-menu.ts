@@ -42,8 +42,9 @@ export class EdgelessGridMenu extends WithDisposable(LitElement) {
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 2px;
-      padding: 4px 8px;
+      width: 40px;
+      height: 32px;
+      padding: 4px;
       border: none;
       background: transparent;
       border-radius: 4px;
@@ -367,9 +368,7 @@ export class EdgelessGridMenu extends WithDisposable(LitElement) {
         @pointerdown=${stopPropagation}
       >
         <button
-          class="grid-menu-trigger ${this._showGrid || this._isOpen
-            ? 'active'
-            : ''}"
+          class="grid-menu-trigger ${this._isOpen ? 'active' : ''}"
           @click=${this._toggleMenu}
           title="Grid and Snap Settings"
         >
