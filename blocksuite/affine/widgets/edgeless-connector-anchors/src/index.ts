@@ -44,15 +44,7 @@ export class EdgelessConnectorAnchorsWidget extends WidgetComponent {
 
   private _touchLongPressStart: IVec | null = null;
 
-  private _cancelTouchLongPress() {
-    if (this._touchLongPressTimer !== null) {
-      clearTimeout(this._touchLongPressTimer);
-      this._touchLongPressTimer = null;
-    }
-    this._touchLongPressStart = null;
-  }
-
-  private _updateHoverFromViewPoint(viewPoint: IVec) {
+  private _updateHoverState(viewPoint: IVec, isTouch: boolean) {
     const gfx = this._gfx;
     const [x, y] = gfx.viewport.toModelCoord(viewPoint[0], viewPoint[1]);
     const result = this._overlay?.renderConnector([x, y]);
@@ -62,15 +54,54 @@ export class EdgelessConnectorAnchorsWidget extends WidgetComponent {
     }
 
     const element = gfx.getElementById(result.id) as GfxModel | null;
-    if (!element || ('type' in element && element.type === 'connector')) {
+    if (!element) {
       this._clearOverlay();
       return false;
     }
+    const radius = isTouch ? 14 : 8;
+    const points = this._overlay?.points ?? [];
+    let nearestPoint: IVec | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    for (const point of points) {
+      const viewAnchor = gfx.viewport.toViewCoord(point[0], point[1]);
+      const distance = Vec.dist(viewAnchor, viewPoint);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestPoint = point;
+      }
+    }
 
     this._hoveredElement = element;
-    this._hoverHighlight = this._overlay?.highlightPoint ?? null;
-    this._hoverConnection = result ?? null;
-    return Boolean(this._hoverHighlight);
+    if (nearestPoint && nearestDistance <= radius) {
+      this._hoverHighlight = nearestPoint;
+      this._hoverConnection = result;
+      this._overlay!.highlightPoint = nearestPoint;
+    } else {
+      this._hoverHighlight = null;
+      this._hoverConnection = null;
+      this._overlay!.highlightPoint = null;
+    }
+
+    (
+      this._overlay as ConnectionOverlay & {
+        _renderer?: { refresh?: () => void };
+      }
+    )._renderer?.refresh?.();
+
+    return true;
+  }
+
+  private _cancelTouchLongPress() {
+    if (this._touchLongPressTimer !== null) {
+      clearTimeout(this._touchLongPressTimer);
+      this._touchLongPressTimer = null;
+    }
+    this._touchLongPressStart = null;
+  }
+
+  private _updateHoverFromViewPoint(viewPoint: IVec) {
+    return this._updateHoverState(viewPoint, true);
   }
 
   private _clearOverlay() {
@@ -151,8 +182,7 @@ export class EdgelessConnectorAnchorsWidget extends WidgetComponent {
           return;
         }
 
-        const [x, y] = gfx.viewport.toModelCoord(state.x, state.y);
-        this._pendingPointer = [x, y];
+        this._pendingPointer = [state.x, state.y];
         if (this._hoverRafId) return;
         this._hoverRafId = requestAnimationFrame(() => {
           this._hoverRafId = null;
@@ -160,21 +190,7 @@ export class EdgelessConnectorAnchorsWidget extends WidgetComponent {
           if (!pending) return;
           this._pendingPointer = null;
 
-          const result = this._overlay?.renderConnector(pending);
-          if (!result?.id) {
-            this._clearOverlay();
-            return;
-          }
-
-          const element = gfx.getElementById(result.id) as GfxModel | null;
-          if (!element || ('type' in element && element.type === 'connector')) {
-            this._clearOverlay();
-            return;
-          }
-
-          this._hoveredElement = element;
-          this._hoverHighlight = this._overlay?.highlightPoint ?? null;
-          this._hoverConnection = result ?? null;
+          this._updateHoverState(pending, isTouch);
         });
       })
     );
