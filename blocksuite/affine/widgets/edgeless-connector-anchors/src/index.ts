@@ -143,7 +143,6 @@ export class EdgelessConnectorAnchorsWidget extends WidgetComponent {
     _disposables.add(
       edgeless.host.event.add('dragStart', () => {
         this._dragging = true;
-        this._clearOverlay();
       })
     );
 
@@ -156,7 +155,6 @@ export class EdgelessConnectorAnchorsWidget extends WidgetComponent {
 
     _disposables.add(
       edgeless.host.event.add('pointerMove', ctx => {
-        if (this._dragging) return;
         if (!this._isHoverToInitiateEnabled()) {
           this._cancelTouchLongPress();
           this._clearOverlay();
