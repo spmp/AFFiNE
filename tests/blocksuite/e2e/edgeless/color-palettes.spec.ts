@@ -92,13 +92,9 @@ async function openShapeMenu(page: Page) {
 
 async function clickShapeTypeButton(page: Page, index: number) {
   await page
-<<<<<<< HEAD
-    .locator('edgeless-shape-menu .shape-type-container edgeless-tool-icon-button')
-=======
     .locator(
       'edgeless-shape-menu .shape-type-container edgeless-tool-icon-button'
     )
->>>>>>> b5d507ee51 (fix(color-palettes): read active shape key before saving menu styles)
     .nth(index)
     .click({ force: true });
 }
