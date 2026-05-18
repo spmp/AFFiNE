@@ -131,7 +131,6 @@ const ShapeObject = {
   color: ColorSchema,
   fillColor: ColorSchema,
   gradientFinal: ColorSchema.optional(),
-<<<<<<< HEAD
   gradientDirection: z.enum(GRADIENT_DIRECTIONS).optional(),
   flipX: z.boolean().optional(),
   flipY: z.boolean().optional(),
