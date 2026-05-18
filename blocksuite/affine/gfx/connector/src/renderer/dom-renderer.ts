@@ -5,7 +5,6 @@ import {
 import {
   type ConnectorElementModel,
   ConnectorMode,
-  DEFAULT_CONNECTOR_CORNER_RADIUS,
   DefaultTheme,
   type JumpStyle,
   type LocalConnectorElementModel,
@@ -19,6 +18,7 @@ import {
   DEFAULT_ARROW_SIZE,
   DRAWIO_MARKER_SIZE_MULTIPLIER,
   getDrawioMarkerDef,
+  resolveConnectorCornerRadius,
 } from './utils';
 
 interface PathBounds {
@@ -412,10 +412,7 @@ export const connectorBaseDomRenderer = (
       y: pt.y - offsetY,
     }));
 
-    const cornerRadius =
-      'cornerRadius' in model
-        ? (model.cornerRadius as number)
-        : DEFAULT_CONNECTOR_CORNER_RADIUS;
+    const cornerRadius = resolveConnectorCornerRadius(model);
     pathData = createConnectorPathWithJumps(
       adjustedRoutedPoints,
       jumpStyle,

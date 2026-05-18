@@ -15,7 +15,6 @@ import {
 import {
   type ConnectorElementModel,
   ConnectorMode,
-  DEFAULT_CONNECTOR_CORNER_RADIUS,
   DefaultTheme,
   type JumpStyle,
   type LocalConnectorElementModel,
@@ -39,6 +38,7 @@ import {
   renderDiamond,
   renderDrawioMarker,
   renderTriangle,
+  resolveConnectorCornerRadius,
 } from './utils';
 
 export const connector: ElementRenderer<
@@ -151,10 +151,7 @@ function renderPoints(
   const jumpSize: number =
     'jumpSize' in model ? (model.jumpSize as number) : 10;
   // cornerRadius only exists on ConnectorElementModel, not LocalConnectorElementModel
-  const cornerRadius: number =
-    'cornerRadius' in model
-      ? (model.cornerRadius as number)
-      : DEFAULT_CONNECTOR_CORNER_RADIUS;
+  const cornerRadius = resolveConnectorCornerRadius(model);
 
   if (rough) {
     const options = {

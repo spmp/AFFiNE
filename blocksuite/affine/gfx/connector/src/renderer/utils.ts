@@ -2,6 +2,7 @@ import type { RoughCanvas } from '@blocksuite/affine-block-surface';
 import {
   type ConnectorElementModel,
   ConnectorMode,
+  DEFAULT_CONNECTOR_CORNER_RADIUS,
   type JumpStyle,
   type LocalConnectorElementModel,
 } from '@blocksuite/affine-model';
@@ -78,6 +79,14 @@ const DRAWIO_MARKER_DEFS: Record<
 
 export function getDrawioMarkerDef(style: string) {
   return DRAWIO_MARKER_DEFS[style] ?? null;
+}
+
+export function resolveConnectorCornerRadius(
+  model: ConnectorElementModel | LocalConnectorElementModel
+) {
+  return 'cornerRadius' in model
+    ? (model.cornerRadius as number)
+    : DEFAULT_CONNECTOR_CORNER_RADIUS;
 }
 
 /**
