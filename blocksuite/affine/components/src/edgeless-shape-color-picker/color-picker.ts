@@ -274,9 +274,10 @@ export class EdgelessShapeColorPicker extends WithDisposable(
   #calcCustomButtonState(
     color: string,
     theme: ColorScheme,
-    palettes: Palette[]
+    palettes: Palette[] | undefined
   ) {
-    return !palettes
+    const paletteList = palettes ?? DefaultTheme.Palettes;
+    return !paletteList
       .map(({ value }) => resolveColor(value, theme))
       .includes(color);
   }
