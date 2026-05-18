@@ -15,6 +15,7 @@ import {
   FontWeight,
   FontWeightSchema,
   FrameZodSchema,
+  GRADIENT_DIRECTIONS,
   HIGHLIGHTER_LINE_WIDTHS,
   LayoutType,
   LineWidth,
@@ -127,9 +128,7 @@ const ShapeObject = {
   color: ColorSchema,
   fillColor: ColorSchema,
   gradientFinal: ColorSchema.optional(),
-  gradientDirection: z
-    .enum(['S', 'W', 'N', 'E', 'SE', 'SW', 'NE', 'NW'])
-    .optional(),
+  gradientDirection: z.enum(GRADIENT_DIRECTIONS).optional(),
   strokeColor: ColorSchema,
   strokeStyle: StrokeStyleSchema,
   strokeWidth: z.number(),
