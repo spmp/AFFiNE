@@ -309,6 +309,12 @@ export class LocalShapeElementModel extends GfxLocalElementModel {
   accessor fillColor: Color = DefaultTheme.shapeFillColor;
 
   @prop()
+  accessor flipX: boolean = false;
+
+  @prop()
+  accessor flipY: boolean = false;
+
+  @prop()
   accessor filled: boolean = false;
 
   @prop()
