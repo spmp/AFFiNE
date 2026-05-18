@@ -15,7 +15,7 @@ import { createGroupFromSelectedCommand } from '@blocksuite/affine-gfx-group';
 import {
   AttachmentBlockModel,
   BookmarkBlockModel,
-  ConnectorElementModel,
+  type ConnectorElementModel,
   EmbedLinkedDocBlockSchema,
   EmbedLinkedDocModel,
   EmbedSyncedDocBlockSchema,

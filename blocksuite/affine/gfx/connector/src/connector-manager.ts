@@ -816,7 +816,7 @@ export class ConnectionOverlay extends Overlay {
     const zoom = this.gfx.viewport.zoom;
     const radius = 5 / zoom;
     const color = this._emphasisColor;
-    ctx.globalAlpha = 0.6;
+    ctx.globalAlpha = 0.3; // Reduced from 0.6 to make lighter
     let lineWidth = 1 / zoom;
     if (this.sourceBounds) {
       renderRect(ctx, this.sourceBounds, color, lineWidth);
@@ -825,13 +825,13 @@ export class ConnectionOverlay extends Overlay {
       renderRect(ctx, this.targetBounds, color, lineWidth);
     }
 
-    lineWidth = 2 / zoom;
+    // Keep lineWidth at 1px instead of 2px for thinner strokes
     this.points.forEach(p => {
       ctx.beginPath();
       ctx.arc(p[0], p[1], radius, 0, PI2);
       ctx.fillStyle = 'white';
       ctx.strokeStyle = color;
-      ctx.lineWidth = lineWidth;
+      ctx.lineWidth = lineWidth; // Now using 1/zoom instead of 2/zoom
       ctx.fill();
       ctx.stroke();
       ctx.closePath();
@@ -843,7 +843,7 @@ export class ConnectionOverlay extends Overlay {
       ctx.arc(this.highlightPoint[0], this.highlightPoint[1], radius, 0, PI2);
       ctx.fillStyle = color;
       ctx.strokeStyle = color;
-      ctx.lineWidth = lineWidth;
+      ctx.lineWidth = 1 / zoom; // Use 1px stroke for consistency
       ctx.fill();
       ctx.stroke();
       ctx.closePath();
@@ -1115,6 +1115,7 @@ export class ConnectorPathGenerator extends PathGenerator {
       getElementById: elementGetter ?? (() => null),
     });
     const points = path ?? instance._generateConnectorPath(connector) ?? [];
+    // Curve mode uses bezier bounding box, others use simple point bounds
     const bound =
       connector.mode === ConnectorMode.Curve
         ? getBezierCurveBoundingBox(getBezierParameters(points))
@@ -1195,6 +1196,8 @@ export class ConnectorPathGenerator extends PathGenerator {
       mode === ConnectorMode.Orthogonal ||
       mode === ConnectorMode.Rounded
     ) {
+      // Rounded uses the same path generation as Orthogonal,
+      // the rounded corners are handled during rendering
       const start = this._getConnectorEndElement(connector, 'source');
       const end = this._getConnectorEndElement(connector, 'target');
 
@@ -1206,6 +1209,22 @@ export class ConnectorPathGenerator extends PathGenerator {
       const endBound = end
         ? Bound.from(getBoundWithRotation(rBound(end)))
         : null;
+
+      // Check for user-defined waypoints (only on ConnectorElementModel, not Local)
+      const waypoints =
+        'waypoints' in connector ? connector.waypoints : undefined;
+
+      if (waypoints && waypoints.length > 0) {
+        // Route through waypoints
+        return this._generatePathThroughWaypoints(
+          startPoint,
+          endPoint,
+          startBound,
+          endBound,
+          waypoints
+        );
+      }
+
       const path = this.generateOrthogonalConnectorPath({
         startPoint,
         endPoint,
@@ -1217,6 +1236,123 @@ export class ConnectorPathGenerator extends PathGenerator {
       return this._generateCurveConnectorPath(connector);
     }
     throw new Error('unknown connector mode');
+  }
+
+  /**
+   * Generate a path that routes through user-defined waypoints.
+   * Waypoints are intermediate turn points that the connector must pass through.
+   */
+  private _generatePathThroughWaypoints(
+    startPoint: PointLocation,
+    endPoint: PointLocation,
+    _startBound: Bound | null,
+    _endBound: Bound | null,
+    waypoints: IVec[]
+  ): PointLocation[] {
+    const [, , nextStartPoint, lastEndPoint] =
+      this._prepareOrthogonalConnectorInfo({
+        startPoint,
+        endPoint,
+        startBound: _startBound,
+        endBound: _endBound,
+      });
+
+    const pointsEqual = (a: IVec | PointLocation, b: IVec | PointLocation) =>
+      Math.abs(a[0] - b[0]) < 0.001 && Math.abs(a[1] - b[1]) < 0.001;
+
+    // Build path by connecting: start -> tail anchor -> wp1 -> ... -> tail anchor -> end
+    // Waypoints represent intermediate turn points; tail anchors preserve orientation.
+
+    const fullPath: PointLocation[] = [startPoint];
+
+    // For orthogonal connectors, waypoints define the turn points.
+    // We build a path through them while keeping tail anchors perpendicular.
+
+    const startAnchor = new PointLocation(nextStartPoint);
+    if (!pointsEqual(startPoint, nextStartPoint)) {
+      fullPath.push(startAnchor);
+    }
+
+    let currentPoint = startAnchor;
+
+    // Small tolerance to avoid creating micro-segments from tiny float drift.
+    const axisEpsilon = 0.5;
+
+    waypoints.forEach((wp, index) => {
+      // Create orthogonal path from current point to waypoint
+      // We need to determine if we should go horizontal-then-vertical
+      // or vertical-then-horizontal based on the direction
+
+      const dx = wp[0] - currentPoint[0];
+      const dy = wp[1] - currentPoint[1];
+
+      const prevWaypoint = index > 0 ? waypoints[index - 1] : null;
+      const isDuplicateWaypoint =
+        prevWaypoint &&
+        Math.abs(prevWaypoint[0] - wp[0]) <= axisEpsilon &&
+        Math.abs(prevWaypoint[1] - wp[1]) <= axisEpsilon;
+
+      // For the first segment from start, prefer to exit based on start bound
+      // For subsequent segments, alternate based on previous direction
+
+      // Preserve explicit duplicate waypoints to create a zero-length segment.
+      if (
+        isDuplicateWaypoint &&
+        Math.abs(dx) <= axisEpsilon &&
+        Math.abs(dy) <= axisEpsilon
+      ) {
+        fullPath.push(new PointLocation([currentPoint[0], currentPoint[1]]));
+        return;
+      }
+
+      // If both axes move beyond tolerance, add an elbow.
+      if (Math.abs(dx) > axisEpsilon && Math.abs(dy) > axisEpsilon) {
+        // Need a turn - add intermediate point
+        // Go horizontal first, then vertical
+        const intermediate = new PointLocation([wp[0], currentPoint[1]]);
+        fullPath.push(intermediate);
+      }
+
+      // Snap near-aligned points to avoid tiny segments.
+      const snappedWp: IVec = [
+        Math.abs(dx) <= axisEpsilon ? currentPoint[0] : wp[0],
+        Math.abs(dy) <= axisEpsilon ? currentPoint[1] : wp[1],
+      ];
+      // If snapping collapses the point, skip it.
+      if (
+        Math.abs(snappedWp[0] - currentPoint[0]) <= axisEpsilon &&
+        Math.abs(snappedWp[1] - currentPoint[1]) <= axisEpsilon
+      ) {
+        return;
+      }
+
+      const wpPoint = new PointLocation(snappedWp);
+      fullPath.push(wpPoint);
+      currentPoint = wpPoint;
+    });
+
+    // Final segment: last waypoint (or start anchor) to end anchor/end
+    const endAnchor = new PointLocation(lastEndPoint);
+    const lastPoint = fullPath[fullPath.length - 1];
+    const dx = endAnchor[0] - lastPoint[0];
+    const dy = endAnchor[1] - lastPoint[1];
+
+    if (Math.abs(dx) > axisEpsilon && Math.abs(dy) > axisEpsilon) {
+      // Need a turn to reach end - add intermediate point
+      // Go horizontal first to align X, then vertical
+      const intermediate = new PointLocation([endAnchor[0], lastPoint[1]]);
+      fullPath.push(intermediate);
+    }
+
+    if (!pointsEqual(lastPoint, endAnchor)) {
+      fullPath.push(endAnchor);
+    }
+
+    if (!pointsEqual(endAnchor, endPoint)) {
+      fullPath.push(endPoint);
+    }
+
+    return fullPath;
   }
 
   private _generateCurveConnectorPath(
@@ -1254,18 +1390,10 @@ export class ConnectorPathGenerator extends PathGenerator {
       if (!startPoint || !endPoint) return [];
 
       if (source.id) {
-        let startTangentVertical = Vec.rot(startPoint.tangent, -Math.PI / 2);
-        if (startElement && !isVecZero(startTangentVertical)) {
-          const center = Bound.deserialize(startElement.xywh).center;
-          const centerToAnchor = Vec.sub(startPoint, center);
-          if (
-            startTangentVertical[0] * centerToAnchor[0] +
-              startTangentVertical[1] * centerToAnchor[1] <
-            0
-          ) {
-            startTangentVertical = Vec.mul(startTangentVertical, -1);
-          }
-        }
+        const startTangentVertical = this._resolveTangentVertical(
+          startPoint,
+          startElement
+        );
         startPoint.out = isVecZero(startTangentVertical)
           ? Vec.mul(Vec.per(Vec.normalize(Vec.sub(startPoint, endPoint))), 20)
           : Vec.mul(
@@ -1279,18 +1407,10 @@ export class ConnectorPathGenerator extends PathGenerator {
             );
       }
       if (target.id) {
-        let endTangentVertical = Vec.rot(endPoint.tangent, -Math.PI / 2);
-        if (endElement && !isVecZero(endTangentVertical)) {
-          const center = Bound.deserialize(endElement.xywh).center;
-          const centerToAnchor = Vec.sub(endPoint, center);
-          if (
-            endTangentVertical[0] * centerToAnchor[0] +
-              endTangentVertical[1] * centerToAnchor[1] <
-            0
-          ) {
-            endTangentVertical = Vec.mul(endTangentVertical, -1);
-          }
-        }
+        const endTangentVertical = this._resolveTangentVertical(
+          endPoint,
+          endElement
+        );
         endPoint.in = isVecZero(endTangentVertical)
           ? Vec.mul(Vec.per(Vec.normalize(Vec.sub(endPoint, startPoint))), 20)
           : Vec.mul(
@@ -1378,6 +1498,28 @@ export class ConnectorPathGenerator extends PathGenerator {
     }
 
     return point;
+  }
+
+  private _resolveTangentVertical(
+    point: PointLocation,
+    element: Connectable | null
+  ) {
+    let tangentVertical = Vec.rot(point.tangent, -Math.PI / 2);
+    if (!element || isVecZero(tangentVertical)) {
+      return tangentVertical;
+    }
+
+    const center = Bound.deserialize(element.xywh).center;
+    const centerToAnchor = Vec.sub(point, center);
+    if (
+      tangentVertical[0] * centerToAnchor[0] +
+        tangentVertical[1] * centerToAnchor[1] <
+      0
+    ) {
+      tangentVertical = Vec.mul(tangentVertical, -1);
+    }
+
+    return tangentVertical;
   }
 
   private _getConnectorEndElement(
