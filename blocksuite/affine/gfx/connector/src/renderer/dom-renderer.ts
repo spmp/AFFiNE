@@ -5,6 +5,7 @@ import {
 import {
   type ConnectorElementModel,
   ConnectorMode,
+  DEFAULT_CONNECTOR_CORNER_RADIUS,
   DefaultTheme,
   type JumpStyle,
   type LocalConnectorElementModel,
@@ -412,7 +413,9 @@ export const connectorBaseDomRenderer = (
     }));
 
     const cornerRadius =
-      'cornerRadius' in model ? (model.cornerRadius as number) : 0;
+      'cornerRadius' in model
+        ? (model.cornerRadius as number)
+        : DEFAULT_CONNECTOR_CORNER_RADIUS;
     pathData = createConnectorPathWithJumps(
       adjustedRoutedPoints,
       jumpStyle,
