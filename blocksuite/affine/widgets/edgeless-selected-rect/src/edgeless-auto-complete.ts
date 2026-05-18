@@ -38,7 +38,7 @@ import type { SelectedRect } from '@blocksuite/affine-shared/types';
 import { handleNativeRangeAtPoint } from '@blocksuite/affine-shared/utils';
 import { DisposableGroup } from '@blocksuite/global/disposable';
 import type { Bound, IVec } from '@blocksuite/global/gfx';
-import { Vec } from '@blocksuite/global/gfx';
+import { PointLocation, Vec } from '@blocksuite/global/gfx';
 import { WithDisposable } from '@blocksuite/global/lit';
 import {
   ArrowUpBigIcon,
