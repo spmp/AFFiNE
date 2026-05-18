@@ -117,12 +117,6 @@ export class ShapeElementModel extends GfxPrimitiveElementModel<ShapeProps> {
   accessor gradientDirection: GradientDirection | undefined = undefined;
 
   @field()
-  accessor flipX: boolean = false;
-
-  @field()
-  accessor flipY: boolean = false;
-
-  @field()
   accessor filled: boolean = false;
 
   @field(FontFamily.Inter as string)
