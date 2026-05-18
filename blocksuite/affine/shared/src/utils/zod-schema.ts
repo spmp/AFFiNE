@@ -1,7 +1,6 @@
 import {
   ColorSchema,
   ConnectorMode,
-  DEFAULT_CONNECTOR_CORNER_RADIUS,
   DEFAULT_CONNECTOR_MODE,
   DEFAULT_FRONT_ENDPOINT_STYLE,
   DEFAULT_HIGHLIGHTER_LINE_WIDTH,
@@ -55,11 +54,7 @@ export const ConnectorSchema = z
     strokeStyle: StrokeStyleSchema,
     strokeWidth: LineWidthSchema,
     rough: z.boolean(),
-    hoverToInitiate: z.boolean(),
-    jumpStyle: z.enum(['none', 'arc', 'gap', 'sharp', 'line']),
-    jumpSize: z.number(),
     mode: ConnectorModeSchema,
-    cornerRadius: z.number(),
     labelStyle: z.object({
       color: ColorSchema,
       fontSize: z.number(),
@@ -76,11 +71,7 @@ export const ConnectorSchema = z
     strokeStyle: StrokeStyle.Solid,
     strokeWidth: LineWidth.Two,
     rough: false,
-    hoverToInitiate: true,
-    jumpStyle: 'none',
-    jumpSize: 10,
     mode: DEFAULT_CONNECTOR_MODE,
-    cornerRadius: DEFAULT_CONNECTOR_CORNER_RADIUS,
     labelStyle: {
       color: DefaultTheme.black,
       fontSize: 16,
@@ -117,8 +108,6 @@ export const HighlighterSchema = z
 const DEFAULT_SHAPE = {
   color: DefaultTheme.shapeTextColor,
   fillColor: DefaultTheme.shapeFillColor,
-  gradientFinal: undefined,
-  gradientDirection: undefined,
   flipX: false,
   flipY: false,
   strokeColor: DefaultTheme.shapeStrokeColor,
