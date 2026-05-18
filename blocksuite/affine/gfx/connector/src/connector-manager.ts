@@ -1,6 +1,7 @@
 import { AStarRunner, Overlay } from '@blocksuite/affine-block-surface';
 import {
   type Connection,
+  type ConnectorElementModel,
   ConnectorMode,
   GroupElementModel,
   type LocalConnectorElementModel,
