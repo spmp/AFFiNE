@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { StrokeStyle } from '../consts/index';
+import { GRADIENT_DIRECTIONS, StrokeStyle } from '../consts/index';
 import { ColorSchema } from './color';
 
 export const PaletteSchema = z.object({
@@ -17,9 +17,7 @@ export const ShapePaletteStyleSchema = z.object({
   strokeStyle: z.nativeEnum(StrokeStyle).optional(),
   ringColor: ColorSchema.optional(),
   gradientFinal: ColorSchema.optional(),
-  gradientDirection: z
-    .enum(['S', 'W', 'N', 'E', 'SE', 'SW', 'NE', 'NW'])
-    .optional(),
+  gradientDirection: z.enum(GRADIENT_DIRECTIONS).optional(),
 });
 
 export type ShapePaletteStyle = z.infer<typeof ShapePaletteStyleSchema>;
