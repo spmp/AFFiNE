@@ -1436,6 +1436,12 @@ export class ConnectorPathGenerator extends PathGenerator {
     connector: ConnectorElementModel | LocalConnectorElementModel
   ) {
     const { source, target } = connector;
+    const startElement = source.id
+      ? this._getConnectorEndElement(connector, 'source')
+      : null;
+    const endElement = target.id
+      ? this._getConnectorEndElement(connector, 'target')
+      : null;
     let startPoint: PointLocation | null = null;
     let endPoint: PointLocation | null = null;
 
@@ -1461,7 +1467,10 @@ export class ConnectorPathGenerator extends PathGenerator {
       if (!startPoint || !endPoint) return [];
 
       if (source.id) {
-        const startTangentVertical = Vec.rot(startPoint.tangent, -Math.PI / 2);
+        const startTangentVertical = this._resolveTangentVertical(
+          startPoint,
+          startElement
+        );
         startPoint.out = isVecZero(startTangentVertical)
           ? Vec.mul(Vec.per(Vec.normalize(Vec.sub(startPoint, endPoint))), 20)
           : Vec.mul(
@@ -1475,7 +1484,10 @@ export class ConnectorPathGenerator extends PathGenerator {
             );
       }
       if (target.id) {
-        const endTangentVertical = Vec.rot(endPoint.tangent, -Math.PI / 2);
+        const endTangentVertical = this._resolveTangentVertical(
+          endPoint,
+          endElement
+        );
         endPoint.in = isVecZero(endTangentVertical)
           ? Vec.mul(Vec.per(Vec.normalize(Vec.sub(endPoint, startPoint))), 20)
           : Vec.mul(
@@ -1563,6 +1575,28 @@ export class ConnectorPathGenerator extends PathGenerator {
     }
 
     return point;
+  }
+
+  private _resolveTangentVertical(
+    point: PointLocation,
+    element: Connectable | null
+  ) {
+    let tangentVertical = Vec.rot(point.tangent, -Math.PI / 2);
+    if (!element || isVecZero(tangentVertical)) {
+      return tangentVertical;
+    }
+
+    const center = Bound.deserialize(element.xywh).center;
+    const centerToAnchor = Vec.sub(point, center);
+    if (
+      tangentVertical[0] * centerToAnchor[0] +
+        tangentVertical[1] * centerToAnchor[1] <
+      0
+    ) {
+      tangentVertical = Vec.mul(tangentVertical, -1);
+    }
+
+    return tangentVertical;
   }
 
   private _getConnectorEndElement(
