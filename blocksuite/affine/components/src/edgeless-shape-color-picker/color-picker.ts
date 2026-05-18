@@ -358,7 +358,6 @@ export class EdgelessShapeColorPicker extends WithDisposable(
         enableCustomColor,
         enableGradient,
       },
-      strokeOnly,
     } = this;
 
     const effectiveGradientDirection = this.gradientDirection$.value;
