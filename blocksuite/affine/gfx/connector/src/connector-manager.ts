@@ -1,8 +1,6 @@
 import { AStarRunner, Overlay } from '@blocksuite/affine-block-surface';
 import {
-  type BrushElementModel,
   type Connection,
-  ConnectorElementModel,
   ConnectorMode,
   GroupElementModel,
   type LocalConnectorElementModel,
@@ -24,22 +22,36 @@ import {
   PI2,
   PointLocation,
   sign,
-  toRadian,
   Vec,
 } from '@blocksuite/global/gfx';
 import { assertType } from '@blocksuite/global/utils';
-import type {
-  GfxController,
-  GfxLocalElementModel,
-  GfxModel,
-} from '@blocksuite/std/gfx';
+import type { GfxController, GfxModel } from '@blocksuite/std/gfx';
 import { effect } from '@preact/signals-core';
 import last from 'lodash-es/last';
 
-export type Connectable = Exclude<
-  GfxModel,
-  ConnectorElementModel | BrushElementModel | GroupElementModel
->;
+import {
+  calculateNearestLocation,
+  type Connectable,
+  ConnectorEndpointLocations,
+  ConnectorEndpointLocationsOnTriangle,
+  getAnchors,
+  getConnectableRelativePosition,
+  getNearestConnectableAnchor,
+  isConnectorWithLabel,
+} from './connector-anchor-utils.js';
+
+// Re-export extracted anchor utilities so existing imports from
+// `connector-manager` continue to work during/after branch restacks.
+export {
+  calculateNearestLocation,
+  ConnectorEndpointLocations,
+  ConnectorEndpointLocationsOnTriangle,
+  getAnchors,
+  getConnectableRelativePosition,
+  getNearestConnectableAnchor,
+  isConnectorWithLabel,
+};
+export type { Connectable };
 
 export type OrthogonalConnectorInput = {
   startBound: Bound | null;
@@ -47,57 +59,6 @@ export type OrthogonalConnectorInput = {
   startPoint: PointLocation;
   endPoint: PointLocation;
 };
-
-export const ConnectorEndpointLocations: IVec[] = [
-  // At top
-  [0.5, 0],
-  // At right
-  [1, 0.5],
-  // At bottom
-  [0.5, 1],
-  // At left
-  [0, 0.5],
-];
-
-export const ConnectorEndpointLocationsOnTriangle: IVec[] = [
-  // At top
-  [0.5, 0],
-  // At right
-  [0.75, 0.5],
-  // At bottom
-  [0.5, 1],
-  // At left
-  [0.25, 0.5],
-];
-
-export function isConnectorWithLabel(model: GfxModel | GfxLocalElementModel) {
-  return model instanceof ConnectorElementModel && model.hasLabel();
-}
-
-export function calculateNearestLocation(
-  point: IVec,
-  bounds: IBound,
-  locations = ConnectorEndpointLocations,
-  shortestDistance = Number.POSITIVE_INFINITY
-) {
-  const { x, y, w, h } = bounds;
-  return locations
-    .map<IVec>(offset => [x + offset[0] * w, y + offset[1] * h])
-    .map(point => getPointFromBoundsWithRotation(bounds, point))
-    .reduce(
-      (prev, curr, index) => {
-        const d = Vec.dist(point, curr);
-        if (d < shortestDistance) {
-          const location = locations[index];
-          shortestDistance = d;
-          prev[0] = location[0];
-          prev[1] = location[1];
-        }
-        return prev;
-      },
-      [...locations[0]]
-    );
-}
 
 function rBound(ele: GfxModel, anti = false): IBound {
   const bound = Bound.deserialize(ele.xywh);
@@ -130,66 +91,6 @@ export function isConnectorAndBindingsAllSelected(
   return false;
 }
 
-export function getAnchors(ele: GfxModel) {
-  const bound = Bound.deserialize(ele.xywh);
-  const offset = 10;
-  const anchors: { point: PointLocation; coord: IVec }[] = [];
-  const rotate = ele.rotate;
-
-  (
-    [
-      [bound.center[0], bound.y - offset],
-      [bound.center[0], bound.maxY + offset],
-      [bound.x - offset, bound.center[1]],
-      [bound.maxX + offset, bound.center[1]],
-    ] satisfies IVec[]
-  )
-    .map(vec => getPointFromBoundsWithRotation({ ...bound, rotate }, vec))
-    .forEach(vec => {
-      const rst = ele.getLineIntersections(bound.center, vec);
-      if (!rst) return;
-
-      const originPoint = getPointFromBoundsWithRotation(
-        { ...bound, rotate: -rotate },
-        rst[0]
-      );
-      anchors.push({ point: rst[0], coord: bound.toRelative(originPoint) });
-    });
-
-  return anchors;
-}
-
-function getConnectableRelativePosition(connectable: GfxModel, position: IVec) {
-  const location = connectable.getRelativePointLocation(position);
-  if (isVecZero(Vec.sub(position, [0, 0.5])))
-    location.tangent = Vec.rot([0, -1], toRadian(connectable.rotate));
-  else if (isVecZero(Vec.sub(position, [1, 0.5])))
-    location.tangent = Vec.rot([0, 1], toRadian(connectable.rotate));
-  else if (isVecZero(Vec.sub(position, [0.5, 0])))
-    location.tangent = Vec.rot([1, 0], toRadian(connectable.rotate));
-  else if (isVecZero(Vec.sub(position, [0.5, 1])))
-    location.tangent = Vec.rot([-1, 0], toRadian(connectable.rotate));
-  return location;
-}
-
-export function getNearestConnectableAnchor(ele: Connectable, point: IVec) {
-  const anchors = getAnchors(ele);
-  return closestPoint(
-    anchors.map(a => a.point),
-    point
-  );
-}
-
-function closestPoint(
-  points: PointLocation[],
-  point: IVec
-): PointLocation | null {
-  if (points.length === 0) return null;
-  const rst = points.map(p => ({ p, d: Vec.dist(p, point) }));
-  rst.sort((a, b) => a.d - b.d);
-  return rst[0].p;
-}
-
 function computePoints(
   startPoint: IVec,
   endPoint: IVec,
@@ -200,6 +101,7 @@ function computePoints(
   expandStartBound: Bound | null,
   expandEndBound: Bound | null
 ): [IVec3[], IVec3, IVec3, IVec3, IVec3] {
+  // Build and filter candidate routing points for orthogonal path solving.
   const startPointVec3 = downscalePrecision(startPoint);
   const endPointVec3 = downscalePrecision(endPoint);
   let nextStartPointVec3 = downscalePrecision(nextStartPoint);
