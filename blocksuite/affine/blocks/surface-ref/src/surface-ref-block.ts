@@ -333,16 +333,36 @@ export class SurfaceRefBlockComponent extends BlockComponent<SurfaceRefBlockMode
           );
         }
 
+        this.std.host
+          .querySelectorAll<FrameBlockComponent>('affine-frame')
+          .forEach(view => {
+            view.showBorder = false;
+          });
+
+        this.std.host
+          .querySelectorAll<HTMLElement>('affine-edgeless-root-preview')
+          .forEach(view => {
+            (
+              view as HTMLElement & { overrideBackground?: string }
+            ).overrideBackground = 'var(--affine-background-primary-color)';
+          });
+
         const subscription = this.std.view.viewUpdated.subscribe(
-          ({ id, type, method, view }) => {
+          ({ type, method, view }) => {
             if (
-              id === referenceElement.id &&
+              view instanceof HTMLElement &&
+              view.tagName === 'AFFINE-EDGELESS-ROOT-PREVIEW'
+            ) {
+              (
+                view as HTMLElement & { overrideBackground?: string }
+              ).overrideBackground = 'var(--affine-background-primary-color)';
+            }
+            if (
               type === 'block' &&
               method === 'add' &&
               view instanceof FrameBlockComponent
             ) {
               view.showBorder = false;
-              subscription.unsubscribe();
             }
           }
         );
@@ -512,6 +532,10 @@ export class SurfaceRefBlockComponent extends BlockComponent<SurfaceRefBlockMode
           left: '50%',
           transform: 'translateX(-50%)',
         };
+    const frameStyle = {
+      ...containerStyle,
+      '--affine-edgeless-grid-color': 'transparent',
+    };
 
     return html`
       <div
@@ -520,7 +544,7 @@ export class SurfaceRefBlockComponent extends BlockComponent<SurfaceRefBlockMode
           focused: this.selected$.value,
           'comment-highlighted': this.isCommentHighlighted,
         })}
-        style=${styleMap(containerStyle)}
+        style=${styleMap(frameStyle)}
         @click=${this._handleClick}
       >
         ${content}
