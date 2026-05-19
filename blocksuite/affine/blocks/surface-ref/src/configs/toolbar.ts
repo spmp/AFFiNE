@@ -9,11 +9,14 @@ import {
   type ToolbarModuleConfig,
 } from '@blocksuite/affine-shared/services';
 import { stopPropagation } from '@blocksuite/affine-shared/utils';
+import { Bound } from '@blocksuite/global/gfx';
 import { CaptionIcon, CopyIcon, DeleteIcon } from '@blocksuite/icons/lit';
 import { html } from 'lit';
 
 import { SurfaceRefSizeIcon } from '../icons';
 import { SurfaceRefBlockComponent } from '../surface-ref-block';
+
+const FRAME_ZOOM_BASELINE_SCALE = 0.5;
 
 export const surfaceRefToolbarModuleConfig: ToolbarModuleConfig = {
   actions: [
@@ -42,41 +45,49 @@ export const surfaceRefToolbarModuleConfig: ToolbarModuleConfig = {
         if (!surfaceRefBlock) return null;
 
         const model = surfaceRefBlock.model;
-        const sizeScale = normalizePositiveNumber(model.props.pageSizeScale, 1);
+        const scaleMode = model.props.frameScaleMode ?? 'none';
+        const zoomScale = normalizePositiveNumber(
+          model.props.frameZoomScale,
+          FRAME_ZOOM_BASELINE_SCALE
+        );
         const widthScale = normalizePositiveNumber(
-          model.props.pageWidthScale,
+          model.props.frameWidthScale,
           1
         );
-        const widthMode = model.props.pageWidthMode ?? 'page';
+        const widthMode = model.props.frameWidthMode ?? 'page';
+        const aspectLock = Boolean(model.props.frameAspectLock);
+        const aspectRatio =
+          model.props.frameAspectRatio ??
+          getCurrentAspectRatio(surfaceRefBlock);
 
-        const sizePresets = [1, 2];
-        const widthPresets = [1, 2];
-        const sizeCustomValue =
-          sizeScale !== 1 && !sizePresets.includes(sizeScale)
-            ? sizeScale
-            : null;
-        const widthCustomValue =
-          widthMode === 'scale' && !widthPresets.includes(widthScale)
-            ? widthScale
-            : null;
+        const zoomPresets = [0.25, FRAME_ZOOM_BASELINE_SCALE, 1];
+        const widthPresets = [0.5, 1, 1.25];
 
         const updateProps = (props: Record<string, unknown>) => {
           ctx.store.captureSync();
           ctx.store.updateBlock(model, props);
         };
 
-        const updateSizeScale = (nextScale: number) => {
+        const updateZoomScale = (nextScale: number) => {
           updateProps({
+            frameScaleMode: 'zoom',
+            frameZoomScale: roundToTwoDecimals(nextScale),
+            frameWidthMode: 'page',
+            frameWidthScale: widthScale,
             pageSizeScale: roundToTwoDecimals(nextScale),
-            pageWidthMode: widthMode,
-            pageWidthScale: widthScale,
+            pageWidthMode: 'page',
+            pageWidthScale: 1,
           });
         };
 
         const updateWidthScale = (nextScale: number) => {
-          if (nextScale === 1) {
+          if (nextScale === 1 && widthMode !== 'full') {
             updateProps({
-              pageSizeScale: sizeScale,
+              frameScaleMode: 'width',
+              frameZoomScale: zoomScale,
+              frameWidthMode: 'page',
+              frameWidthScale: 1,
+              pageSizeScale: 1,
               pageWidthMode: 'page',
               pageWidthScale: 1,
             });
@@ -84,30 +95,47 @@ export const surfaceRefToolbarModuleConfig: ToolbarModuleConfig = {
           }
 
           updateProps({
-            pageSizeScale: sizeScale,
+            frameScaleMode: 'width',
+            frameZoomScale: zoomScale,
+            frameWidthMode: 'scale',
+            frameWidthScale: roundToTwoDecimals(nextScale),
+            pageSizeScale: 1,
             pageWidthMode: 'scale',
             pageWidthScale: roundToTwoDecimals(nextScale),
           });
         };
 
+        const updateScaleMode = (nextMode: 'none' | 'zoom' | 'width') => {
+          if (nextMode === 'none') {
+            updateProps({
+              frameScaleMode: 'none',
+            });
+            return;
+          }
+          if (nextMode === 'zoom') {
+            updateZoomScale(zoomScale);
+            return;
+          }
+          updateWidthScale(widthScale);
+        };
+
         const updateWidthMode = (nextMode: 'page' | 'full' | 'scale') => {
           updateProps({
-            pageSizeScale: sizeScale,
+            frameScaleMode: 'width',
+            frameZoomScale: zoomScale,
+            frameWidthMode: nextMode,
+            frameWidthScale: widthScale,
+            pageSizeScale: 1,
             pageWidthMode: nextMode,
             pageWidthScale: widthScale,
           });
         };
 
-        const commitCustomSize = (value: string) => {
-          const next = parsePositiveNumber(value);
-          if (next === null) return;
-          updateSizeScale(next);
-        };
-
-        const commitCustomWidth = (value: string) => {
-          const next = parsePositiveNumber(value);
-          if (next === null) return;
-          updateWidthScale(next);
+        const updateAspect = (ratio: string, lock = aspectLock) => {
+          updateProps({
+            frameAspectRatio: ratio,
+            frameAspectLock: lock,
+          });
         };
 
         return html`<editor-menu-button
@@ -122,47 +150,76 @@ export const surfaceRefToolbarModuleConfig: ToolbarModuleConfig = {
             ${SurfaceRefSizeIcon()}
           </editor-icon-button>`}
         >
-          <div data-orientation="vertical" style="min-width: 152px;">
+          <div
+            data-orientation="vertical"
+            style="min-width: 228px;"
+            @pointerdown=${stopPropagation}
+            @click=${stopPropagation}
+          >
             <div
               class="custom"
               style="font-size:12px;color:var(--affine-text-secondary-color);padding:2px 8px;font-weight:500;"
             >
-              Height
+              Aspect ratio
             </div>
-            ${sizePresets.map(
-              preset => html`
-                <editor-menu-action
-                  aria-label="${preset}x"
-                  ?data-selected=${sizeScale === preset}
-                  @click=${() => updateSizeScale(preset)}
-                >
-                  ${preset}x
-                </editor-menu-action>
-              `
-            )}
             <div
               class="custom"
-              style="display:flex;align-items:center;gap:8px;padding:2px 8px 6px;"
+              style="display:flex;align-items:center;gap:6px;padding:2px 8px 6px;"
             >
-              <span
-                style="font-size:13px;color:var(--affine-text-primary-color);"
+              <editor-menu-action
+                aria-label="Lock aspect"
+                ?data-selected=${aspectLock}
+                @click=${(event: Event) => {
+                  event.stopPropagation();
+                  updateProps({ frameAspectLock: !aspectLock });
+                }}
+                style="padding:0 6px;height:24px;"
               >
-                Custom
-              </span>
+                Lock
+              </editor-menu-action>
+              <editor-menu-action
+                aria-label="16:9"
+                ?data-selected=${aspectRatio === '16:9'}
+                @click=${(event: Event) => {
+                  event.stopPropagation();
+                  updateAspect('16:9', true);
+                }}
+                style="padding:0 6px;height:24px;"
+              >
+                16:9
+              </editor-menu-action>
+              <editor-menu-action
+                aria-label="4:3"
+                ?data-selected=${aspectRatio === '4:3'}
+                @click=${(event: Event) => {
+                  event.stopPropagation();
+                  updateAspect('4:3', true);
+                }}
+                style="padding:0 6px;height:24px;"
+              >
+                4:3
+              </editor-menu-action>
               <input
-                style="width:64px;min-width:64px;padding:4px 8px;border:1px solid var(--affine-border-color);border-radius:4px;font-size:12px;color:var(--affine-text-primary-color);background:transparent;height:26px;box-sizing:border-box;"
+                style="width:64px;min-width:64px;padding:4px 8px;border:1px solid var(--affine-border-color);border-radius:4px;font-size:12px;color:var(--affine-text-primary-color);background:transparent;height:24px;box-sizing:border-box;"
                 type="text"
-                inputmode="decimal"
-                pattern="^\\d+(\\.\\d{0,2})?$"
-                placeholder="3"
-                .value=${sizeCustomValue ? String(sizeCustomValue) : ''}
+                inputmode="text"
+                placeholder="x:y"
+                .value=${aspectRatio}
                 @keydown=${(event: KeyboardEvent) => {
                   if (event.key !== 'Enter') return;
                   event.stopPropagation();
-                  commitCustomSize((event.target as HTMLInputElement).value);
+                  const next = parseAspectRatio(
+                    (event.target as HTMLInputElement).value
+                  );
+                  if (next) updateAspect(next);
                 }}
-                @change=${(event: Event) =>
-                  commitCustomSize((event.target as HTMLInputElement).value)}
+                @change=${(event: Event) => {
+                  event.stopPropagation();
+                  const next = parseAspectRatio(
+                    (event.target as HTMLInputElement).value
+                  );
+                  if (next) updateAspect(next);
+                }}
                 @click=${stopPropagation}
                 @pointerdown=${stopPropagation}
               />
@@ -176,52 +233,120 @@ export const surfaceRefToolbarModuleConfig: ToolbarModuleConfig = {
               class="custom"
               style="font-size:12px;color:var(--affine-text-secondary-color);padding:2px 8px;font-weight:500;"
             >
-              Width
+              Mode
             </div>
-            ${widthPresets.map(
-              preset => html`
-                <editor-menu-action
-                  aria-label="${preset}x"
-                  ?data-selected=${preset === 1
-                    ? widthMode === 'page' ||
-                      (widthMode === 'scale' && widthScale === 1)
-                    : widthMode === 'scale' && widthScale === preset}
-                  @click=${() => updateWidthScale(preset)}
-                >
-                  ${preset}x
-                </editor-menu-action>
-              `
-            )}
-            <editor-menu-action
-              aria-label="Full"
-              ?data-selected=${widthMode === 'full'}
-              @click=${() => updateWidthMode('full')}
-            >
-              Full
-            </editor-menu-action>
             <div
               class="custom"
-              style="display:flex;align-items:center;gap:8px;padding:2px 8px 6px;"
+              style="display:flex;gap:6px;padding:2px 8px 6px;"
             >
-              <span
-                style="font-size:13px;color:var(--affine-text-primary-color);"
-              >
-                Custom
-              </span>
+              ${(['none', 'zoom', 'width'] as const).map(
+                mode =>
+                  html`<editor-menu-action
+                    aria-label=${mode}
+                    ?data-selected=${scaleMode === mode}
+                    @click=${(event: Event) => {
+                      event.stopPropagation();
+                      updateScaleMode(mode);
+                    }}
+                    style="padding:0 10px;height:24px;text-transform:capitalize;"
+                    >${mode}</editor-menu-action
+                  >`
+              )}
+            </div>
+
+            <div
+              class="custom"
+              style="font-size:12px;color:var(--affine-text-secondary-color);padding:2px 8px;font-weight:500;"
+            >
+              ${scaleMode === 'zoom'
+                ? 'Zoom'
+                : scaleMode === 'width'
+                  ? 'Width'
+                  : 'Value'}
+            </div>
+            <div
+              class="custom"
+              style="display:flex;align-items:center;gap:6px;padding:2px 8px 6px;min-height:34px;"
+            >
+              ${scaleMode === 'zoom'
+                ? zoomPresets.map(
+                    preset =>
+                      html`<editor-menu-action
+                        aria-label="${Math.round(preset * 100)}%"
+                        ?data-selected=${Math.abs(zoomScale - preset) < 0.001}
+                        @click=${(event: Event) => {
+                          event.stopPropagation();
+                          updateZoomScale(preset);
+                        }}
+                        style="padding:0 8px;height:24px;"
+                        >${Math.round(preset * 100)}%</editor-menu-action
+                      >`
+                  )
+                : scaleMode === 'width'
+                  ? html`
+                      ${widthPresets.map(
+                        preset =>
+                          html`<editor-menu-action
+                            aria-label="${Math.round(preset * 100)}%"
+                            ?data-selected=${widthMode === 'scale' &&
+                            Math.abs(widthScale - preset) < 0.001}
+                            @click=${(event: Event) => {
+                              event.stopPropagation();
+                              updateWidthScale(preset);
+                            }}
+                            style="padding:0 8px;height:24px;"
+                            >${Math.round(preset * 100)}%</editor-menu-action
+                          >`
+                      )}
+                      <editor-menu-action
+                        aria-label="Full width"
+                        ?data-selected=${widthMode === 'full'}
+                        @click=${(event: Event) => {
+                          event.stopPropagation();
+                          updateWidthMode('full');
+                        }}
+                        style="padding:0 8px;height:24px;"
+                        >Full</editor-menu-action
+                      >
+                    `
+                  : html`<span
+                      style="font-size:12px;color:var(--affine-text-secondary-color);padding:0 2px;"
+                      >Current behavior</span
+                    >`}
               <input
                 style="width:64px;min-width:64px;padding:4px 8px;border:1px solid var(--affine-border-color);border-radius:4px;font-size:12px;color:var(--affine-text-primary-color);background:transparent;height:26px;box-sizing:border-box;"
                 type="text"
                 inputmode="decimal"
                 pattern="^\\d+(\\.\\d{0,2})?$"
-                placeholder="1"
-                .value=${widthCustomValue ? String(widthCustomValue) : ''}
+                placeholder=${scaleMode === 'zoom'
+                  ? '50'
+                  : scaleMode === 'width'
+                    ? '100'
+                    : '-'}
+                .value=${scaleMode === 'zoom'
+                  ? String(roundToTwoDecimals(zoomScale * 100))
+                  : scaleMode === 'width' && widthMode === 'scale'
+                    ? String(roundToTwoDecimals(widthScale * 100))
+                    : ''}
                 @keydown=${(event: KeyboardEvent) => {
                   if (event.key !== 'Enter') return;
                   event.stopPropagation();
-                  commitCustomWidth((event.target as HTMLInputElement).value);
+                  const next = parsePositiveNumber(
+                    (event.target as HTMLInputElement).value
+                  );
+                  if (next === null) return;
+                  if (scaleMode === 'zoom') updateZoomScale(next / 100);
+                  if (scaleMode === 'width') updateWidthScale(next / 100);
                 }}
-                @change=${(event: Event) =>
-                  commitCustomWidth((event.target as HTMLInputElement).value)}
+                @change=${(event: Event) => {
+                  event.stopPropagation();
+                  const next = parsePositiveNumber(
+                    (event.target as HTMLInputElement).value
+                  );
+                  if (next === null) return;
+                  if (scaleMode === 'zoom') updateZoomScale(next / 100);
+                  if (scaleMode === 'width') updateWidthScale(next / 100);
+                }}
                 @click=${stopPropagation}
                 @pointerdown=${stopPropagation}
               />
@@ -317,4 +442,26 @@ function parsePositiveNumber(value: string) {
 
 function roundToTwoDecimals(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+function parseAspectRatio(value: string) {
+  const trimmed = value.trim();
+  const match = trimmed.match(/^(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)$/);
+  if (!match) return null;
+  const x = Number(match[1]);
+  const y = Number(match[2]);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || x <= 0 || y <= 0) {
+    return null;
+  }
+  return `${roundToTwoDecimals(x)}:${roundToTwoDecimals(y)}`;
+}
+
+function getCurrentAspectRatio(surfaceRefBlock: SurfaceRefBlockComponent) {
+  const xywh = surfaceRefBlock.referenceModel?.xywh;
+  if (!xywh) return '16:9';
+  const { w, h } = Bound.deserialize(xywh);
+  if (!w || !h) return '16:9';
+  const ratio = w / h;
+  if (!Number.isFinite(ratio) || ratio <= 0) return '16:9';
+  return `${roundToTwoDecimals(ratio)}:1`;
 }

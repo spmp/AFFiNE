@@ -28,10 +28,18 @@ import { type Color, ColorSchema, DefaultTheme } from '../../themes/index.js';
 export type FrameBlockProps = {
   title: Text;
   background: Color;
+  frameScaleMode?: 'none' | 'zoom' | 'width';
+  frameZoomScale?: number;
+  frameWidthMode?: 'page' | 'full' | 'scale';
+  frameWidthScale?: number;
+  frameAspectLock?: boolean;
+  frameAspectRatio?: string;
   childElementIds?: Record<string, boolean>;
   presentationIndex?: string;
   comments?: Record<string, boolean>;
 } & GfxCompatibleProps;
+
+const FRAME_ZOOM_BASELINE_SCALE = 0.5;
 
 export const FrameZodSchema = z
   .object({
@@ -50,6 +58,12 @@ export const FrameBlockSchema = defineBlockSchema({
     index: 'a0',
     childElementIds: Object.create(null),
     presentationIndex: generateKeyBetweenV2(null, null),
+    frameScaleMode: 'none',
+    frameZoomScale: FRAME_ZOOM_BASELINE_SCALE,
+    frameWidthMode: 'page',
+    frameWidthScale: 1,
+    frameAspectLock: false,
+    frameAspectRatio: undefined,
     lockedBySelf: false,
     comments: undefined,
   }),
