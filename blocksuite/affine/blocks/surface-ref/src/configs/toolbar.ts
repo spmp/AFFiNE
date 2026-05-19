@@ -168,12 +168,11 @@ export const surfaceRefToolbarModuleConfig: ToolbarModuleConfig = {
             >
               <editor-menu-action
                 aria-label="Lock aspect"
-                ?data-selected=${aspectLock}
                 @click=${(event: Event) => {
                   event.stopPropagation();
                   updateProps({ frameAspectLock: !aspectLock });
                 }}
-                style="padding:0 6px;height:24px;"
+                style=${`padding:0 6px;height:24px;${aspectLock ? 'background-color:var(--affine-hover-color);' : ''}`}
               >
                 Lock
               </editor-menu-action>

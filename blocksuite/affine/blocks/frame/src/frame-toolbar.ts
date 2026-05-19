@@ -209,12 +209,11 @@ const builtinSurfaceToolbarConfig = {
               style="display:flex;align-items:center;gap:6px;padding:2px 8px 6px;"
             >
               <editor-menu-action
-                ?data-selected=${aspectLock}
                 @click=${(event: Event) => {
                   event.stopPropagation();
                   updateProps({ frameAspectLock: !aspectLock });
                 }}
-                style="padding:0 6px;height:24px;"
+                style=${`padding:0 6px;height:24px;${aspectLock ? 'background-color:var(--affine-hover-color);' : ''}`}
                 >Lock</editor-menu-action
               >
               <editor-menu-action
