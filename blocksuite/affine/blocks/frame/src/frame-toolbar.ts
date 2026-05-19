@@ -95,6 +95,7 @@ const builtinSurfaceToolbarConfig = {
             frameWidthScale: props.frameWidthScale,
             frameAspectLock: props.frameAspectLock,
             frameAspectRatio: props.frameAspectRatio,
+            frameRenderOptions: props.frameRenderOptions,
             pageSizeScale: props.frameZoomScale,
             pageWidthMode: props.frameWidthMode,
             pageWidthScale: props.frameWidthScale,

@@ -10,6 +10,7 @@ import { ViewExtensionManagerIdentifier } from '@blocksuite/affine-ext-loader';
 import { RefNodeSlotsProvider } from '@blocksuite/affine-inline-reference';
 import {
   FrameBlockModel,
+  NoteBlockModel,
   type SurfaceRefBlockModel,
 } from '@blocksuite/affine-model';
 import {
@@ -290,6 +291,97 @@ export class SurfaceRefBlockComponent extends BlockComponent<SurfaceRefBlockMode
 
     const referenceId = this.model.props.reference;
     const referenceXYWH$ = this._referenceXYWH$;
+    const getRenderOptions = () => {
+      const options =
+        (this.referenceModel instanceof FrameBlockModel
+          ? this.referenceModel.props.frameRenderOptions
+          : undefined) ?? this.model.props.frameRenderOptions;
+      return {
+        showInnerFrames: options?.showInnerFrames ?? false,
+        showGrid: options?.showGrid ?? false,
+        showNotes: options?.showNotes ?? true,
+      };
+    };
+
+    const applyRenderOptions = (
+      host: HTMLElement,
+      surfaceModels: readonly GfxPrimitiveElementModel[],
+      referenceElement: GfxPrimitiveElementModel
+    ) => {
+      const { showInnerFrames, showGrid, showNotes } = getRenderOptions();
+      const hiddenFrameIds = new Set<string>();
+      const hiddenNoteIds = new Set<string>();
+      const referencedFrame =
+        referenceElement instanceof FrameBlockModel ? referenceElement : null;
+
+      if (referencedFrame) {
+        const frameBound = referencedFrame.elementBound;
+        const queue = [...referencedFrame.childElements];
+        while (queue.length) {
+          const element = queue.shift();
+          if (!element) continue;
+
+          if (element instanceof FrameBlockModel) {
+            if (!showInnerFrames) {
+              hiddenFrameIds.add(element.id);
+            }
+            queue.push(...element.childElements);
+            continue;
+          }
+
+          if (element instanceof NoteBlockModel && !showNotes) {
+            hiddenNoteIds.add(element.id);
+          }
+        }
+
+        for (const element of surfaceModels) {
+          if (element.id === referencedFrame.id) continue;
+
+          if (
+            element instanceof FrameBlockModel &&
+            !showInnerFrames &&
+            frameBound.isOverlapWithBound(element.elementBound)
+          ) {
+            hiddenFrameIds.add(element.id);
+            continue;
+          }
+
+          if (
+            element instanceof NoteBlockModel &&
+            !showNotes &&
+            frameBound.isOverlapWithBound(element.elementBound)
+          ) {
+            hiddenNoteIds.add(element.id);
+          }
+        }
+      }
+
+      host
+        .querySelectorAll<FrameBlockComponent>('affine-frame')
+        .forEach(view => {
+          const hidden = hiddenFrameIds.has(view.dataset.blockId ?? '');
+          view.style.display = hidden ? 'none' : '';
+          view.showBorder = showInnerFrames;
+        });
+
+      host
+        .querySelectorAll<HTMLElement>('affine-edgeless-note')
+        .forEach(view => {
+          const hidden = hiddenNoteIds.has(view.dataset.blockId ?? '');
+          view.style.display = hidden ? 'none' : '';
+        });
+
+      host
+        .querySelectorAll<HTMLElement>('affine-edgeless-root-preview')
+        .forEach(view => {
+          (
+            view as HTMLElement & { overrideBackground?: string }
+          ).overrideBackground = showGrid
+            ? undefined
+            : 'var(--affine-background-primary-color)';
+        });
+    };
+
     class SurfaceRefViewportWatcher extends LifeCycleWatcher {
       static override readonly key = 'surface-ref-viewport-watcher';
 
@@ -333,19 +425,24 @@ export class SurfaceRefBlockComponent extends BlockComponent<SurfaceRefBlockMode
           );
         }
 
-        this.std.host
-          .querySelectorAll<FrameBlockComponent>('affine-frame')
-          .forEach(view => {
-            view.showBorder = false;
-          });
+        applyRenderOptions(
+          this.std.host,
+          surface.elementModels,
+          referenceElement
+        );
 
-        this.std.host
-          .querySelectorAll<HTMLElement>('affine-edgeless-root-preview')
-          .forEach(view => {
-            (
-              view as HTMLElement & { overrideBackground?: string }
-            ).overrideBackground = 'var(--affine-background-primary-color)';
-          });
+        _disposable.add(
+          this.std.store.slots.blockUpdated.subscribe(({ id, props }) => {
+            if (id !== referenceId || !('frameRenderOptions' in props)) {
+              return;
+            }
+            applyRenderOptions(
+              this.std.host,
+              surface.elementModels,
+              referenceElement
+            );
+          })
+        );
 
         const subscription = this.std.view.viewUpdated.subscribe(
           ({ type, method, view }) => {
@@ -353,16 +450,22 @@ export class SurfaceRefBlockComponent extends BlockComponent<SurfaceRefBlockMode
               view instanceof HTMLElement &&
               view.tagName === 'AFFINE-EDGELESS-ROOT-PREVIEW'
             ) {
-              (
-                view as HTMLElement & { overrideBackground?: string }
-              ).overrideBackground = 'var(--affine-background-primary-color)';
+              applyRenderOptions(
+                this.std.host,
+                surface.elementModels,
+                referenceElement
+              );
             }
             if (
               type === 'block' &&
               method === 'add' &&
               view instanceof FrameBlockComponent
             ) {
-              view.showBorder = false;
+              applyRenderOptions(
+                this.std.host,
+                surface.elementModels,
+                referenceElement
+              );
             }
           }
         );

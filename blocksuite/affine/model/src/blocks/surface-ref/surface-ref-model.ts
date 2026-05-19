@@ -14,6 +14,11 @@ export type SurfaceRefProps = {
   frameWidthScale?: number;
   frameAspectLock?: boolean;
   frameAspectRatio?: string;
+  frameRenderOptions?: {
+    showInnerFrames?: boolean;
+    showGrid?: boolean;
+    showNotes?: boolean;
+  };
   pageSizeScale?: number;
   pageWidthMode?: 'page' | 'full' | 'scale';
   pageWidthScale?: number;
@@ -32,6 +37,7 @@ export const SurfaceRefBlockSchema = defineBlockSchema({
     frameWidthScale: undefined,
     frameAspectLock: undefined,
     frameAspectRatio: undefined,
+    frameRenderOptions: undefined,
     pageSizeScale: undefined,
     pageWidthMode: undefined,
     pageWidthScale: undefined,

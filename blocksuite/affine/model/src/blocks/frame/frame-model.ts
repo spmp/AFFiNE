@@ -34,6 +34,11 @@ export type FrameBlockProps = {
   frameWidthScale?: number;
   frameAspectLock?: boolean;
   frameAspectRatio?: string;
+  frameRenderOptions?: {
+    showInnerFrames?: boolean;
+    showGrid?: boolean;
+    showNotes?: boolean;
+  };
   childElementIds?: Record<string, boolean>;
   presentationIndex?: string;
   comments?: Record<string, boolean>;
@@ -64,6 +69,11 @@ export const FrameBlockSchema = defineBlockSchema({
     frameWidthScale: 1,
     frameAspectLock: false,
     frameAspectRatio: undefined,
+    frameRenderOptions: {
+      showInnerFrames: false,
+      showGrid: false,
+      showNotes: true,
+    },
     lockedBySelf: false,
     comments: undefined,
   }),
