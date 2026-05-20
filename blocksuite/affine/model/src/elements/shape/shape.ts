@@ -52,6 +52,11 @@ export type ShapeProps = BaseElementProps & {
   shapeStyle: ShapeStyle;
   // https://github.com/rough-stuff/rough/wiki#roughness
   roughness?: number;
+  stencilName?: string;
+  collapsed?: boolean;
+  collapsedSize?: [number, number];
+  expandedSize?: [number, number];
+  collapseProxyId?: string | null;
 
   text?: Y.Text;
   textHorizontalAlign?: TextAlign;
@@ -117,6 +122,18 @@ export class ShapeElementModel extends GfxPrimitiveElementModel<ShapeProps> {
   accessor gradientDirection: GradientDirection | undefined = undefined;
 
   @field()
+  accessor lockAspectRatio: boolean = false;
+
+  @field()
+  accessor textRotate: number = 0;
+
+  @field()
+  accessor textFlipX: boolean = false;
+
+  @field()
+  accessor textFlipY: boolean = false;
+
+  @field()
   accessor filled: boolean = false;
 
   @field(FontFamily.Inter as string)
@@ -170,6 +187,9 @@ export class ShapeElementModel extends GfxPrimitiveElementModel<ShapeProps> {
   accessor shapeType: ShapeType = ShapeType.Rect;
 
   @field()
+  accessor stencilName: string | undefined = undefined;
+
+  @field()
   accessor strokeColor: Color = DefaultTheme.shapeStrokeColor;
 
   @field()
@@ -177,6 +197,15 @@ export class ShapeElementModel extends GfxPrimitiveElementModel<ShapeProps> {
 
   @field()
   accessor strokeWidth: number = 4;
+
+  @field(false)
+  accessor collapsed: boolean = false;
+
+  @field()
+  accessor collapsedSize: [number, number] | undefined = undefined;
+
+  @field()
+  accessor expandedSize: [number, number] | undefined = undefined;
 
   @field()
   accessor text: Y.Text | undefined = undefined;
@@ -186,6 +215,9 @@ export class ShapeElementModel extends GfxPrimitiveElementModel<ShapeProps> {
 
   @local()
   accessor textDisplay: boolean = true;
+
+  @field()
+  accessor collapseProxyId: string | null = null;
 
   @field(TextAlign.Center as TextAlign)
   accessor textHorizontalAlign!: TextAlign;
@@ -216,12 +248,6 @@ export class LocalShapeElementModel extends GfxLocalElementModel {
 
   @prop()
   accessor fillColor: Color = DefaultTheme.shapeFillColor;
-
-  @prop()
-  accessor flipX: boolean = false;
-
-  @prop()
-  accessor flipY: boolean = false;
 
   @prop()
   accessor filled: boolean = false;
@@ -269,6 +295,18 @@ export class LocalShapeElementModel extends GfxLocalElementModel {
 
   @prop()
   accessor strokeWidth: number = 4;
+
+  @prop()
+  accessor lockAspectRatio: boolean = false;
+
+  @prop()
+  accessor textRotate: number = 0;
+
+  @prop()
+  accessor textFlipX: boolean = false;
+
+  @prop()
+  accessor textFlipY: boolean = false;
 
   @prop()
   accessor text: string = '';

@@ -185,15 +185,24 @@ export class EdgelessShapeMenu extends SignalWatcher(
   };
 
   private _recordShapeProps(
-    _shapeName: ShapeName,
+    shapeName: ShapeName,
     props: Parameters<EditPropsStore['recordLastProps']>[1]
   ) {
     const propsStore = this.edgeless.std.get(EditPropsStore);
-    propsStore.recordLastProps('shape:rect', {
+    const normalizedProps = {
       ...props,
       flipX: false,
       flipY: false,
-    });
+    };
+    const shapeKey = this._getShapeLastPropsKey(shapeName);
+
+    propsStore.recordLastProps(shapeKey, normalizedProps);
+
+    // Keep rect defaults in sync so toolbar previews and newly-selected shapes
+    // inherit the latest palette style.
+    if (shapeKey !== 'shape:rect') {
+      propsStore.recordLastProps('shape:rect', normalizedProps);
+    }
   }
 
   private _getShapeLastPropsKey(shapeName: ShapeName) {
