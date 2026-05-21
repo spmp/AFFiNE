@@ -470,17 +470,12 @@ export class PropertiesModal extends SignalWatcher(WithDisposable(LitElement)) {
     }
     this._loadingStencilNames = true;
     try {
-      const module = await import('@blocksuite/affine-gfx-shape/drawio');
-      this._stencilShapeNames = [...module.STENCIL_SHAPE_NAMES];
+      const module = await import('@blocksuite/affine-gfx-shape');
+      this._stencilShapeNames = [
+        ...((module as any).STENCIL_SHAPE_NAMES ?? []),
+      ];
     } catch {
-      try {
-        const module = await import('@blocksuite/affine-gfx-shape');
-        this._stencilShapeNames = [
-          ...((module as any).STENCIL_SHAPE_NAMES ?? []),
-        ];
-      } catch {
-        this._stencilShapeNames = [];
-      }
+      this._stencilShapeNames = [];
     } finally {
       this._loadingStencilNames = false;
     }
