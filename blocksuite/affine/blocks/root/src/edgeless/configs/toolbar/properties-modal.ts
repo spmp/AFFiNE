@@ -1,5 +1,4 @@
 import { EdgelessCRUDIdentifier } from '@blocksuite/affine-block-surface';
-import { STENCIL_SHAPE_NAMES } from '@blocksuite/affine-gfx-shape';
 import {
   ConnectorElementModel,
   ConnectorLabelOffsetAnchor,
@@ -18,6 +17,7 @@ import {
   TextResizing,
   TextVerticalAlign,
 } from '@blocksuite/affine-model';
+import { EditPropsStore } from '@blocksuite/affine-shared/services';
 import { fontSMStyle, fontXSStyle } from '@blocksuite/affine-shared/styles';
 import { unsafeCSSVarV2 } from '@blocksuite/affine-shared/theme';
 import { stopPropagation } from '@blocksuite/affine-shared/utils';
@@ -27,7 +27,7 @@ import type { EditorHost } from '@blocksuite/std';
 import type { GfxModel } from '@blocksuite/std/gfx';
 import { type ReferenceElement } from '@floating-ui/dom';
 import { css, html, LitElement, svg } from 'lit';
-import { property } from 'lit/decorators.js';
+import { property, state } from 'lit/decorators.js';
 
 const GRADIENT_DIRECTIONS = [
   'S',
@@ -99,6 +99,20 @@ const CONNECTOR_ENDPOINT_OPTIONS = [
   { value: 'Diamond', label: 'Diamond' },
   ...DRAWIO_MARKERS.map(value => ({ value, label: labelize(value) })),
 ];
+
+const GRID_SNAP_ANCHOR_OPTIONS = [
+  { value: 'top-left', label: 'Top left' },
+  { value: 'top-center', label: 'Top center' },
+  { value: 'top-right', label: 'Top right' },
+  { value: 'center-left', label: 'Middle left' },
+  { value: 'center', label: 'Object center' },
+  { value: 'center-right', label: 'Middle right' },
+  { value: 'bottom-left', label: 'Bottom left' },
+  { value: 'bottom-center', label: 'Bottom center' },
+  { value: 'bottom-right', label: 'Bottom right' },
+] as const;
+
+type GridSnapAnchor = (typeof GRID_SNAP_ANCHOR_OPTIONS)[number]['value'];
 
 const MARKER_ICON_PATHS: Record<
   string,
@@ -215,6 +229,19 @@ export class PropertiesModal extends SignalWatcher(WithDisposable(LitElement)) {
       animation: affine-popover-fade-in 0.2s ease;
     }
 
+    :host([data-inline='true']) {
+      position: static !important;
+      inset: auto !important;
+      z-index: auto !important;
+      display: block !important;
+      width: 100%;
+      padding: 0;
+      overflow: visible !important;
+      background: transparent;
+      animation: none;
+      pointer-events: auto;
+    }
+
     :host([data-in-peek='true']) {
       position: absolute;
       z-index: 9999;
@@ -281,7 +308,7 @@ export class PropertiesModal extends SignalWatcher(WithDisposable(LitElement)) {
     .property-row {
       width: 100%;
       display: grid;
-      grid-template-columns: 140px 1fr;
+      grid-template-columns: 100px 1fr;
       align-items: center;
       gap: 8px;
     }
@@ -303,7 +330,7 @@ export class PropertiesModal extends SignalWatcher(WithDisposable(LitElement)) {
       font-weight: 600;
       margin-top: 6px;
     }
-    ${fontSMStyle('.property-section-title')}
+    ${fontXSStyle('.property-section-title')}
 
     .property-label {
       color: var(--affine-text-secondary-color);
@@ -321,7 +348,7 @@ export class PropertiesModal extends SignalWatcher(WithDisposable(LitElement)) {
       border: 1px solid ${unsafeCSSVarV2('input/border/default')};
       color: var(--affine-text-primary-color);
     }
-    ${fontSMStyle('.property-input')}
+    ${fontXSStyle('.property-input')}
 
     .property-input:focus {
       border-color: ${unsafeCSSVarV2('input/border/active')};
@@ -343,7 +370,7 @@ export class PropertiesModal extends SignalWatcher(WithDisposable(LitElement)) {
       color: var(--affine-text-primary-color);
       cursor: pointer;
     }
-    ${fontSMStyle('.property-select')}
+    ${fontXSStyle('.property-select')}
 
     .property-select:focus {
       border-color: ${unsafeCSSVarV2('input/border/active')};
@@ -432,9 +459,94 @@ export class PropertiesModal extends SignalWatcher(WithDisposable(LitElement)) {
   `;
 
   private readonly _hide = () => {
+    if (this.inline) return;
     this.remove();
     this.abortController?.abort();
   };
+
+  private async _loadStencilShapeNames() {
+    if (this._loadingStencilNames || this._stencilShapeNames.length > 0) {
+      return;
+    }
+    this._loadingStencilNames = true;
+    try {
+      const module = await import('@blocksuite/affine-gfx-shape/drawio');
+      this._stencilShapeNames = [...module.STENCIL_SHAPE_NAMES];
+    } catch {
+      try {
+        const module = await import('@blocksuite/affine-gfx-shape');
+        this._stencilShapeNames = [
+          ...((module as any).STENCIL_SHAPE_NAMES ?? []),
+        ];
+      } catch {
+        this._stencilShapeNames = [];
+      }
+    } finally {
+      this._loadingStencilNames = false;
+    }
+  }
+
+  private _renderStencilNameRow(currentStencilName: string) {
+    if (!this._stencilShapeNames.length) {
+      return html`
+        <div class="property-row">
+          <label>Stencil name</label>
+          <button
+            class="property-input"
+            type="button"
+            ?disabled=${this._loadingStencilNames}
+            @click=${() => {
+              this._loadStencilShapeNames().catch(() => {});
+            }}
+          >
+            ${this._loadingStencilNames ? 'Loading stencils...' : 'Load'}
+          </button>
+        </div>
+      `;
+    }
+
+    const query = this._stencilQuery.trim().toLowerCase();
+    const filteredNames =
+      query.length === 0
+        ? this._stencilShapeNames
+        : this._stencilShapeNames.filter(name =>
+            name.toLowerCase().includes(query)
+          );
+
+    return html`
+      <div class="property-row multiline">
+        <label class="property-label">Stencil name</label>
+        <div>
+          <input
+            type="text"
+            class="property-input"
+            placeholder="Search stencils"
+            .value=${this._stencilQuery}
+            @input=${(e: Event) => {
+              const target = e.target as HTMLInputElement;
+              this._stencilQuery = target.value;
+            }}
+          />
+          <select
+            class="property-select"
+            .value=${currentStencilName}
+            @change=${(e: Event) => {
+              const target = e.target as HTMLSelectElement;
+              this._updateProperty(
+                'stencilName',
+                target.value === 'none' ? undefined : target.value
+              );
+            }}
+          >
+            <option value="none">None</option>
+            ${filteredNames.map(
+              name => html`<option value=${name}>${name}</option>`
+            )}
+          </select>
+        </div>
+      </div>
+    `;
+  }
 
   private readonly _updateProperty = (key: string, value: any) => {
     if (!this.model) return;
@@ -528,9 +640,19 @@ export class PropertiesModal extends SignalWatcher(WithDisposable(LitElement)) {
     label: string,
     value: number,
     onChange: (value: number) => void,
-    options: { min?: number; max?: number; step?: number } = {}
+    options: {
+      min?: number;
+      max?: number;
+      step?: number | 'any';
+      decimals?: number;
+    } = {}
   ) {
-    const { min, max, step } = options;
+    const { min, max, step, decimals } = options;
+    const displayValue = Number.isFinite(value)
+      ? typeof decimals === 'number'
+        ? value.toFixed(decimals)
+        : value.toString()
+      : '';
     return html`
       <div class="property-row">
         <label class="property-label">${label}</label>
@@ -539,9 +661,9 @@ export class PropertiesModal extends SignalWatcher(WithDisposable(LitElement)) {
           class="property-input"
           .min=${min ?? ''}
           .max=${max ?? ''}
-          .step=${step ?? ''}
-          .value=${Number.isFinite(value) ? value.toString() : ''}
-          @input=${(e: Event) => {
+          .step=${step ?? 'any'}
+          .value=${displayValue}
+          @change=${(e: Event) => {
             const target = e.target as HTMLInputElement;
             const nextValue = Number(target.value);
             if (!Number.isNaN(nextValue)) {
@@ -754,13 +876,42 @@ export class PropertiesModal extends SignalWatcher(WithDisposable(LitElement)) {
     });
   }
 
+  private _applyGridSnapAnchor(anchor: GridSnapAnchor) {
+    const store = this.host.std.get(EditPropsStore);
+    store.setStorage('edgelessGridSnapAnchor', anchor);
+    const root = this.host.querySelector('affine-edgeless-root');
+    root?.dispatchEvent(
+      new CustomEvent<{ anchor: string }>('grid-snap-anchor-changed', {
+        detail: { anchor },
+        bubbles: true,
+        composed: true,
+      })
+    );
+    this._gridSnapAnchor = anchor;
+  }
+
+  private _renderGridSnapSection() {
+    return this._renderSection(
+      'Grid & Snap',
+      html`${this._renderSelectRow(
+        'Grid anchor',
+        this._gridSnapAnchor,
+        GRID_SNAP_ANCHOR_OPTIONS as unknown as Array<{
+          value: string | number;
+          label: string;
+        }>,
+        value => this._applyGridSnapAnchor(value as GridSnapAnchor)
+      )}`
+    );
+  }
+
   private _renderShapeProperties(model: ShapeElementModel) {
     const [x, y, w, h] = deserializeXYWH(model.xywh);
+    const widthToHeightRatio = w !== 0 ? h / w : null;
+    const heightToWidthRatio = h !== 0 ? w / h : null;
     const gradientColor = model.gradientFinal ?? model.fillColor;
     const textValue = model.text?.toString() ?? '';
     const shadowEnabled = Boolean(model.shadow);
-    const showStencilSelector =
-      model.shapeType === ShapeType.DrawioStencil || Boolean(model.stencilName);
     const shadowValue = model.shadow ?? {
       blur: 4,
       offsetX: 0,
@@ -807,7 +958,7 @@ export class PropertiesModal extends SignalWatcher(WithDisposable(LitElement)) {
 
     return html`
       ${this._renderSection(
-        'Core',
+        'Shape',
         html`
           ${this._renderSelectRow(
             'Shape type',
@@ -827,8 +978,104 @@ export class PropertiesModal extends SignalWatcher(WithDisposable(LitElement)) {
             })),
             value => this._updateProperty('shapeStyle', value)
           )}
+          ${this._renderNumberRow(
+            'Corner radius',
+            model.radius,
+            value => this._updateProperty('radius', value),
+            { min: 0, max: 1, step: 0.01 }
+          )}
+          ${this._renderStencilNameRow(model.stencilName ?? 'none')}
+        `
+      )}
+      ${this._renderSection(
+        'Position & Size',
+        html`
+          ${this._renderNumberRow(
+            'Width',
+            w,
+            value =>
+              this._updateProperty(
+                'xywh',
+                serializeXYWH(
+                  x,
+                  y,
+                  value,
+                  model.lockAspectRatio && widthToHeightRatio !== null
+                    ? value * widthToHeightRatio
+                    : h
+                )
+              ),
+            { step: 'any', decimals: 2 }
+          )}
+          ${this._renderNumberRow(
+            'Height',
+            h,
+            value =>
+              this._updateProperty(
+                'xywh',
+                serializeXYWH(
+                  x,
+                  y,
+                  model.lockAspectRatio && heightToWidthRatio !== null
+                    ? value * heightToWidthRatio
+                    : w,
+                  value
+                )
+              ),
+            { step: 'any', decimals: 2 }
+          )}
+          ${this._renderNumberRow(
+            'X',
+            x,
+            value =>
+              this._updateProperty('xywh', serializeXYWH(value, y, w, h)),
+            { step: 'any', decimals: 2 }
+          )}
+          ${this._renderNumberRow(
+            'Y',
+            y,
+            value =>
+              this._updateProperty('xywh', serializeXYWH(x, value, w, h)),
+            { step: 'any', decimals: 2 }
+          )}
+          ${this._renderNumberRow(
+            'Rotate',
+            model.rotate,
+            value => this._updateProperty('rotate', value),
+            { step: 1 }
+          )}
+          ${this._renderCheckboxRow(
+            'Flip horizontal',
+            model.flipX ?? false,
+            value => this._updateProperty('flipX', value)
+          )}
+          ${this._renderCheckboxRow(
+            'Flip vertical',
+            model.flipY ?? false,
+            value => this._updateProperty('flipY', value)
+          )}
+          ${this._renderCheckboxRow(
+            'Lock aspect ratio',
+            model.lockAspectRatio ?? false,
+            value => this._updateProperty('lockAspectRatio', value)
+          )}
+          ${this._renderTextRow('Z index', model.index, value =>
+            this._updateProperty('index', value)
+          )}
+          ${this._renderCheckboxRow('Movable', !model.lockedBySelf, value =>
+            this._updateProperty('lockedBySelf', !value)
+          )}
+        `
+      )}
+      ${this._renderGridSnapSection()}
+      ${this._renderSection(
+        'Style',
+        html`
           ${this._renderColorRow('Fill', model.fillColor, value =>
             this._updateProperty('fillColor', value)
+          )}
+          ${this._renderCheckboxRow('Filled', model.filled, value =>
+            this._updateProperty('filled', value)
           )}
           ${this._renderCheckboxRow(
             'Gradient enabled',
@@ -855,9 +1102,6 @@ export class PropertiesModal extends SignalWatcher(WithDisposable(LitElement)) {
                 value === 'none' ? undefined : value
               )
           )}
-          ${this._renderCheckboxRow('Filled', model.filled, value =>
-            this._updateProperty('filled', value)
-          )}
           ${this._renderColorRow('Stroke', model.strokeColor, value =>
             this._updateProperty('strokeColor', value)
           )}
@@ -879,63 +1123,6 @@ export class PropertiesModal extends SignalWatcher(WithDisposable(LitElement)) {
             })),
             value => this._updateProperty('strokeStyle', value)
           )}
-          ${this._renderNumberRow(
-            'Corner radius',
-            model.radius,
-            value => this._updateProperty('radius', value),
-            { min: 0, max: 1, step: 0.01 }
-          )}
-          ${this._renderNumberRow(
-            'Rotate',
-            model.rotate,
-            value => this._updateProperty('rotate', value),
-            { step: 1 }
-          )}
-          ${this._renderCheckboxRow(
-            'Flip horizontal',
-            model.flipX ?? false,
-            value => this._updateProperty('flipX', value)
-          )}
-          ${this._renderCheckboxRow(
-            'Flip vertical',
-            model.flipY ?? false,
-            value => this._updateProperty('flipY', value)
-          )}
-          ${this._renderNumberRow('X', x, value =>
-            this._updateProperty('xywh', serializeXYWH(value, y, w, h))
-          )}
-          ${this._renderNumberRow('Y', y, value =>
-            this._updateProperty('xywh', serializeXYWH(x, value, w, h))
-          )}
-          ${this._renderNumberRow('Width', w, value =>
-            this._updateProperty('xywh', serializeXYWH(x, y, value, h))
-          )}
-          ${this._renderNumberRow('Height', h, value =>
-            this._updateProperty('xywh', serializeXYWH(x, y, w, value))
-          )}
-          ${this._renderCheckboxRow(
-            'Lock aspect ratio',
-            model.lockAspectRatio ?? false,
-            value => this._updateProperty('lockAspectRatio', value)
-          )}
-          ${showStencilSelector
-            ? this._renderSelectRow(
-                'Stencil name',
-                model.stencilName ?? 'none',
-                [
-                  { value: 'none', label: 'None' },
-                  ...STENCIL_SHAPE_NAMES.map(name => ({
-                    value: name,
-                    label: name,
-                  })),
-                ],
-                value =>
-                  this._updateProperty(
-                    'stencilName',
-                    value === 'none' ? undefined : value
-                  )
-              )
-            : null}
           ${this._renderCheckboxRow('Shadow', shadowEnabled, value =>
             this._updateProperty('shadow', value ? shadowValue : null)
           )}
@@ -979,12 +1166,6 @@ export class PropertiesModal extends SignalWatcher(WithDisposable(LitElement)) {
                 )}
               `
             : null}
-          ${this._renderTextRow('Z index', model.index, value =>
-            this._updateProperty('index', value)
-          )}
-          ${this._renderCheckboxRow('Movable', !model.lockedBySelf, value =>
-            this._updateProperty('lockedBySelf', !value)
-          )}
         `
       )}
       ${this._renderSection(
@@ -1410,11 +1591,20 @@ export class PropertiesModal extends SignalWatcher(WithDisposable(LitElement)) {
         'Other properties',
         this._renderAutoProperties(model, knownKeys)
       )}
+      ${this._renderGridSnapSection()}
     `;
   }
 
   override connectedCallback() {
     super.connectedCallback();
+
+    this.toggleAttribute('data-inline', this.inline);
+
+    this._gridSnapAnchor =
+      this.host.std.get(EditPropsStore).getStorage('edgelessGridSnapAnchor') ??
+      'top-left';
+
+    if (this.inline) return;
 
     const inPeek = Boolean(
       this.parentElement?.closest('[data-peek-view-wrapper]')
@@ -1437,7 +1627,11 @@ export class PropertiesModal extends SignalWatcher(WithDisposable(LitElement)) {
   }
 
   override firstUpdated() {
-    this.focus();
+    if (!this.inline) {
+      this.focus();
+    }
+
+    if (this.inline) return;
 
     const panel = this.renderRoot.querySelector('.properties-modal-wrapper');
     if (panel) {
@@ -1467,24 +1661,25 @@ export class PropertiesModal extends SignalWatcher(WithDisposable(LitElement)) {
         ? 'Connector'
         : 'Element';
 
-    return html`
-      <div class="properties-modal-wrapper" @click=${stopPropagation}>
-        <div class="properties-modal-content">
-          <div class="header">
-            <span class="title">${elementType} Properties</span>
-          </div>
-
-          ${isShape
-            ? this._renderShapeProperties(this.model as ShapeElementModel)
-            : null}
-          ${isConnector
-            ? this._renderConnectorProperties(
-                this.model as ConnectorElementModel
-              )
-            : null}
-        </div>
+    const content = html`
+      <div class="header">
+        <span class="title">${elementType} Properties</span>
       </div>
+      ${isShape
+        ? this._renderShapeProperties(this.model as ShapeElementModel)
+        : null}
+      ${isConnector
+        ? this._renderConnectorProperties(this.model as ConnectorElementModel)
+        : null}
     `;
+
+    if (this.inline) {
+      return html`<div class="properties-modal-content">${content}</div>`;
+    }
+
+    return html`<div class="properties-modal-wrapper" @click=${stopPropagation}>
+      <div class="properties-modal-content">${content}</div>
+    </div>`;
   }
 
   @property({ attribute: false })
@@ -1498,6 +1693,21 @@ export class PropertiesModal extends SignalWatcher(WithDisposable(LitElement)) {
 
   @property({ attribute: false })
   accessor abortController: AbortController | null = null;
+
+  @property({ attribute: false })
+  accessor inline = false;
+
+  @state()
+  private accessor _loadingStencilNames = false;
+
+  @state()
+  private accessor _stencilShapeNames: string[] = [];
+
+  @state()
+  private accessor _stencilQuery = '';
+
+  @state()
+  private accessor _gridSnapAnchor: GridSnapAnchor = 'top-left';
 }
 
 customElements.define('properties-modal', PropertiesModal);
