@@ -14,7 +14,6 @@ import track from '@affine/track';
 import { appendParagraphCommand } from '@blocksuite/affine/blocks/paragraph';
 import type { DocTitle } from '@blocksuite/affine/fragments/doc-title';
 import { DisposableGroup } from '@blocksuite/affine/global/disposable';
-import { IS_LINUX } from '@blocksuite/affine/global/env';
 import type { DocMode, RootBlockModel } from '@blocksuite/affine/model';
 import {
   customImageProxyMiddleware,
@@ -186,20 +185,12 @@ const BlockSuiteEditorImpl = ({
         ) {
           return;
         }
-        if (!enableMiddleClickPaste && IS_LINUX && e.button === 1) {
-          e.preventDefault();
-        }
       };
-      editorContainer.addEventListener('pointerup', handleMiddleClick, {
-        capture: true,
-      });
       editorContainer.addEventListener('auxclick', handleMiddleClick, {
         capture: true,
       });
+
       return () => {
-        editorContainer?.removeEventListener('pointerup', handleMiddleClick, {
-          capture: true,
-        });
         editorContainer?.removeEventListener('auxclick', handleMiddleClick, {
           capture: true,
         });
