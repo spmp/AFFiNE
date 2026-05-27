@@ -106,3 +106,52 @@ export function findDuplicateTaskIdentities(links: TaskInteropLink[]) {
     .filter(([, count]) => count > 1)
     .map(([taskIdentity]) => taskIdentity);
 }
+
+export function computeTodoParentCheckedFromChildren(
+  childrenChecked: boolean[]
+): boolean | null {
+  if (childrenChecked.length === 0) {
+    return null;
+  }
+  return childrenChecked.every(Boolean);
+}
+
+export function computeTodoParentCheckedFromChildModels(
+  children: Array<{ id: string; checked: boolean }>,
+  updatedChild?: { id: string; checked: boolean }
+): boolean | null {
+  return computeTodoParentCheckedFromChildren(
+    children.map(child =>
+      updatedChild && child.id === updatedChild.id
+        ? updatedChild.checked
+        : child.checked
+    )
+  );
+}
+
+export function createTodoCheckedTransitionTracker() {
+  let initialized = false;
+  let lastChecked = false;
+
+  return {
+    shouldRecompute(type: string, checked: boolean) {
+      if (type !== 'todo') {
+        initialized = false;
+        return false;
+      }
+
+      if (!initialized) {
+        lastChecked = checked;
+        initialized = true;
+        return false;
+      }
+
+      if (checked === lastChecked) {
+        return false;
+      }
+
+      lastChecked = checked;
+      return true;
+    },
+  };
+}
