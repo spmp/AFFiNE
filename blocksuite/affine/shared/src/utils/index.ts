@@ -25,6 +25,7 @@ export * from './reordering';
 export * from './signal';
 export * from './string';
 export * from './svg';
+export * from './task-interop';
 export * from './title';
 export * from './url';
 export * from './virtual-padding';
