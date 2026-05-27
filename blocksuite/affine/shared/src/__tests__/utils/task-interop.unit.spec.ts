@@ -60,9 +60,16 @@ describe('task interop identity', () => {
 
 describe('task interop links', () => {
   it('creates todo link with stable identity', () => {
-    const link = createTodoTaskInteropLink({ docId: 'doc', blockId: 'todo' });
+    const link = createTodoTaskInteropLink({
+      docId: 'doc',
+      blockId: 'todo',
+      title: 'Sprint',
+      cost: 42,
+    });
     expect(link.taskIdentity).toBe('doc:todo');
     expect(link.sourceFlavor).toBe('affine:list');
+    expect(link.title).toBe('Sprint');
+    expect(link.cost).toBe(42);
   });
 
   it('creates database row link with row id mapping', () => {

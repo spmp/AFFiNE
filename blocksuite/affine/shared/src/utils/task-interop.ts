@@ -9,11 +9,13 @@ export type TaskInteropLink = {
   docId: string;
   blockId: string;
   sourceFlavor: string;
+  title?: string;
+  cost?: number;
   databaseId?: string;
   databaseRowId?: string;
 };
 
-export type TaskInteropChangedField = 'title' | 'checked';
+export type TaskInteropChangedField = 'title' | 'checked' | 'cost';
 
 export type TaskInteropUpdatedDetail = {
   link: TaskInteropLink;
@@ -60,6 +62,8 @@ export function parseTaskIdentity(taskIdentity: string) {
 export function createTodoTaskInteropLink(
   input: TaskIdentityInput & {
     sourceFlavor?: string;
+    title?: string;
+    cost?: number;
     databaseId?: string;
     databaseRowId?: string;
   }
@@ -69,6 +73,8 @@ export function createTodoTaskInteropLink(
     docId: input.docId,
     blockId: input.blockId,
     sourceFlavor: input.sourceFlavor ?? 'affine:list',
+    title: input.title,
+    cost: input.cost,
     databaseId: input.databaseId,
     databaseRowId: input.databaseRowId,
   };

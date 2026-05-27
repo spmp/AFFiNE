@@ -42,12 +42,16 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
   private readonly _todoCheckedTracker = createTodoCheckedTransitionTracker();
 
   private dispatchTaskInteropCheckedUpdated(model: ListBlockModel) {
+    const costValue = model.props.todoFieldValues?.cost;
+    const cost = typeof costValue === 'number' ? costValue : undefined;
     this.dispatchEvent(
       new CustomEvent<TaskInteropUpdatedDetail>(TASK_INTEROP_UPDATED_EVENT, {
         detail: {
           link: createTodoTaskInteropLink({
             docId: this.store.id,
             blockId: model.id,
+            title: this.getTodoListRoot(model).props.todoListTitle,
+            cost,
           }),
           changed: ['checked'],
         },
@@ -122,6 +126,102 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
     }
     this._select();
   };
+
+  private getTodoListRoot(model: ListBlockModel) {
+    let current: ListBlockModel = model;
+    let parent = this.store.getParent(current);
+    while (parent?.flavour === 'affine:list' && parent.props.type === 'todo') {
+      current = parent as ListBlockModel;
+      parent = this.store.getParent(current);
+    }
+    return current;
+  }
+
+  private getTodoRootGroup(root: ListBlockModel) {
+    const parentContainer = this.store.getParent(root);
+    const siblingModels = parentContainer?.children ?? [];
+    const rootIndex = siblingModels.findIndex(v => v.id === root.id);
+    const group: ListBlockModel[] = [];
+    if (rootIndex < 0) return [root];
+
+    for (let i = rootIndex; i >= 0; i--) {
+      const model = siblingModels[i];
+      if (
+        !model ||
+        model.flavour !== 'affine:list' ||
+        model.props.type !== 'todo'
+      ) {
+        break;
+      }
+      group.unshift(model as ListBlockModel);
+    }
+    for (let i = rootIndex + 1; i < siblingModels.length; i++) {
+      const model = siblingModels[i];
+      if (
+        !model ||
+        model.flavour !== 'affine:list' ||
+        model.props.type !== 'todo'
+      ) {
+        break;
+      }
+      group.push(model as ListBlockModel);
+    }
+    return group.length > 0 ? group : [root];
+  }
+
+  private getTodoGroupConfig(model: ListBlockModel) {
+    const root = this.getTodoListRoot(model);
+    const group = this.getTodoRootGroup(root);
+    const provider =
+      group.find(v => (v.props.todoFieldDefs?.length ?? 0) > 0) ?? root;
+    return {
+      fieldDefs: provider.props.todoFieldDefs ?? [],
+      layout: provider.props.todoFieldLayout ?? 'inline',
+    };
+  }
+
+  private readonly _stopInputEvent = (e: Event) => {
+    e.stopPropagation();
+  };
+
+  private readonly _onTodoCostInput = (e: InputEvent) => {
+    const target = e.target as HTMLInputElement;
+    const key = target.dataset.todoFieldKey;
+    const type = target.dataset.todoFieldType as 'text' | 'number' | undefined;
+    if (
+      this.store.readonly ||
+      this.model.props.type !== 'todo' ||
+      !key ||
+      !type
+    ) {
+      return;
+    }
+    const raw = target.value.trim();
+    const currentValues = { ...this.model.props.todoFieldValues };
+    if (raw.length === 0) {
+      delete currentValues[key];
+    } else if (type === 'number') {
+      const n = Number(raw);
+      if (Number.isNaN(n)) return;
+      currentValues[key] = n;
+    } else {
+      currentValues[key] = raw;
+    }
+    this.store.captureSync();
+    this.store.updateBlock(this.model, {
+      todoFieldValues:
+        Object.keys(currentValues).length > 0 ? currentValues : undefined,
+    });
+  };
+
+  private getTodoFieldInputSize(value: unknown, placeholder: string) {
+    const valueLength = String(value ?? '').length;
+    const placeholderLength = placeholder.length;
+    return Math.max(
+      6,
+      Math.min(36, Math.max(valueLength, placeholderLength) + 1)
+    );
+  }
 
   get attributeRenderer() {
     return this.inlineManager.getRenderer();
@@ -217,6 +317,12 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
       : model.props.collapsed;
 
     const listIcon = getListIcon(model, !collapsed, _onClickIcon);
+    const todoConfig =
+      this.model.props.type === 'todo'
+        ? this.getTodoGroupConfig(this.model)
+        : null;
+    const todoFieldDefs = todoConfig?.fieldDefs ?? [];
+    const todoFieldLayout = todoConfig?.layout ?? 'inline';
 
     const textAlignStyle = styleMap({
       textAlign: this.model.props.textAlign$?.value,
@@ -235,6 +341,9 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
     return html`
       <div class=${'affine-list-block-container'} style="${textAlignStyle}">
         <div
+          data-todo-layout=${this.model.props.type === 'todo'
+            ? todoFieldLayout
+            : ''}
           class=${classMap({
             'affine-list-rich-text-wrapper': true,
             'affine-list--checked':
@@ -275,6 +384,45 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
             .verticalScrollContainerGetter=${() =>
               getViewportElement(this.host)}
           ></rich-text>
+          ${this.model.props.type === 'todo'
+            ? html`<span
+                class="affine-list-todo-fields"
+                data-layout=${todoFieldLayout}
+                style=${styleMap({
+                  '--affine-todo-field-count': String(
+                    Math.max(todoFieldDefs.length, 1)
+                  ),
+                })}
+                contenteditable="false"
+                @mousedown=${this._stopInputEvent}
+                @click=${this._stopInputEvent}
+              >
+                ${repeat(
+                  todoFieldDefs,
+                  field => field.key,
+                  field =>
+                    html`<input
+                      class=${field.type === 'number'
+                        ? 'affine-list-todo-field-input affine-list-todo-field-input-number'
+                        : 'affine-list-todo-field-input'}
+                      data-todo-field-key=${field.key}
+                      data-todo-field-type=${field.type}
+                      .value=${String(
+                        this.model.props.todoFieldValues?.[field.key] ?? ''
+                      )}
+                      .size=${todoFieldLayout === 'inline'
+                        ? this.getTodoFieldInputSize(
+                            this.model.props.todoFieldValues?.[field.key],
+                            field.label
+                          )
+                        : 1}
+                      placeholder=${field.label}
+                      inputmode=${field.type === 'number' ? 'decimal' : 'text'}
+                      @input=${this._onTodoCostInput}
+                    />`
+                )}
+              </span>`
+            : nothing}
         </div>
 
         ${children} ${widgets}

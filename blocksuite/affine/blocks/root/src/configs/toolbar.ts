@@ -27,6 +27,7 @@ import {
 import {
   EmbedLinkedDocBlockSchema,
   EmbedSyncedDocBlockSchema,
+  type ListBlockModel,
   type TextAlign,
 } from '@blocksuite/affine-model';
 import {
@@ -62,6 +63,7 @@ import {
   DeleteIcon,
   DuplicateIcon,
   LinkedPageIcon,
+  SettingsIcon,
   TeXIcon,
 } from '@blocksuite/icons/lit';
 import {
@@ -72,6 +74,8 @@ import {
 import { toDraftModel } from '@blocksuite/store';
 import { html } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
+
+import { TodoListSettingsModal } from './todo-list-settings-modal.js';
 
 const conversionsActionGroup = {
   id: 'a.conversions',
@@ -378,6 +382,119 @@ const turnIntoLinkedDoc = {
   },
 } as const satisfies ToolbarAction;
 
+const configureTodoList = {
+  placement: ActionPlacement.More,
+  id: 'b.todo-list-settings',
+  actions: [
+    {
+      id: 'todo-list-settings',
+      label: 'Settings',
+      icon: SettingsIcon(),
+      run({ chain, store, host }) {
+        const [ok, { selectedModels = [] }] = chain
+          .pipe(getSelectedModelsCommand, {
+            types: ['block', 'text'],
+            mode: 'highest',
+          })
+          .run();
+        if (!ok || selectedModels.length !== 1) return;
+
+        const selected = selectedModels[0] as ListBlockModel;
+        if (
+          selected.flavour !== 'affine:list' ||
+          selected.props.type !== 'todo'
+        ) {
+          return;
+        }
+
+        let root: ListBlockModel = selected;
+        let parent = store.getParent(root) as ListBlockModel | null;
+        while (
+          parent?.flavour === 'affine:list' &&
+          parent.props.type === 'todo'
+        ) {
+          root = parent;
+          parent = store.getParent(root) as ListBlockModel | null;
+        }
+
+        const parentContainer = store.getParent(root);
+        const siblingModels = parentContainer?.children ?? [];
+        const rootIndex = siblingModels.findIndex(v => v.id === root.id);
+
+        const todoRootGroup: ListBlockModel[] = [];
+        if (rootIndex >= 0) {
+          for (let i = rootIndex; i >= 0; i--) {
+            const model = siblingModels[i];
+            if (
+              !model ||
+              model.flavour !== 'affine:list' ||
+              model.props.type !== 'todo'
+            ) {
+              break;
+            }
+            todoRootGroup.unshift(model as ListBlockModel);
+          }
+          for (let i = rootIndex + 1; i < siblingModels.length; i++) {
+            const model = siblingModels[i];
+            if (
+              !model ||
+              model.flavour !== 'affine:list' ||
+              model.props.type !== 'todo'
+            ) {
+              break;
+            }
+            todoRootGroup.push(model as ListBlockModel);
+          }
+        }
+        if (todoRootGroup.length === 0) {
+          todoRootGroup.push(root);
+        }
+
+        const modal = new TodoListSettingsModal();
+        modal.initialFields = root.props.todoFieldDefs ?? [];
+        modal.initialLayout = root.props.todoFieldLayout ?? 'inline';
+        modal.onSave = ({ fields, layout }) => {
+          store.captureSync();
+          const applyTodoConfigRecursively = (node: ListBlockModel) => {
+            store.updateBlock(node, {
+              todoFieldDefs: fields.length ? fields : undefined,
+              todoFieldLayout: layout,
+            });
+
+            for (const child of node.children) {
+              if (
+                child.flavour === 'affine:list' &&
+                child.props.type === 'todo'
+              ) {
+                applyTodoConfigRecursively(child as ListBlockModel);
+              }
+            }
+          };
+
+          for (const todoRoot of todoRootGroup) {
+            applyTodoConfigRecursively(todoRoot);
+          }
+        };
+
+        const mountRoot = host.closest('[role="dialog"]') ?? host;
+        mountRoot.append(modal);
+      },
+    },
+  ],
+  when({ chain, flags }) {
+    if (flags.isNative()) return false;
+    const [ok, { selectedModels = [] }] = chain
+      .pipe(getSelectedModelsCommand, {
+        types: ['block', 'text'],
+        mode: 'highest',
+      })
+      .run();
+    if (!ok || selectedModels.length !== 1) return false;
+    const model = selectedModels[0] as ListBlockModel;
+    return model.flavour === 'affine:list' && model.props.type === 'todo';
+  },
+} as const satisfies ToolbarAction;
+
 export const builtinToolbarConfig = {
   actions: [
     conversionsActionGroup,
@@ -386,6 +503,7 @@ export const builtinToolbarConfig = {
     highlightActionGroup,
     turnIntoDatabase,
     turnIntoLinkedDoc,
+    configureTodoList,
     {
       id: 'g.comment',
       ...blockCommentToolbarButton,
