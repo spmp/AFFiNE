@@ -2,6 +2,7 @@ import type {
   ColumnDataType,
   ColumnUpdater,
   DatabaseBlockModel,
+  ListBlockModel,
   ParagraphBlockModel,
 } from '@blocksuite/affine-model';
 import { getSelectedModelsCommand } from '@blocksuite/affine-shared/commands';
@@ -25,7 +26,7 @@ import { propertyPresets } from '@blocksuite/data-view/property-presets';
 import { IS_MOBILE } from '@blocksuite/global/env';
 import { BlockSuiteError, ErrorCode } from '@blocksuite/global/exceptions';
 import type { EditorHost } from '@blocksuite/std';
-import { type BlockModel } from '@blocksuite/store';
+import { type BlockModel, Text } from '@blocksuite/store';
 import { computed, type ReadonlySignal, signal } from '@preact/signals-core';
 
 import { getIcon } from './block-icons.js';
@@ -739,6 +740,56 @@ export const convertToDatabase = (host: EditorHost, viewType: string) => {
   const datasource = new DatabaseBlockDataSource(databaseModel);
   datasource.viewManager.viewAdd(viewType);
   host.store.moveBlocks(selectedModels, databaseModel);
+
+  const listRows = selectedModels.filter(
+    model => model.flavour === 'affine:list' && model.props.type === 'todo'
+  ) as ListBlockModel[];
+  const fieldDefs = new Map<
+    string,
+    { label: string; type: 'text' | 'number' }
+  >();
+
+  for (const row of listRows) {
+    let root: ListBlockModel = row;
+    let parent = host.store.getParent(root) as ListBlockModel | null;
+    while (parent?.flavour === 'affine:list' && parent.props.type === 'todo') {
+      root = parent;
+      parent = host.store.getParent(root) as ListBlockModel | null;
+    }
+    for (const def of root.props.todoFieldDefs ?? []) {
+      fieldDefs.set(def.key, { label: def.label, type: def.type });
+    }
+  }
+
+  if (fieldDefs.size > 0) {
+    const columnByKey = new Map<
+      string,
+      { id: string; type: 'text' | 'number' }
+    >();
+    for (const [key, def] of fieldDefs) {
+      const columnId = addProperty(
+        databaseModel,
+        'end',
+        def.type === 'number'
+          ? databaseBlockProperties.numberColumnConfig.create(def.label)
+          : databaseBlockProperties.richTextColumnConfig.create(def.label)
+      );
+      columnByKey.set(key, { id: columnId, type: def.type });
+    }
+
+    for (const row of listRows) {
+      for (const [key, value] of Object.entries(
+        row.props.todoFieldValues ?? {}
+      )) {
+        const column = columnByKey.get(key);
+        if (!column) continue;
+        updateCell(databaseModel, row.id, {
+          columnId: column.id,
+          value: column.type === 'number' ? value : new Text(String(value)),
+        });
+      }
+    }
+  }
 
   const selectionManager = host.selection;
   selectionManager.clear();
