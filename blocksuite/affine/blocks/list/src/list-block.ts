@@ -12,6 +12,8 @@ import {
 } from '@blocksuite/affine-shared/consts';
 import { DocModeProvider } from '@blocksuite/affine-shared/services';
 import {
+  computeTodoParentCheckedFromChildModels,
+  createTodoCheckedTransitionTracker,
   createTodoTaskInteropLink,
   getViewportElement,
   TASK_INTEROP_UPDATED_EVENT,
@@ -37,6 +39,55 @@ import { getListIcon } from './utils/get-list-icon.js';
 
 export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> {
   static override styles = listBlockStyles;
+  private readonly _todoCheckedTracker = createTodoCheckedTransitionTracker();
+
+  private dispatchTaskInteropCheckedUpdated(model: ListBlockModel) {
+    this.dispatchEvent(
+      new CustomEvent<TaskInteropUpdatedDetail>(TASK_INTEROP_UPDATED_EVENT, {
+        detail: {
+          link: createTodoTaskInteropLink({
+            docId: this.store.id,
+            blockId: model.id,
+          }),
+          changed: ['checked'],
+        },
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  private recomputeTodoAncestorsFrom(
+    model: ListBlockModel,
+    changedModelChecked?: boolean
+  ) {
+    let parent = this.store.getParent(model);
+    while (parent) {
+      if (parent.flavour !== 'affine:list' || parent.props.type !== 'todo') {
+        parent = this.store.getParent(parent);
+        continue;
+      }
+
+      const todoChildren = parent.children.filter(
+        child => child.flavour === 'affine:list' && child.props.type === 'todo'
+      ) as ListBlockModel[];
+      const parentChecked = computeTodoParentCheckedFromChildModels(
+        todoChildren.map(child => ({
+          id: child.id,
+          checked: child.props.checked,
+        })),
+        changedModelChecked !== undefined
+          ? { id: model.id, checked: changedModelChecked }
+          : undefined
+      );
+
+      if (parentChecked !== null && parentChecked !== parent.props.checked) {
+        this.store.updateBlock(parent, { checked: parentChecked });
+        this.dispatchTaskInteropCheckedUpdated(parent);
+      }
+      parent = this.store.getParent(parent);
+    }
+  }
 
   private _inlineRangeProvider: InlineRangeProvider | null = null;
 
@@ -61,19 +112,6 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
       this.store.captureSync();
       const checkedPropObj = { checked: !this.model.props.checked };
       this.store.updateBlock(this.model, checkedPropObj);
-      this.dispatchEvent(
-        new CustomEvent<TaskInteropUpdatedDetail>(TASK_INTEROP_UPDATED_EVENT, {
-          detail: {
-            link: createTodoTaskInteropLink({
-              docId: this.store.id,
-              blockId: this.model.id,
-            }),
-            changed: ['checked'],
-          },
-          bubbles: true,
-          composed: true,
-        })
-      );
       if (this.model.props.checked) {
         const checkEl = this.querySelector('.affine-list-block__todo-prefix');
         if (checkEl) {
@@ -145,6 +183,18 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
         if (type !== 'numbered' && order !== null) {
           this.model.props.order = null;
         }
+      })
+    );
+
+    this.disposables.add(
+      effect(() => {
+        const type = this.model.props.type$.value;
+        const checked = this.model.props.checked$.value;
+        if (!this._todoCheckedTracker.shouldRecompute(type, checked)) {
+          return;
+        }
+        this.dispatchTaskInteropCheckedUpdated(this.model);
+        this.recomputeTodoAncestorsFrom(this.model, checked);
       })
     );
   }
