@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  computeTodoParentCheckedFromChildModels,
+  computeTodoParentCheckedFromChildren,
   createDatabaseRowTaskInteropLink,
   createTaskIdentity,
+  createTodoCheckedTransitionTracker,
   createTodoTaskInteropLink,
   hasSameTaskIdentity,
   parseTaskIdentity,
@@ -89,5 +92,80 @@ describe('task interop links', () => {
 
   it('exports a stable event name', () => {
     expect(TASK_INTEROP_UPDATED_EVENT).toBe('affine:task-interop-updated');
+  });
+});
+
+describe('nested completion recompute', () => {
+  it('returns null for empty child list', () => {
+    expect(computeTodoParentCheckedFromChildren([])).toBeNull();
+  });
+
+  it('returns true only when all children are checked', () => {
+    expect(computeTodoParentCheckedFromChildren([true, true])).toBe(true);
+    expect(computeTodoParentCheckedFromChildren([true, false])).toBe(false);
+    expect(computeTodoParentCheckedFromChildren([false, false])).toBe(false);
+  });
+
+  it('is idempotent for the same child snapshot', () => {
+    const snapshot = [true, false, true];
+    const once = computeTodoParentCheckedFromChildren(snapshot);
+    const twice = computeTodoParentCheckedFromChildren(snapshot);
+    expect(twice).toBe(once);
+  });
+
+  it('supports overriding changed child state in same tick', () => {
+    const children = [
+      { id: 'c1', checked: true },
+      { id: 'c2', checked: false },
+    ];
+
+    expect(
+      computeTodoParentCheckedFromChildModels(children, {
+        id: 'c2',
+        checked: true,
+      })
+    ).toBe(true);
+
+    expect(
+      computeTodoParentCheckedFromChildModels(children, {
+        id: 'c1',
+        checked: false,
+      })
+    ).toBe(false);
+  });
+});
+
+describe('todo checked transition tracker', () => {
+  it('ignores initial todo snapshot and only triggers on transitions', () => {
+    const tracker = createTodoCheckedTransitionTracker();
+
+    expect(tracker.shouldRecompute('todo', false)).toBe(false);
+    expect(tracker.shouldRecompute('todo', false)).toBe(false);
+    expect(tracker.shouldRecompute('todo', true)).toBe(true);
+    expect(tracker.shouldRecompute('todo', true)).toBe(false);
+    expect(tracker.shouldRecompute('todo', false)).toBe(true);
+  });
+
+  it('resets initialization when block is not todo', () => {
+    const tracker = createTodoCheckedTransitionTracker();
+
+    expect(tracker.shouldRecompute('todo', false)).toBe(false);
+    expect(tracker.shouldRecompute('todo', true)).toBe(true);
+    expect(tracker.shouldRecompute('bulleted', true)).toBe(false);
+    expect(tracker.shouldRecompute('todo', true)).toBe(false);
+    expect(tracker.shouldRecompute('todo', false)).toBe(true);
+  });
+
+  it('covers non-click mutation style sequence', () => {
+    const tracker = createTodoCheckedTransitionTracker();
+
+    // Initial mount snapshot.
+    expect(tracker.shouldRecompute('todo', false)).toBe(false);
+    // External API/MCP mutation applies checked=true.
+    expect(tracker.shouldRecompute('todo', true)).toBe(true);
+    // Duplicate event with same value should not recompute.
+    expect(tracker.shouldRecompute('todo', true)).toBe(false);
+    // External mutation reverts checked.
+    expect(tracker.shouldRecompute('todo', false)).toBe(true);
   });
 });
