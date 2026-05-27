@@ -11,7 +11,12 @@ import {
   EDGELESS_TOP_CONTENTEDITABLE_SELECTOR,
 } from '@blocksuite/affine-shared/consts';
 import { DocModeProvider } from '@blocksuite/affine-shared/services';
-import { getViewportElement } from '@blocksuite/affine-shared/utils';
+import {
+  createTodoTaskInteropLink,
+  getViewportElement,
+  TASK_INTEROP_UPDATED_EVENT,
+  type TaskInteropUpdatedDetail,
+} from '@blocksuite/affine-shared/utils';
 import type { BlockComponent } from '@blocksuite/std';
 import { BlockSelection, TextSelection } from '@blocksuite/std';
 import {
@@ -56,6 +61,19 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
       this.store.captureSync();
       const checkedPropObj = { checked: !this.model.props.checked };
       this.store.updateBlock(this.model, checkedPropObj);
+      this.dispatchEvent(
+        new CustomEvent<TaskInteropUpdatedDetail>(TASK_INTEROP_UPDATED_EVENT, {
+          detail: {
+            link: createTodoTaskInteropLink({
+              docId: this.store.id,
+              blockId: this.model.id,
+            }),
+            changed: ['checked'],
+          },
+          bubbles: true,
+          composed: true,
+        })
+      );
       if (this.model.props.checked) {
         const checkEl = this.querySelector('.affine-list-block__todo-prefix');
         if (checkEl) {

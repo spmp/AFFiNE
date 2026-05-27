@@ -18,6 +18,10 @@ import {
   type TelemetryEventMap,
   TelemetryProvider,
 } from '@blocksuite/affine-shared/services';
+import {
+  TASK_INTEROP_UPDATED_EVENT,
+  type TaskInteropUpdatedDetail,
+} from '@blocksuite/affine-shared/utils';
 import { getDropResult } from '@blocksuite/affine-widget-drag-handle';
 import {
   createRecordDetail,
@@ -73,6 +77,19 @@ import { NoteRenderer } from './detail-panel/note-renderer.js';
 import { DatabaseSelection } from './selection.js';
 import { getSingleDocIdFromText } from './utils/title-doc.js';
 import type { DatabaseViewExtensionOptions } from './view';
+
+export function resolveTaskInteropTargetRow(
+  rowLookup: ReturnType<DatabaseBlockDataSource['findRowByTaskIdentity']>,
+  fallbackRowId?: string
+) {
+  if (rowLookup.status === 'unique') {
+    return rowLookup.rowId;
+  }
+  if (rowLookup.status === 'missing') {
+    return fallbackRowId;
+  }
+  return null;
+}
 
 export class DatabaseBlockComponent extends CaptionedBlockComponent<DatabaseBlockModel> {
   private readonly clickDatabaseOps = (e: MouseEvent) => {
@@ -382,6 +399,43 @@ export class DatabaseBlockComponent extends CaptionedBlockComponent<DatabaseBloc
     this.classList.add(databaseBlockStyles);
     this.listenFullWidthChange();
     this.handleMobileEditing();
+    this.handleTaskInteropUpdates();
+  }
+
+  private handleTaskInteropUpdates() {
+    this.disposables.addFromEvent(
+      this.host,
+      TASK_INTEROP_UPDATED_EVENT,
+      (event: Event) => {
+        const customEvent = event as CustomEvent<TaskInteropUpdatedDetail>;
+        const detail = customEvent.detail;
+        if (!detail?.link) {
+          return;
+        }
+
+        const dataSource = this.dataSource.value;
+        const rowLookup = dataSource.findRowByTaskIdentity(
+          detail.link.taskIdentity
+        );
+        const rowId = resolveTaskInteropTargetRow(
+          rowLookup,
+          detail.link.databaseRowId
+        );
+
+        if (!rowId) {
+          return;
+        }
+
+        dataSource.setTaskInteropLink(rowId, {
+          taskIdentity: detail.link.taskIdentity,
+          docId: detail.link.docId,
+          blockId: detail.link.blockId,
+          sourceFlavor: detail.link.sourceFlavor,
+          databaseId: this.blockId,
+          databaseRowId: rowId,
+        });
+      }
+    );
   }
 
   listenFullWidthChange() {

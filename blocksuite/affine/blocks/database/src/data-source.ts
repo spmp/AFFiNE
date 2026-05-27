@@ -7,6 +7,7 @@ import type {
 import { getSelectedModelsCommand } from '@blocksuite/affine-shared/commands';
 import { FeatureFlagService } from '@blocksuite/affine-shared/services';
 import {
+  createDatabaseRowTaskInteropLink,
   insertPositionToIndex,
   type InsertToPosition,
 } from '@blocksuite/affine-shared/utils';
@@ -46,6 +47,13 @@ import {
   updateProperty,
   updateView,
 } from './utils/block-utils.js';
+
+const TASK_INTEROP_COLUMN_ID = '__affine_task_interop_link';
+
+export type TaskIdentityRowLookup =
+  | { status: 'unique'; rowId: string }
+  | { status: 'missing' }
+  | { status: 'duplicate'; rowIds: [string, string] };
 import {
   databaseBlockViewConverts,
   databaseBlockViewMap,
@@ -58,6 +66,67 @@ type SpacialProperty = {
 };
 
 export class DatabaseBlockDataSource extends DataSourceBase {
+  findRowByTaskIdentity(taskIdentity: string): TaskIdentityRowLookup {
+    let match: string | null = null;
+    for (const rowId of this.rows$.value) {
+      const link = this.getTaskInteropLink(rowId);
+      if (link?.taskIdentity === taskIdentity) {
+        if (match && match !== rowId) {
+          console.warn(
+            '[task-interop] Duplicate task identity found in database rows',
+            {
+              taskIdentity,
+              rowA: match,
+              rowB: rowId,
+            }
+          );
+          return { status: 'duplicate', rowIds: [match, rowId] };
+        }
+        match = rowId;
+      }
+    }
+
+    if (!match) {
+      return { status: 'missing' };
+    }
+    return { status: 'unique', rowId: match };
+  }
+
+  findRowIdByTaskIdentity(taskIdentity: string) {
+    const result = this.findRowByTaskIdentity(taskIdentity);
+    return result.status === 'unique' ? result.rowId : null;
+  }
+
+  getTaskInteropLink(rowId: string) {
+    const stored = this.cellValueGet(rowId, TASK_INTEROP_COLUMN_ID);
+    if (stored && typeof stored === 'object') {
+      return stored as ReturnType<typeof createDatabaseRowTaskInteropLink>;
+    }
+
+    const model = this.getModelById(rowId);
+    if (!model) {
+      return null;
+    }
+
+    return createDatabaseRowTaskInteropLink({
+      docId: this.doc.id,
+      blockId: model.id,
+      databaseId: this._model.id,
+      sourceFlavor: model.flavour,
+    });
+  }
+
+  setTaskInteropLink(
+    rowId: string,
+    link: ReturnType<typeof createDatabaseRowTaskInteropLink>
+  ) {
+    this._runCapture();
+    updateCell(this._model, rowId, {
+      columnId: TASK_INTEROP_COLUMN_ID,
+      value: link,
+    });
+  }
+
   override get parentProvider() {
     return this._model.store.provider;
   }
@@ -100,6 +169,17 @@ export class DatabaseBlockDataSource extends DataSourceBase {
           return;
         }
         return model.text;
+      },
+    },
+    [TASK_INTEROP_COLUMN_ID]: {
+      valueSet: (rowId: string, propertyId: string, value: unknown) => {
+        updateCell(this._model, rowId, {
+          columnId: propertyId,
+          value,
+        });
+      },
+      valueGet: (rowId: string, propertyId: string) => {
+        return getCell(this._model, rowId, propertyId)?.value;
       },
     },
   };
