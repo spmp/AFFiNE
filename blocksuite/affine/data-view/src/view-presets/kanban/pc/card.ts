@@ -1,4 +1,8 @@
 import { popupTargetFromElement } from '@blocksuite/affine-components/context-menu';
+import {
+  TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME,
+  TASK_PARENT_IDENTIFIER_COLUMN_NAME,
+} from '@blocksuite/affine-shared/utils';
 import { SignalWatcher, WithDisposable } from '@blocksuite/global/lit';
 import { CenterPeekIcon, MoreHorizontalIcon } from '@blocksuite/icons/lit';
 import { ShadowlessElement } from '@blocksuite/std';
@@ -196,6 +200,12 @@ export class KanbanCard extends SignalWatcher(
         columns,
         v => v.id,
         column => {
+          if (
+            column.name$.value === TASK_PARENT_IDENTIFIER_COLUMN_NAME ||
+            column.name$.value === TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME
+          ) {
+            return '';
+          }
           if (this.view.isInHeader(column.id)) {
             return '';
           }

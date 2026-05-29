@@ -9,8 +9,13 @@ import { getSelectedModelsCommand } from '@blocksuite/affine-shared/commands';
 import { FeatureFlagService } from '@blocksuite/affine-shared/services';
 import {
   createDatabaseRowTaskInteropLink,
+  createTaskIdentity,
+  encodeTaskAncestorIdentities,
   insertPositionToIndex,
   type InsertToPosition,
+  TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME,
+  TASK_HIERARCHY_LEVEL_COLUMN_NAME,
+  TASK_PARENT_IDENTIFIER_COLUMN_NAME,
 } from '@blocksuite/affine-shared/utils';
 import {
   type DatabaseFlags,
@@ -50,6 +55,11 @@ import {
 } from './utils/block-utils.js';
 
 const TASK_INTEROP_COLUMN_ID = '__affine_task_interop_link';
+const READONLY_SYSTEM_COLUMN_NAMES = new Set([
+  TASK_HIERARCHY_LEVEL_COLUMN_NAME,
+  TASK_PARENT_IDENTIFIER_COLUMN_NAME,
+  TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME,
+]);
 
 export type TaskIdentityRowLookup =
   | { status: 'unique'; rowId: string }
@@ -67,6 +77,14 @@ type SpacialProperty = {
 };
 
 export class DatabaseBlockDataSource extends DataSourceBase {
+  private isReadonlySystemColumn(propertyId: string) {
+    const result = this.getPropertyAndIndex(propertyId);
+    if (!result) {
+      return false;
+    }
+    return READONLY_SYSTEM_COLUMN_NAMES.has(result.column.name);
+  }
+
   findRowByTaskIdentity(taskIdentity: string): TaskIdentityRowLookup {
     let match: string | null = null;
     for (const rowId of this.rows$.value) {
@@ -317,6 +335,9 @@ export class DatabaseBlockDataSource extends DataSourceBase {
   }
 
   cellValueChange(rowId: string, propertyId: string, value: unknown): void {
+    if (this.isReadonlySystemColumn(propertyId)) {
+      return;
+    }
     this._runCapture();
 
     const type = this.propertyTypeGet(propertyId);
@@ -500,6 +521,9 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     if (this.isFixedProperty(id)) {
       return;
     }
+    if (this.isReadonlySystemColumn(id)) {
+      return;
+    }
     this.doc.captureSync();
     const index = this._model.props.columns.findIndex(v => v.id === id);
     if (index < 0) return;
@@ -555,12 +579,16 @@ export class DatabaseBlockDataSource extends DataSourceBase {
   }
 
   propertyNameSet(propertyId: string, name: string): void {
+    if (this.isReadonlySystemColumn(propertyId)) {
+      return;
+    }
     this.doc.captureSync();
     this.updateProperty(propertyId, () => ({ name }));
   }
 
   override propertyReadonlyGet(propertyId: string): boolean {
     if (propertyId === 'type') return true;
+    if (this.isReadonlySystemColumn(propertyId)) return true;
     return false;
   }
 
@@ -577,6 +605,9 @@ export class DatabaseBlockDataSource extends DataSourceBase {
 
   propertyTypeSet(propertyId: string, toType: string): void {
     if (this.isFixedProperty(propertyId)) {
+      return;
+    }
+    if (this.isReadonlySystemColumn(propertyId)) {
       return;
     }
     const meta = this.propertyMetaGet(toType);
@@ -737,13 +768,118 @@ export const convertToDatabase = (host: EditorHost, viewType: string) => {
   if (!databaseModel) {
     return;
   }
+  const getPathFromRoot = (model: BlockModel) => {
+    const path: number[] = [];
+    let current: BlockModel | null = model;
+    while (current) {
+      const parent = host.store.getParent(current);
+      if (!parent) break;
+      path.unshift(
+        parent.children.findIndex(child => child.id === current?.id)
+      );
+      current = parent;
+    }
+    return path;
+  };
+
+  const comparePath = (a: number[], b: number[]) => {
+    const len = Math.min(a.length, b.length);
+    for (let i = 0; i < len; i++) {
+      const left = a[i] ?? -1;
+      const right = b[i] ?? -1;
+      if (left !== right) return left - right;
+    }
+    return a.length - b.length;
+  };
+
+  const orderedSelectedModels = [...selectedModels].sort((a, b) =>
+    comparePath(getPathFromRoot(a), getPathFromRoot(b))
+  );
+
+  const collectTodoRowsPreorder = (roots: BlockModel[]) => {
+    const visited = new Set<string>();
+    const result: ListBlockModel[] = [];
+
+    const walk = (node: BlockModel) => {
+      if (visited.has(node.id)) return;
+      visited.add(node.id);
+
+      if (node.flavour === 'affine:list' && node.props.type === 'todo') {
+        result.push(node as ListBlockModel);
+      }
+
+      for (const child of node.children) {
+        walk(child);
+      }
+    };
+
+    for (const root of roots) {
+      walk(root);
+    }
+
+    return result;
+  };
+
   const datasource = new DatabaseBlockDataSource(databaseModel);
   datasource.viewManager.viewAdd(viewType);
-  host.store.moveBlocks(selectedModels, databaseModel);
 
-  const listRows = selectedModels.filter(
-    model => model.flavour === 'affine:list' && model.props.type === 'todo'
-  ) as ListBlockModel[];
+  const listRows = collectTodoRowsPreorder(orderedSelectedModels);
+  const hierarchyLevelByRowId = new Map<string, number>();
+  const parentTaskIdentityByRowId = new Map<string, string | undefined>();
+  const ancestorTaskIdentitiesByRowId = new Map<string, string | undefined>();
+  const getHierarchyLevel = (row: ListBlockModel) => {
+    let depth = 0;
+    let parent = host.store.getParent(row) as ListBlockModel | null;
+    while (parent?.flavour === 'affine:list' && parent.props.type === 'todo') {
+      depth += 1;
+      parent = host.store.getParent(parent) as ListBlockModel | null;
+    }
+    return depth;
+  };
+  for (const row of listRows) {
+    hierarchyLevelByRowId.set(row.id, getHierarchyLevel(row));
+    const ancestors: string[] = [];
+    let parent = host.store.getParent(row) as ListBlockModel | null;
+    while (parent?.flavour === 'affine:list' && parent.props.type === 'todo') {
+      ancestors.unshift(
+        createTaskIdentity({
+          docId: host.store.id,
+          blockId: parent.id,
+        })
+      );
+      parent = host.store.getParent(parent) as ListBlockModel | null;
+    }
+    const directParentIdentity = ancestors.at(-1);
+    if (directParentIdentity) {
+      parentTaskIdentityByRowId.set(row.id, directParentIdentity);
+    }
+    if (ancestors.length > 0) {
+      ancestorTaskIdentitiesByRowId.set(
+        row.id,
+        encodeTaskAncestorIdentities(ancestors)
+      );
+    }
+  }
+
+  host.store.moveBlocks(orderedSelectedModels, databaseModel);
+
+  const desiredRowOrder = listRows.map(row => row.id);
+  for (let i = 0; i < desiredRowOrder.length; i++) {
+    const rowId = desiredRowOrder[i];
+    if (!rowId) continue;
+    const currentIndex = databaseModel.children.findIndex(c => c.id === rowId);
+    if (currentIndex < 0 || currentIndex === i) {
+      continue;
+    }
+
+    const rowModel = host.store.getModelById(rowId);
+    const targetModel = databaseModel.children[i];
+    if (!rowModel) {
+      continue;
+    }
+    host.store.moveBlocks([rowModel], databaseModel, targetModel);
+  }
+
   const fieldDefs = new Map<
     string,
     { label: string; type: 'text' | 'number' }
@@ -790,6 +926,105 @@ export const convertToDatabase = (host: EditorHost, viewType: string) => {
       }
     }
   }
+
+  const hierarchyLevelColumnId = addProperty(
+    databaseModel,
+    'end',
+    databaseBlockProperties.numberColumnConfig.create(
+      TASK_HIERARCHY_LEVEL_COLUMN_NAME
+    )
+  );
+  const parentTaskIdentityColumnId = addProperty(
+    databaseModel,
+    'end',
+    databaseBlockProperties.richTextColumnConfig.create(
+      TASK_PARENT_IDENTIFIER_COLUMN_NAME
+    )
+  );
+  const ancestorTaskIdentitiesColumnId = addProperty(
+    databaseModel,
+    'end',
+    databaseBlockProperties.richTextColumnConfig.create(
+      TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME
+    )
+  );
+
+  for (const row of listRows) {
+    updateCell(databaseModel, row.id, {
+      columnId: hierarchyLevelColumnId,
+      value: hierarchyLevelByRowId.get(row.id) ?? 0,
+    });
+    const parentIdentity = parentTaskIdentityByRowId.get(row.id);
+    if (parentIdentity) {
+      updateCell(databaseModel, row.id, {
+        columnId: parentTaskIdentityColumnId,
+        value: new Text(parentIdentity),
+      });
+    }
+    const ancestorIdentities = ancestorTaskIdentitiesByRowId.get(row.id);
+    if (ancestorIdentities) {
+      updateCell(databaseModel, row.id, {
+        columnId: ancestorTaskIdentitiesColumnId,
+        value: new Text(ancestorIdentities),
+      });
+    }
+
+    datasource.setTaskInteropLink(
+      row.id,
+      createDatabaseRowTaskInteropLink({
+        docId: host.store.id,
+        blockId: row.id,
+        databaseId: databaseModel.id,
+        sourceFlavor: row.flavour,
+      })
+    );
+  }
+
+  const hideColumnByDefaultInViews = (columnId: string) => {
+    for (const view of databaseModel.props.views) {
+      if (view.mode === 'kanban') {
+        updateView(databaseModel, view.id, data => {
+          const columns = (data.columns ?? []) as Array<{
+            id: string;
+            hide?: boolean;
+          }>;
+          const idx = columns.findIndex(column => column.id === columnId);
+          if (idx >= 0) {
+            const current = columns[idx];
+            if (!current) return {};
+            const next = [...columns];
+            next[idx] = { ...current, hide: true };
+            return { columns: next };
+          }
+          return { columns: [...columns, { id: columnId, hide: true }] };
+        });
+      }
+
+      if (view.mode === 'table') {
+        updateView(databaseModel, view.id, data => {
+          const columns = (data.columns ?? []) as Array<{
+            id: string;
+            width: number;
+            hide?: boolean;
+          }>;
+          const idx = columns.findIndex(column => column.id === columnId);
+          if (idx >= 0) {
+            const current = columns[idx];
+            if (!current) return {};
+            const next = [...columns];
+            next[idx] = { ...current, hide: true };
+            return { columns: next };
+          }
+          return {
+            columns: [...columns, { id: columnId, width: 180, hide: true }],
+          };
+        });
+      }
+    }
+  };
+
+  hideColumnByDefaultInViews(parentTaskIdentityColumnId);
+  hideColumnByDefaultInViews(ancestorTaskIdentitiesColumnId);
 
   const selectionManager = host.selection;
   selectionManager.clear();

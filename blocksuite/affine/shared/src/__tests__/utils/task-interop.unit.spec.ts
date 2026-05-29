@@ -7,6 +7,8 @@ import {
   createTaskIdentity,
   createTodoCheckedTransitionTracker,
   createTodoTaskInteropLink,
+  encodeTaskAncestorIdentities,
+  encodeTaskAncestorIdentityToken,
   hasSameTaskIdentity,
   parseTaskIdentity,
   TASK_INTEROP_UPDATED_EVENT,
@@ -55,6 +57,21 @@ describe('task interop identity', () => {
       docId: 'doc:2',
       blockId: 'block:3',
     });
+  });
+
+  it('encodes ancestor identities with strong token boundaries', () => {
+    const encoded = encodeTaskAncestorIdentities(['doc:a', 'doc:ab']);
+
+    expect(encoded).toBe('|doc:a|doc:ab|');
+    expect(encoded.includes(encodeTaskAncestorIdentityToken('doc:a'))).toBe(
+      true
+    );
+    expect(encoded.includes(encodeTaskAncestorIdentityToken('doc:ab'))).toBe(
+      true
+    );
+    expect(encoded.includes(encodeTaskAncestorIdentityToken('doc:b'))).toBe(
+      false
+    );
   });
 });
 
