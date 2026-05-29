@@ -24,7 +24,12 @@ export type TaskInteropUpdatedDetail = {
 
 export const TASK_INTEROP_UPDATED_EVENT = 'affine:task-interop-updated';
 
+export const TASK_HIERARCHY_LEVEL_COLUMN_NAME = 'Hierarchy Level';
+export const TASK_PARENT_IDENTIFIER_COLUMN_NAME = 'Parent Identifier';
+export const TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME = 'Ancestor Identifiers';
+
 const TASK_ID_SEPARATOR = ':';
+const TASK_ANCESTOR_TOKEN_DELIMITER = '|';
 
 const encodePart = (value: string) => encodeURIComponent(value);
 const decodePart = (value: string) => decodeURIComponent(value);
@@ -57,6 +62,17 @@ export function parseTaskIdentity(taskIdentity: string) {
   }
 
   return null;
+}
+
+export function encodeTaskAncestorIdentities(taskIdentities: string[]) {
+  if (taskIdentities.length === 0) {
+    return '';
+  }
+  return `${TASK_ANCESTOR_TOKEN_DELIMITER}${taskIdentities.join(TASK_ANCESTOR_TOKEN_DELIMITER)}${TASK_ANCESTOR_TOKEN_DELIMITER}`;
+}
+
+export function encodeTaskAncestorIdentityToken(taskIdentity: string) {
+  return `${TASK_ANCESTOR_TOKEN_DELIMITER}${taskIdentity}${TASK_ANCESTOR_TOKEN_DELIMITER}`;
 }
 
 export function createTodoTaskInteropLink(
