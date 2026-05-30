@@ -77,6 +77,36 @@ type SpacialProperty = {
 };
 
 export class DatabaseBlockDataSource extends DataSourceBase {
+  private readonly _pendingHierarchyLevelByRowId = new Map<string, number>();
+  private readonly _pendingHierarchyMoveByRowId = new Map<
+    string,
+    { movedRowIds: string[]; oldRootLevel: number }
+  >();
+
+  setPendingHierarchyLevel(rowId: string, level: number) {
+    if (!Number.isFinite(level)) {
+      this._pendingHierarchyLevelByRowId.delete(rowId);
+      return;
+    }
+    this._pendingHierarchyLevelByRowId.set(
+      rowId,
+      Math.max(0, Math.floor(level))
+    );
+  }
+
+  private parseHierarchyLevel(value: unknown) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return Math.max(0, Math.floor(value));
+    }
+    if (typeof value === 'string') {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return Math.max(0, Math.floor(parsed));
+      }
+    }
+    return 0;
+  }
+
   private isReadonlySystemColumn(propertyId: string) {
     const result = this.getPropertyAndIndex(propertyId);
     if (!result) {
@@ -671,13 +701,182 @@ export class DatabaseBlockDataSource extends DataSourceBase {
   rowMove(rowId: string, position: InsertToPosition): void {
     const model = this.doc.getModelById(rowId);
     if (model) {
+      const levelColumn = this._model.props.columns.find(
+        column => column.name === TASK_HIERARCHY_LEVEL_COLUMN_NAME
+      );
+      const children = this._model.children;
+      const startIndex = children.findIndex(child => child.id === rowId);
+      let movingModels = [model];
+      let movedRowIds = [rowId];
+      let oldRootLevel = 0;
+      if (startIndex >= 0 && levelColumn) {
+        const rootLevel = this.parseHierarchyLevel(
+          getCell(this._model, rowId, levelColumn.id)?.value
+        );
+        oldRootLevel = rootLevel;
+        const subtree = [children[startIndex]].filter(
+          (v): v is typeof model => !!v
+        );
+        for (let i = startIndex + 1; i < children.length; i++) {
+          const child = children[i];
+          if (!child) break;
+          const level = this.parseHierarchyLevel(
+            getCell(this._model, child.id, levelColumn.id)?.value
+          );
+          if (level <= rootLevel) {
+            break;
+          }
+          subtree.push(child as typeof model);
+        }
+        movingModels = subtree;
+        movedRowIds = subtree.map(item => item.id);
+      }
+
       const index = insertPositionToIndex(position, this._model.children);
       const target = this._model.children[index];
       if (target?.id === rowId) {
         return;
       }
-      this.doc.moveBlocks([model], this._model, target);
+      this._pendingHierarchyMoveByRowId.set(rowId, {
+        movedRowIds,
+        oldRootLevel,
+      });
+      this.doc.moveBlocks(movingModels, this._model, target);
+      this.recomputeHierarchyMetadataAfterMove(rowId);
     }
+  }
+
+  private recomputeHierarchyMetadataAfterMove(movedRowId: string) {
+    const levelColumn = this._model.props.columns.find(
+      column => column.name === TASK_HIERARCHY_LEVEL_COLUMN_NAME
+    );
+    const parentColumn = this._model.props.columns.find(
+      column => column.name === TASK_PARENT_IDENTIFIER_COLUMN_NAME
+    );
+    const ancestorColumn = this._model.props.columns.find(
+      column => column.name === TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME
+    );
+    if (!levelColumn || !parentColumn || !ancestorColumn) {
+      return;
+    }
+
+    const rowIds = this._model.children.map(child => child.id);
+    const movedIndex = rowIds.indexOf(movedRowId);
+    if (movedIndex < 0) {
+      return;
+    }
+
+    const pendingMove = this._pendingHierarchyMoveByRowId.get(movedRowId);
+    this._pendingHierarchyMoveByRowId.delete(movedRowId);
+
+    const levels = rowIds.map(rowId =>
+      this.parseHierarchyLevel(
+        getCell(this._model, rowId, levelColumn.id)?.value
+      )
+    );
+    const pendingLevel = this._pendingHierarchyLevelByRowId.get(movedRowId);
+    this._pendingHierarchyLevelByRowId.delete(movedRowId);
+    const nextRootLevel =
+      pendingLevel != null && Number.isFinite(pendingLevel)
+        ? pendingLevel
+        : movedIndex > 0
+          ? (levels[movedIndex - 1] ?? 0)
+          : 0;
+    levels[movedIndex] = nextRootLevel;
+
+    if (pendingMove && pendingMove.movedRowIds.length > 0) {
+      const movedSet = new Set(pendingMove.movedRowIds);
+      const delta = nextRootLevel - pendingMove.oldRootLevel;
+      if (delta !== 0) {
+        for (let i = 0; i < rowIds.length; i++) {
+          const id = rowIds[i];
+          if (!id || !movedSet.has(id) || id === movedRowId) {
+            continue;
+          }
+          const current = levels[i] ?? 0;
+          levels[i] = Math.max(0, current + delta);
+        }
+      }
+    }
+
+    const levelCells: Record<string, unknown> = {};
+    const parentCells: Record<string, unknown> = {};
+    const ancestorCells: Record<string, unknown> = {};
+    const stack: string[] = [];
+
+    for (let i = 0; i < rowIds.length; i++) {
+      const rowId = rowIds[i];
+      if (!rowId) continue;
+      const level = Math.max(0, levels[i] ?? 0);
+      while (stack.length > level) {
+        stack.pop();
+      }
+
+      levelCells[rowId] = level;
+      const parentIdentity = stack.at(-1);
+      parentCells[rowId] = parentIdentity
+        ? new Text(parentIdentity)
+        : undefined;
+      ancestorCells[rowId] =
+        stack.length > 0
+          ? new Text(encodeTaskAncestorIdentities(stack))
+          : undefined;
+
+      const identity = createTaskIdentity({
+        docId: this.doc.id,
+        blockId: rowId,
+      });
+      stack[level] = identity;
+      stack.length = level + 1;
+    }
+
+    updateCells(this._model, levelColumn.id, levelCells);
+    updateCells(this._model, parentColumn.id, parentCells);
+    updateCells(this._model, ancestorColumn.id, ancestorCells);
+  }
+
+  applyTaskHierarchyMutation(
+    updatedLevels: Map<string, number>,
+    updatedParents: Map<string, string | undefined>,
+    updatedAncestors: Map<string, string>
+  ) {
+    const levelColumn = this._model.props.columns.find(
+      column => column.name === TASK_HIERARCHY_LEVEL_COLUMN_NAME
+    );
+    const parentColumn = this._model.props.columns.find(
+      column => column.name === TASK_PARENT_IDENTIFIER_COLUMN_NAME
+    );
+    const ancestorColumn = this._model.props.columns.find(
+      column => column.name === TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME
+    );
+    if (!levelColumn || !parentColumn || !ancestorColumn) {
+      return;
+    }
+
+    const levelCells: Record<string, unknown> = {};
+    const parentCells: Record<string, unknown> = {};
+    const ancestorCells: Record<string, unknown> = {};
+
+    for (const rowId of this._model.children.map(child => child.id)) {
+      const level = updatedLevels.get(rowId);
+      if (level != null) {
+        levelCells[rowId] = level;
+      }
+
+      if (updatedParents.has(rowId)) {
+        const parent = updatedParents.get(rowId);
+        parentCells[rowId] = parent ? new Text(parent) : undefined;
+      }
+
+      if (updatedAncestors.has(rowId)) {
+        const ancestors = updatedAncestors.get(rowId) ?? '';
+        ancestorCells[rowId] = ancestors ? new Text(ancestors) : undefined;
+      }
+    }
+
+    updateCells(this._model, levelColumn.id, levelCells);
+    updateCells(this._model, parentColumn.id, parentCells);
+    updateCells(this._model, ancestorColumn.id, ancestorCells);
   }
 
   viewDataAdd(viewData: DataViewDataType): string {
@@ -1025,6 +1224,7 @@ export const convertToDatabase = (host: EditorHost, viewType: string) => {
 
   hideColumnByDefaultInViews(parentTaskIdentityColumnId);
   hideColumnByDefaultInViews(ancestorTaskIdentitiesColumnId);
+  hideColumnByDefaultInViews(hierarchyLevelColumnId);
 
   const selectionManager = host.selection;
   selectionManager.clear();

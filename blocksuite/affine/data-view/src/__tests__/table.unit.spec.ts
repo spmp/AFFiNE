@@ -16,6 +16,13 @@ import {
   materializeTableColumns,
   TableSingleView,
 } from '../view-presets/table/table-view-manager.js';
+import {
+  applyHierarchyMutation,
+  calculateHierarchyIndent,
+  computeIndentMutation,
+  computeUnindentMutation,
+  normalizeHierarchyLevel,
+} from '../view-presets/table/utils.js';
 
 /** @vitest-environment happy-dom */
 
@@ -243,5 +250,80 @@ describe('number formatter', () => {
 
   test('supports comma as decimal separator in locale-specific input', () => {
     expect(parseNumber('11451,4', ',')).toBe(11451.4);
+  });
+});
+
+describe('table hierarchy helpers', () => {
+  test('normalizes hierarchy level from number and string values', () => {
+    expect(normalizeHierarchyLevel(3)).toBe(3);
+    expect(normalizeHierarchyLevel('2')).toBe(2);
+    expect(normalizeHierarchyLevel(-1)).toBe(0);
+    expect(normalizeHierarchyLevel('not-a-number')).toBe(0);
+  });
+
+  test('calculates bounded indentation by hierarchy level', () => {
+    expect(calculateHierarchyIndent(0)).toBe(0);
+    expect(calculateHierarchyIndent(1)).toBe(12);
+    expect(calculateHierarchyIndent(3)).toBe(36);
+    expect(calculateHierarchyIndent(100)).toBe(96);
+  });
+
+  test('indents and unindents row hierarchy metadata', () => {
+    const values = new Map<string, Map<string, unknown>>();
+    const setCell = (rowId: string, propertyId: string, value: unknown) => {
+      if (!values.has(rowId)) values.set(rowId, new Map());
+      values.get(rowId)?.set(propertyId, value);
+    };
+    const getCell = (rowId: string, propertyId: string) =>
+      values.get(rowId)?.get(propertyId);
+
+    const levelProp = {
+      id: 'level',
+      name$: { value: 'Hierarchy Level' },
+      valueSetFromString: (rowId: string, value: string) =>
+        setCell(rowId, 'level', Number(value)),
+      cellGetOrCreate: (rowId: string) => ({
+        jsonValue$: { value: getCell(rowId, 'level') ?? 0 },
+      }),
+    };
+    const parentProp = {
+      id: 'parent',
+      name$: { value: 'Parent Identifier' },
+      valueSetFromString: (rowId: string, value: string) =>
+        setCell(rowId, 'parent', value),
+      cellGetOrCreate: (rowId: string) => ({
+        jsonValue$: { value: getCell(rowId, 'parent') ?? '' },
+      }),
+    };
+    const ancestorProp = {
+      id: 'ancestors',
+      name$: { value: 'Ancestor Identifiers' },
+      valueSetFromString: (rowId: string, value: string) =>
+        setCell(rowId, 'ancestors', value),
+      cellGetOrCreate: (rowId: string) => ({
+        jsonValue$: { value: getCell(rowId, 'ancestors') ?? '' },
+      }),
+    };
+
+    const rowIds = ['a', 'b', 'c'];
+    setCell('a', 'level', 0);
+    setCell('b', 'level', 0);
+    setCell('c', 'level', 1);
+
+    const context = {
+      rowIds,
+      rowId: 'b',
+      docId: 'doc',
+      properties: [levelProp, parentProp, ancestorProp],
+    };
+
+    const indentResult = computeIndentMutation(context);
+    applyHierarchyMutation(context, indentResult);
+
+    expect(getCell('b', 'level')).toBe(1);
+
+    const unindentResult = computeUnindentMutation(context);
+    expect(unindentResult).not.toBeNull();
+    expect(getCell('b', 'level')).toBe(0);
   });
 });
