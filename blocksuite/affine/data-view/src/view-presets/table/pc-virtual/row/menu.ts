@@ -93,6 +93,18 @@ export const popRowMenu = (
       name: '',
       items: [
         menu.action({
+          name: 'Indent Row',
+          select: () => {
+            selectionController.indentHierarchyRow();
+          },
+        }),
+        menu.action({
+          name: 'Unindent Row',
+          select: () => {
+            selectionController.unindentHierarchyRow();
+          },
+        }),
+        menu.action({
           name: 'Insert Before',
           prefix: html` <div
             style="transform: rotate(90deg);display:flex;align-items:center;"
