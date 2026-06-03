@@ -22,6 +22,11 @@ export type ListProps = {
   }>;
   todoFieldLayout?: 'inline' | 'aligned' | 'right';
   todoFieldValues?: Record<string, string | number>;
+  todoDatabaseStatusMapping?: {
+    statusColumnName: string;
+    doneTagLabel: string;
+    notDoneTagLabel?: string;
+  };
   textAlign?: TextAlign;
   checked: boolean;
   collapsed: boolean;
@@ -39,6 +44,7 @@ export const ListBlockSchema = defineBlockSchema({
       todoFieldDefs: undefined,
       todoFieldLayout: undefined,
       todoFieldValues: undefined,
+      todoDatabaseStatusMapping: undefined,
       textAlign: undefined,
       checked: false,
       collapsed: false,
