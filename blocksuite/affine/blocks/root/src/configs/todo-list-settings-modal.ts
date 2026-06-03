@@ -46,7 +46,8 @@ export class TodoListSettingsModal extends LitElement {
     }
 
     textarea,
-    select {
+    select,
+    input {
       width: 100%;
       font: inherit;
       font-size: var(--affine-font-xs);
@@ -96,11 +97,22 @@ export class TodoListSettingsModal extends LitElement {
     | ((payload: {
         fields: TodoFieldDef[];
         layout: 'inline' | 'aligned' | 'right';
+        statusMapping: {
+          statusColumnName: string;
+          doneTagLabel: string;
+          notDoneTagLabel?: string;
+        };
       }) => void)
     | undefined;
+  @property({ attribute: false }) accessor initialStatusColumnName = 'Status';
+  @property({ attribute: false }) accessor initialDoneTagLabel = 'Done';
+  @property({ attribute: false }) accessor initialNotDoneTagLabel = '';
 
   @state() private accessor _fieldsText = '';
   @state() private accessor _layout: 'inline' | 'aligned' | 'right' = 'inline';
+  @state() private accessor _statusColumnName = 'Status';
+  @state() private accessor _doneTagLabel = 'Done';
+  @state() private accessor _notDoneTagLabel = '';
 
   override connectedCallback(): void {
     super.connectedCallback();
@@ -108,6 +120,9 @@ export class TodoListSettingsModal extends LitElement {
       .map(v => `${v.key}:${v.type}`)
       .join(', ');
     this._layout = this.initialLayout;
+    this._statusColumnName = this.initialStatusColumnName;
+    this._doneTagLabel = this.initialDoneTagLabel;
+    this._notDoneTagLabel = this.initialNotDoneTagLabel;
   }
 
   private readonly _close = () => {
@@ -130,7 +145,15 @@ export class TodoListSettingsModal extends LitElement {
       })
       .filter((v): v is TodoFieldDef => v !== null);
 
-    this.onSave?.({ fields, layout: this._layout });
+    this.onSave?.({
+      fields,
+      layout: this._layout,
+      statusMapping: {
+        statusColumnName: this._statusColumnName.trim() || 'Status',
+        doneTagLabel: this._doneTagLabel.trim() || 'Done',
+        notDoneTagLabel: this._notDoneTagLabel.trim() || undefined,
+      },
+    });
     this._close();
   };
 
@@ -160,6 +183,29 @@ export class TodoListSettingsModal extends LitElement {
         <option value="aligned">Aligned</option>
         <option value="right">Right</option>
       </select>
+      <div class="label">Database status column name</div>
+      <input
+        .value=${this._statusColumnName}
+        @input=${(e: InputEvent) => {
+          this._statusColumnName = (e.target as HTMLInputElement).value;
+        }}
+      />
+      <div class="label">Done tag label in database status</div>
+      <input
+        .value=${this._doneTagLabel}
+        @input=${(e: InputEvent) => {
+          this._doneTagLabel = (e.target as HTMLInputElement).value;
+        }}
+      />
+      <div class="label">
+        Not-done tag label (empty leaves unchecked TODOs unmapped)
+      </div>
+      <input
+        .value=${this._notDoneTagLabel}
+        @input=${(e: InputEvent) => {
+          this._notDoneTagLabel = (e.target as HTMLInputElement).value;
+        }}
+      />
       <div class="actions">
         <button @click=${this._close}>Cancel</button>
         <button class="primary" @click=${this._save}>Save</button>

@@ -10,7 +10,11 @@ import {
   BLOCK_CHILDREN_CONTAINER_PADDING_LEFT,
   EDGELESS_TOP_CONTENTEDITABLE_SELECTOR,
 } from '@blocksuite/affine-shared/consts';
-import { DocModeProvider } from '@blocksuite/affine-shared/services';
+import {
+  DocModeProvider,
+  EditorSettingProvider,
+  TaskWorkflowDefaultsSchema,
+} from '@blocksuite/affine-shared/services';
 import {
   computeTodoParentCheckedFromChildModels,
   createTodoCheckedTransitionTracker,
@@ -174,9 +178,13 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
     const group = this.getTodoRootGroup(root);
     const provider =
       group.find(v => (v.props.todoFieldDefs?.length ?? 0) > 0) ?? root;
+    const defaults = TaskWorkflowDefaultsSchema.parse(
+      this.std.getOptional(EditorSettingProvider)?.setting$.peek()
+        .taskWorkflowDefaults
+    );
     return {
-      fieldDefs: provider.props.todoFieldDefs ?? [],
-      layout: provider.props.todoFieldLayout ?? 'inline',
+      fieldDefs: provider.props.todoFieldDefs ?? defaults.list.fieldDefs,
+      layout: provider.props.todoFieldLayout ?? defaults.list.fieldLayout,
     };
   }
 
