@@ -54,6 +54,8 @@ import type {
 import {
   ActionPlacement,
   blockCommentToolbarButton,
+  EditorSettingProvider,
+  TaskWorkflowDefaultsSchema,
 } from '@blocksuite/affine-shared/services';
 import { getMostCommonValue } from '@blocksuite/affine-shared/utils';
 import { tableViewMeta } from '@blocksuite/data-view/view-presets';
@@ -450,15 +452,32 @@ const configureTodoList = {
           todoRootGroup.push(root);
         }
 
+        const taskWorkflowDefaults = TaskWorkflowDefaultsSchema.parse(
+          host.std.getOptional(EditorSettingProvider)?.setting$.peek()
+            .taskWorkflowDefaults
+        );
         const modal = new TodoListSettingsModal();
-        modal.initialFields = root.props.todoFieldDefs ?? [];
-        modal.initialLayout = root.props.todoFieldLayout ?? 'inline';
-        modal.onSave = ({ fields, layout }) => {
+        modal.initialFields =
+          root.props.todoFieldDefs ?? taskWorkflowDefaults.list.fieldDefs;
+        modal.initialLayout =
+          root.props.todoFieldLayout ?? taskWorkflowDefaults.list.fieldLayout;
+        modal.initialStatusColumnName =
+          root.props.todoDatabaseStatusMapping?.statusColumnName ??
+          taskWorkflowDefaults.list.statusMapping.statusColumnName;
+        modal.initialDoneTagLabel =
+          root.props.todoDatabaseStatusMapping?.doneTagLabel ??
+          taskWorkflowDefaults.list.statusMapping.doneTagLabel;
+        modal.initialNotDoneTagLabel =
+          root.props.todoDatabaseStatusMapping?.notDoneTagLabel ??
+          taskWorkflowDefaults.list.statusMapping.notDoneTagLabel ??
+          '';
+        modal.onSave = ({ fields, layout, statusMapping }) => {
           store.captureSync();
           const applyTodoConfigRecursively = (node: ListBlockModel) => {
             store.updateBlock(node, {
               todoFieldDefs: fields.length ? fields : undefined,
               todoFieldLayout: layout,
+              todoDatabaseStatusMapping: statusMapping,
             });
 
             for (const child of node.children) {

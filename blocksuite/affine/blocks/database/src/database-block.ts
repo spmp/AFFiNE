@@ -47,6 +47,7 @@ import {
   CopyIcon,
   DeleteIcon,
   MoreHorizontalIcon,
+  SettingsIcon,
 } from '@blocksuite/icons/lit';
 import { type BlockComponent, BlockSelection } from '@blocksuite/std';
 import { RANGE_SYNC_EXCLUDE_ATTR } from '@blocksuite/std/inline';
@@ -93,6 +94,7 @@ export function resolveTaskInteropTargetRow(
 
 export class DatabaseBlockComponent extends CaptionedBlockComponent<DatabaseBlockModel> {
   private readonly clickDatabaseOps = (e: MouseEvent) => {
+    const dataSource = this.dataSource.value;
     const options = this.optionsConfig.configure(this.model, {
       items: [
         menu.input({
@@ -129,6 +131,71 @@ export class DatabaseBlockComponent extends CaptionedBlockComponent<DatabaseBloc
                 toast(this.host, 'Copied to clipboard');
               })
               .catch(console.error);
+          },
+        }),
+        menu.action({
+          name: 'Settings',
+          prefix: SettingsIcon(),
+          closeOnSelect: false,
+          select: ele => {
+            const currentInheritance = dataSource.getTaskStatusInheritance?.();
+            popMenu(popupTargetFromElement(ele), {
+              options: {
+                items: [
+                  menu.group({
+                    name: 'Parent status behavior',
+                    items: [
+                      menu.toggleSwitch({
+                        name: 'Done when all children are done',
+                        on:
+                          currentInheritance?.done ===
+                          'require-all-subtasks-complete',
+                        onChange: on => {
+                          dataSource.setTaskStatusInheritance?.({
+                            done: on
+                              ? 'require-all-subtasks-complete'
+                              : 'disabled',
+                          });
+                        },
+                      }),
+                      menu.toggleSwitch({
+                        name: 'In progress when any child starts',
+                        on:
+                          currentInheritance?.inProgress ===
+                          'start-when-any-subtask-starts',
+                        onChange: on => {
+                          dataSource.setTaskStatusInheritance?.({
+                            inProgress: on
+                              ? 'start-when-any-subtask-starts'
+                              : 'disabled',
+                          });
+                        },
+                      }),
+                      menu.toggleSwitch({
+                        name: 'Auto-demote auto-derived Done',
+                        on: currentInheritance?.autoDemoteAutoDone ?? true,
+                        onChange: on => {
+                          dataSource.setTaskStatusInheritance?.({
+                            autoDemoteAutoDone: on,
+                          });
+                        },
+                      }),
+                      menu.toggleSwitch({
+                        name: 'Manual Done cascades to descendants',
+                        on:
+                          currentInheritance?.cascadeManualDoneToDescendants ??
+                          true,
+                        onChange: on => {
+                          dataSource.setTaskStatusInheritance?.({
+                            cascadeManualDoneToDescendants: on,
+                          });
+                        },
+                      }),
+                    ],
+                  }),
+                ],
+              },
+            });
           },
         }),
         menu.group({

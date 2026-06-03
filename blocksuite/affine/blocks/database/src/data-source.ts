@@ -6,13 +6,18 @@ import type {
   ParagraphBlockModel,
 } from '@blocksuite/affine-model';
 import { getSelectedModelsCommand } from '@blocksuite/affine-shared/commands';
-import { FeatureFlagService } from '@blocksuite/affine-shared/services';
+import {
+  EditorSettingProvider,
+  FeatureFlagService,
+  TaskWorkflowDefaultsSchema,
+} from '@blocksuite/affine-shared/services';
+import type { InsertToPosition } from '@blocksuite/affine-shared/utils';
 import {
   createDatabaseRowTaskInteropLink,
   createTaskIdentity,
   encodeTaskAncestorIdentities,
   insertPositionToIndex,
-  type InsertToPosition,
+  parseTaskIdentity,
   TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME,
   TASK_HIERARCHY_LEVEL_COLUMN_NAME,
   TASK_PARENT_IDENTIFIER_COLUMN_NAME,
@@ -31,7 +36,7 @@ import { propertyPresets } from '@blocksuite/data-view/property-presets';
 import { IS_MOBILE } from '@blocksuite/global/env';
 import { BlockSuiteError, ErrorCode } from '@blocksuite/global/exceptions';
 import type { EditorHost } from '@blocksuite/std';
-import { type BlockModel, Text } from '@blocksuite/store';
+import { type BlockModel, nanoid, Text } from '@blocksuite/store';
 import { computed, type ReadonlySignal, signal } from '@preact/signals-core';
 
 import { getIcon } from './block-icons.js';
@@ -53,6 +58,11 @@ import {
   updateProperty,
   updateView,
 } from './utils/block-utils.js';
+import {
+  databaseBlockViewConverts,
+  databaseBlockViewMap,
+  databaseBlockViews,
+} from './views/index.js';
 
 const TASK_INTEROP_COLUMN_ID = '__affine_task_interop_link';
 const READONLY_SYSTEM_COLUMN_NAMES = new Set([
@@ -61,15 +71,228 @@ const READONLY_SYSTEM_COLUMN_NAMES = new Set([
   TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME,
 ]);
 
+const DEFAULT_TASK_STATUS_INHERITANCE = {
+  done: 'require-all-subtasks-complete',
+  inProgress: 'start-when-any-subtask-starts',
+  autoDemoteAutoDone: true,
+  cascadeManualDoneToDescendants: true,
+} as const;
+
+const DEFAULT_TASK_WORKFLOW_DEFAULTS = TaskWorkflowDefaultsSchema.parse({});
+
+type WorkflowStage = 'no_status' | 'todo' | 'in_progress' | 'review' | 'done';
+type WorkflowSemantic = 'none' | 'todo' | 'in_progress' | 'done';
+type StatusProvenance = 'manual' | 'auto';
+type ManualLock = 'none' | 'done_locked';
+type StatusOption = {
+  id: string;
+  value: string;
+  color?: string;
+  semantic?: WorkflowSemantic;
+};
+
+const TASK_STATUS_ENGINE_CONFIG = {
+  stages: [
+    {
+      id: 'no_status',
+      rank: 0,
+      aliases: ['no status', 'none', ''],
+    },
+    {
+      id: 'todo',
+      rank: 1,
+      aliases: ['todo', 'to do'],
+    },
+    {
+      id: 'in_progress',
+      rank: 2,
+      aliases: ['in progress', 'in-progress', 'wip', 'doing'],
+    },
+    {
+      id: 'review',
+      rank: 3,
+      aliases: ['review'],
+    },
+    {
+      id: 'done',
+      rank: 4,
+      aliases: ['done', 'complete', 'completed'],
+    },
+  ],
+  defaultStage: 'no_status',
+  thresholds: {
+    inProgressFloor: 'in_progress',
+  },
+} as const;
+
+const STAGE_RANK: Record<WorkflowStage, number> = {
+  no_status: TASK_STATUS_ENGINE_CONFIG.stages.find(v => v.id === 'no_status')
+    ?.rank as number,
+  todo: TASK_STATUS_ENGINE_CONFIG.stages.find(v => v.id === 'todo')
+    ?.rank as number,
+  in_progress: TASK_STATUS_ENGINE_CONFIG.stages.find(
+    v => v.id === 'in_progress'
+  )?.rank as number,
+  review: TASK_STATUS_ENGINE_CONFIG.stages.find(v => v.id === 'review')
+    ?.rank as number,
+  done: TASK_STATUS_ENGINE_CONFIG.stages.find(v => v.id === 'done')
+    ?.rank as number,
+};
+
+const STAGE_BY_ALIAS = new Map<string, WorkflowStage>(
+  TASK_STATUS_ENGINE_CONFIG.stages.flatMap(stage =>
+    stage.aliases.map(alias => [alias, stage.id as WorkflowStage])
+  )
+);
+
+const normalizeWorkflowLabel = (value: string) => value.trim().toLowerCase();
+
+const normalizeWorkflowSemantic = (value: string): WorkflowSemantic | null => {
+  const normalized = normalizeWorkflowLabel(value).replaceAll('-', '_');
+  if (normalized === 'none' || normalized === 'no_status') {
+    return 'none';
+  }
+  if (normalized === 'todo' || normalized === 'to_do') {
+    return 'todo';
+  }
+  if (
+    normalized === 'in_progress' ||
+    normalized === 'inprogress' ||
+    normalized === 'wip'
+  ) {
+    return 'in_progress';
+  }
+  if (
+    normalized === 'done' ||
+    normalized === 'complete' ||
+    normalized === 'completed'
+  ) {
+    return 'done';
+  }
+  return null;
+};
+
+const semanticToStage = (semantic?: WorkflowSemantic): WorkflowStage | null => {
+  if (!semantic || semantic === 'none') {
+    return semantic === 'none' ? 'no_status' : null;
+  }
+  return semantic;
+};
+
+const resolveWorkflowStageFromLabel = (label: string): WorkflowStage | null =>
+  STAGE_BY_ALIAS.get(normalizeWorkflowLabel(label)) ?? null;
+
+const inferWorkflowSemanticFromLabel = (label: string): WorkflowSemantic => {
+  const stage = resolveWorkflowStageFromLabel(label);
+  if (stage === 'review') {
+    return 'in_progress';
+  }
+  if (stage === 'todo' || stage === 'in_progress' || stage === 'done') {
+    return stage;
+  }
+  return 'none';
+};
+
+const parseWorkflowColumn = (value: string) => {
+  const [labelPart = '', semanticPart] = value.split(':');
+  const label = labelPart.trim();
+  const semantic = semanticPart
+    ? (normalizeWorkflowSemantic(semanticPart) ??
+      inferWorkflowSemanticFromLabel(label))
+    : inferWorkflowSemanticFromLabel(label);
+  return { label, semantic };
+};
+
+const toWorkflowOptionId = (label: string, semantic: WorkflowSemantic) => {
+  const normalizedLabel = normalizeWorkflowLabel(label);
+  if (semantic === 'todo' && ['todo', 'to do'].includes(normalizedLabel)) {
+    return 'todo';
+  }
+  if (
+    semantic === 'in_progress' &&
+    ['in progress', 'in-progress', 'wip', 'doing'].includes(normalizedLabel)
+  ) {
+    return 'in_progress';
+  }
+  if (
+    semantic === 'done' &&
+    ['done', 'complete', 'completed'].includes(normalizedLabel)
+  ) {
+    return 'done';
+  }
+  const suffix = normalizedLabel
+    .replaceAll(/[^a-z0-9]+/g, '_')
+    .replaceAll(/^_+|_+$/g, '');
+  return suffix ? `workflow_${suffix}` : `workflow_${semantic}`;
+};
+
+const resolveWorkflowStageFromOptionId = (id: string): WorkflowStage | null => {
+  if (id === 'not_done') {
+    return 'todo';
+  }
+  return resolveWorkflowStageFromLabel(id);
+};
+
+const getStatusOptionColor = (stage: WorkflowStage | null) => {
+  switch (stage) {
+    case 'done':
+      return 'var(--affine-tag-green)';
+    case 'in_progress':
+      return 'var(--affine-tag-blue)';
+    case 'review':
+      return 'var(--affine-tag-purple)';
+    case 'todo':
+    default:
+      return 'var(--affine-tag-yellow)';
+  }
+};
+
+export const createTaskWorkflowStatusOptions = (
+  taskWorkflowDefaults: ReturnType<typeof TaskWorkflowDefaultsSchema.parse>,
+  doneTagLabel: string
+) => {
+  const columns = taskWorkflowDefaults.database.kanbanColumns
+    .map(parseWorkflowColumn)
+    .filter(column => column.label);
+  const fallbackColumns = DEFAULT_TASK_WORKFLOW_DEFAULTS.database.kanbanColumns
+    .map(parseWorkflowColumn)
+    .filter(column => column.label);
+  const seenIds = new Set<string>();
+  const options: Array<StatusOption & { color: string }> = [];
+
+  for (const { label, semantic } of columns.length > 0
+    ? columns
+    : fallbackColumns) {
+    const stage = semanticToStage(semantic);
+    const id = toWorkflowOptionId(label, semantic);
+    if (seenIds.has(id)) {
+      continue;
+    }
+    seenIds.add(id);
+    options.push({
+      id,
+      value: id === 'done' ? doneTagLabel || label || 'Done' : label,
+      color: getStatusOptionColor(stage),
+      semantic,
+    });
+  }
+
+  if (!seenIds.has('done')) {
+    options.push({
+      id: 'done',
+      value: doneTagLabel || 'Done',
+      color: getStatusOptionColor('done'),
+      semantic: 'done',
+    });
+  }
+
+  return options;
+};
+
 export type TaskIdentityRowLookup =
   | { status: 'unique'; rowId: string }
   | { status: 'missing' }
   | { status: 'duplicate'; rowIds: [string, string] };
-import {
-  databaseBlockViewConverts,
-  databaseBlockViewMap,
-  databaseBlockViews,
-} from './views/index.js';
 
 type SpacialProperty = {
   valueSet: (rowId: string, propertyId: string, value: unknown) => void;
@@ -105,6 +328,500 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       }
     }
     return 0;
+  }
+
+  getTaskStatusInheritance() {
+    return {
+      done:
+        this._model.props.taskStatusInheritance?.done ??
+        DEFAULT_TASK_STATUS_INHERITANCE.done,
+      inProgress:
+        this._model.props.taskStatusInheritance?.inProgress ??
+        DEFAULT_TASK_STATUS_INHERITANCE.inProgress,
+      autoDemoteAutoDone:
+        this._model.props.taskStatusInheritance?.autoDemoteAutoDone ??
+        DEFAULT_TASK_STATUS_INHERITANCE.autoDemoteAutoDone,
+      cascadeManualDoneToDescendants:
+        this._model.props.taskStatusInheritance
+          ?.cascadeManualDoneToDescendants ??
+        DEFAULT_TASK_STATUS_INHERITANCE.cascadeManualDoneToDescendants,
+    };
+  }
+
+  setTaskStatusInheritance(next: {
+    done?: 'require-all-subtasks-complete' | 'disabled';
+    inProgress?: 'start-when-any-subtask-starts' | 'disabled';
+    autoDemoteAutoDone?: boolean;
+    cascadeManualDoneToDescendants?: boolean;
+  }) {
+    const current = this.getTaskStatusInheritance();
+    const resolved = {
+      done: next.done ?? current.done,
+      inProgress: next.inProgress ?? current.inProgress,
+      autoDemoteAutoDone: next.autoDemoteAutoDone ?? current.autoDemoteAutoDone,
+      cascadeManualDoneToDescendants:
+        next.cascadeManualDoneToDescendants ??
+        current.cascadeManualDoneToDescendants,
+    };
+    this.doc.captureSync();
+    this._model.store.transact(() => {
+      this._model.props.taskStatusInheritance = resolved;
+      this.recomputeAllParentStatusesFromChildren();
+    });
+  }
+
+  private normalizeStatusLabel(value: string) {
+    return value.trim().toLowerCase();
+  }
+
+  private resolveWorkflowStage(label: string): WorkflowStage | null {
+    const normalized = this.normalizeStatusLabel(label);
+    return STAGE_BY_ALIAS.get(normalized) ?? null;
+  }
+
+  private resolveWorkflowStageFromOption(option?: {
+    id: string;
+    value: string;
+    semantic?: WorkflowSemantic;
+  }): WorkflowStage | null {
+    if (!option) {
+      return null;
+    }
+    const semanticStage = semanticToStage(option.semantic);
+    if (semanticStage) {
+      return semanticStage;
+    }
+    const idStage = resolveWorkflowStageFromOptionId(option.id);
+    return idStage ?? this.resolveWorkflowStage(option.value);
+  }
+
+  private isTaskStatusColumn(column: ColumnDataType) {
+    if (column.type !== 'select') {
+      return false;
+    }
+    if (this.normalizeStatusLabel(column.name) === 'status') {
+      return true;
+    }
+    const options = ((
+      column.data as {
+        options?: Array<{ id: string; value: string }>;
+      }
+    ).options ?? []) as Array<{ id: string; value: string }>;
+    return options.some(option => this.resolveWorkflowStageFromOption(option));
+  }
+
+  private getRowStatusState(rowId: string): {
+    provenance: StatusProvenance;
+    manualLock: ManualLock;
+  } {
+    const state = this._model.props.taskStatusState?.[rowId];
+    if (!state) {
+      return { provenance: 'manual', manualLock: 'none' };
+    }
+    return {
+      provenance: state.provenance,
+      manualLock: state.manualLock,
+    };
+  }
+
+  private setRowStatusState(
+    rowId: string,
+    next: Partial<{ provenance: StatusProvenance; manualLock: ManualLock }>
+  ) {
+    const current = this.getRowStatusState(rowId);
+    const merged = {
+      provenance: next.provenance ?? current.provenance,
+      manualLock: next.manualLock ?? current.manualLock,
+    };
+    this._model.props.taskStatusState = {
+      ...this._model.props.taskStatusState,
+      [rowId]: merged,
+    };
+  }
+
+  private resolveSelectStatusValue(value: unknown): string | undefined {
+    if (typeof value === 'string') {
+      return value;
+    }
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const option = value as { id?: unknown };
+      return typeof option.id === 'string' ? option.id : undefined;
+    }
+    if (Array.isArray(value)) {
+      const first = value[0] as { id?: string } | undefined;
+      return typeof first?.id === 'string' ? first.id : undefined;
+    }
+    return undefined;
+  }
+
+  private getTaskStatusColumns() {
+    return this._model.props.columns.filter(column =>
+      this.isTaskStatusColumn(column)
+    );
+  }
+
+  private recomputeAllParentStatusesFromChildren() {
+    for (const column of this.getTaskStatusColumns()) {
+      for (const row of this._model.children) {
+        this.recomputeParentStatusesFromChildren(row.id, column.id, 'auto');
+      }
+    }
+  }
+
+  private getChildrenByParentRowId() {
+    const parentColumn = this._model.props.columns.find(
+      column => column.name === TASK_PARENT_IDENTIFIER_COLUMN_NAME
+    );
+    if (!parentColumn) {
+      return null;
+    }
+
+    const rowIds = this._model.children.map(child => child.id);
+    const identityByRowId = new Map(
+      rowIds.map(id => [
+        id,
+        createTaskIdentity({ docId: this.doc.id, blockId: id }),
+      ])
+    );
+    const rowIdByIdentity = new Map(
+      [...identityByRowId.entries()].map(([id, identity]) => [identity, id])
+    );
+    const childrenByParent = new Map<string, string[]>();
+    for (const id of rowIds) {
+      const parentCell = getCell(this._model, id, parentColumn.id)?.value;
+      const parentIdentity =
+        typeof parentCell === 'string'
+          ? parentCell
+          : parentCell instanceof Text
+            ? parentCell.toString()
+            : undefined;
+      if (!parentIdentity) {
+        continue;
+      }
+      const parsed = parseTaskIdentity(parentIdentity);
+      if (!parsed || parsed.docId !== this.doc.id) {
+        continue;
+      }
+      const parentRowId = rowIdByIdentity.get(parentIdentity);
+      if (!parentRowId) {
+        continue;
+      }
+      const list = childrenByParent.get(parentRowId) ?? [];
+      list.push(id);
+      childrenByParent.set(parentRowId, list);
+    }
+
+    return childrenByParent;
+  }
+
+  private cascadeStatusToDescendants(
+    rowId: string,
+    propertyId: string,
+    targetOption: StatusOption,
+    provenance: StatusProvenance,
+    manualLock: ManualLock
+  ) {
+    const childrenByParent = this.getChildrenByParentRowId();
+    if (!childrenByParent) {
+      return;
+    }
+
+    const descendants: string[] = [];
+    const queue = [...(childrenByParent.get(rowId) ?? [])];
+    const visitedDescendants = new Set<string>();
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (!current || visitedDescendants.has(current)) {
+        continue;
+      }
+      visitedDescendants.add(current);
+      descendants.push(current);
+      queue.push(...(childrenByParent.get(current) ?? []));
+    }
+
+    const statusColumn = this._model.props.columns.find(
+      column => column.id === propertyId && column.type === 'select'
+    );
+    const options = ((
+      statusColumn?.data as { options?: StatusOption[] } | undefined
+    )?.options ?? []) as StatusOption[];
+    const optionById = new Map(options.map(option => [option.id, option]));
+    const targetStage = this.resolveWorkflowStageFromOption(targetOption);
+
+    const cascadeUpdates: Record<string, unknown> = {};
+    for (const descendantId of descendants) {
+      const currentRaw = getCell(this._model, descendantId, propertyId)?.value;
+      const currentId = this.resolveSelectStatusValue(currentRaw);
+      if (currentId === targetOption.id) {
+        continue;
+      }
+      const currentStage = currentId
+        ? this.resolveWorkflowStageFromOption(optionById.get(currentId))
+        : 'no_status';
+      const currentState = this.getRowStatusState(descendantId);
+      if (
+        targetStage === 'todo' &&
+        currentStage === 'done' &&
+        currentState.provenance === 'manual' &&
+        currentState.manualLock === 'done_locked'
+      ) {
+        continue;
+      }
+      cascadeUpdates[descendantId] = targetOption.id;
+      this.setRowStatusState(descendantId, {
+        provenance,
+        manualLock,
+      });
+    }
+    if (Object.keys(cascadeUpdates).length > 0) {
+      updateCells(this._model, propertyId, cascadeUpdates);
+    }
+  }
+
+  private recomputeParentStatusesFromChildren(
+    changedRowId: string,
+    propertyId: string,
+    source: StatusProvenance = 'manual',
+    context?: {
+      descendantDemotedFromDone?: boolean;
+    }
+  ) {
+    const statusColumn = this._model.props.columns.find(
+      column => column.id === propertyId && column.type === 'select'
+    );
+    if (!statusColumn) {
+      return;
+    }
+    if (!this.isTaskStatusColumn(statusColumn)) {
+      return;
+    }
+    const options = ((
+      statusColumn.data as { options?: Array<{ id: string; value: string }> }
+    ).options ?? []) as Array<{ id: string; value: string }>;
+    const optionById = new Map(options.map(option => [option.id, option]));
+
+    const stageToOption = new Map<
+      WorkflowStage,
+      { id: string; value: string }
+    >();
+    for (const option of options) {
+      const stage = this.resolveWorkflowStageFromOption(option);
+      if (stage && !stageToOption.has(stage)) {
+        stageToOption.set(stage, option);
+      }
+    }
+    if (stageToOption.size === 0) {
+      return;
+    }
+
+    const parentColumn = this._model.props.columns.find(
+      column => column.name === TASK_PARENT_IDENTIFIER_COLUMN_NAME
+    );
+    if (!parentColumn) {
+      return;
+    }
+
+    const rowIds = this._model.children.map(child => child.id);
+    const taskIdentityByRowId = new Map(
+      rowIds.map(rowId => [
+        rowId,
+        createTaskIdentity({
+          docId: this.doc.id,
+          blockId: rowId,
+        }),
+      ])
+    );
+    const rowIdByIdentity = new Map(
+      [...taskIdentityByRowId.entries()].map(([rowId, identity]) => [
+        identity,
+        rowId,
+      ])
+    );
+
+    const childrenByParent = new Map<string, string[]>();
+    for (const rowId of rowIds) {
+      const parentCell = getCell(this._model, rowId, parentColumn.id)?.value;
+      const parentIdentity =
+        typeof parentCell === 'string'
+          ? parentCell
+          : parentCell instanceof Text
+            ? parentCell.toString()
+            : undefined;
+      if (!parentIdentity) {
+        continue;
+      }
+      const parsed = parseTaskIdentity(parentIdentity);
+      if (!parsed || parsed.docId !== this.doc.id) {
+        continue;
+      }
+      const parentRowId = rowIdByIdentity.get(parentIdentity);
+      if (!parentRowId) {
+        continue;
+      }
+      const list = childrenByParent.get(parentRowId) ?? [];
+      list.push(rowId);
+      childrenByParent.set(parentRowId, list);
+    }
+
+    const inheritance = this.getTaskStatusInheritance();
+    if (
+      inheritance.done === 'disabled' &&
+      inheritance.inProgress === 'disabled'
+    ) {
+      return;
+    }
+    const updates: Record<string, unknown> = {};
+
+    const getRowStage = (rowId: string): WorkflowStage => {
+      const pending = updates[rowId];
+      const raw = pending ?? getCell(this._model, rowId, propertyId)?.value;
+      const selectedId = this.resolveSelectStatusValue(raw);
+      if (!selectedId) {
+        return 'no_status';
+      }
+      const option = optionById.get(selectedId);
+      if (!option) {
+        return 'no_status';
+      }
+      return this.resolveWorkflowStageFromOption(option) ?? 'no_status';
+    };
+
+    const getDescendantStages = (rowId: string): WorkflowStage[] => {
+      const stages: WorkflowStage[] = [];
+      const queue = [...(childrenByParent.get(rowId) ?? [])];
+      const visitedDescendants = new Set<string>();
+      while (queue.length > 0) {
+        const current = queue.shift();
+        if (!current || visitedDescendants.has(current)) {
+          continue;
+        }
+        visitedDescendants.add(current);
+        stages.push(getRowStage(current));
+        queue.push(...(childrenByParent.get(current) ?? []));
+      }
+      return stages;
+    };
+
+    let currentParentRowId = rowIdByIdentity.get(
+      (() => {
+        const parentCell = getCell(
+          this._model,
+          changedRowId,
+          parentColumn.id
+        )?.value;
+        return typeof parentCell === 'string'
+          ? parentCell
+          : parentCell instanceof Text
+            ? parentCell.toString()
+            : '';
+      })()
+    );
+
+    const visitedParentRowIds = new Set<string>();
+    while (currentParentRowId && !visitedParentRowIds.has(currentParentRowId)) {
+      visitedParentRowIds.add(currentParentRowId);
+      const children = childrenByParent.get(currentParentRowId) ?? [];
+      if (children.length === 0) {
+        break;
+      }
+      const descendantStages = getDescendantStages(currentParentRowId);
+
+      let targetStage: WorkflowStage | null = null;
+      const allDone =
+        descendantStages.length > 0 &&
+        descendantStages.every(stage => stage === 'done');
+      const anyInProgressOrDone = descendantStages.some(
+        stage =>
+          STAGE_RANK[stage] >=
+          STAGE_RANK[TASK_STATUS_ENGINE_CONFIG.thresholds.inProgressFloor]
+      );
+      const anyTodo = descendantStages.some(stage => stage === 'todo');
+
+      if (inheritance.done === 'require-all-subtasks-complete' && allDone) {
+        targetStage = 'done';
+      } else if (
+        inheritance.inProgress === 'start-when-any-subtask-starts' &&
+        anyInProgressOrDone
+      ) {
+        targetStage = 'in_progress';
+      } else if (anyTodo) {
+        targetStage = 'todo';
+      } else {
+        targetStage = 'no_status';
+      }
+
+      const option = targetStage ? stageToOption.get(targetStage) : undefined;
+      if (option) {
+        const currentStage = getRowStage(currentParentRowId);
+        const currentRaw =
+          updates[currentParentRowId] ??
+          getCell(this._model, currentParentRowId, propertyId)?.value;
+        const currentId = this.resolveSelectStatusValue(currentRaw);
+        const parentState = this.getRowStatusState(currentParentRowId);
+        const wouldDemote =
+          currentStage && targetStage
+            ? STAGE_RANK[targetStage] < STAGE_RANK[currentStage]
+            : false;
+        const blockAutoDemotionFromDone =
+          currentStage === 'done' &&
+          wouldDemote &&
+          parentState.manualLock === 'done_locked' &&
+          parentState.provenance === 'manual' &&
+          source === 'auto';
+
+        if (
+          context?.descendantDemotedFromDone &&
+          source === 'auto' &&
+          inheritance.autoDemoteAutoDone &&
+          currentStage === 'done' &&
+          !blockAutoDemotionFromDone
+        ) {
+          const demotionOption = option ?? stageToOption.get('in_progress');
+          if (demotionOption && currentId !== demotionOption.id) {
+            updates[currentParentRowId] = demotionOption.id;
+            this.setRowStatusState(currentParentRowId, {
+              provenance: 'auto',
+              manualLock: 'none',
+            });
+          }
+        } else if (!blockAutoDemotionFromDone && currentId !== option.id) {
+          updates[currentParentRowId] = option.id;
+          this.setRowStatusState(currentParentRowId, {
+            provenance: 'auto',
+            manualLock: 'none',
+          });
+        } else if (
+          source === 'auto' &&
+          targetStage === 'done' &&
+          currentId === option.id &&
+          allDone
+        ) {
+          this.setRowStatusState(currentParentRowId, {
+            provenance: 'auto',
+            manualLock: 'none',
+          });
+        }
+      }
+
+      const currentParentCell = getCell(
+        this._model,
+        currentParentRowId,
+        parentColumn.id
+      )?.value;
+      const currentParentIdentity =
+        typeof currentParentCell === 'string'
+          ? currentParentCell
+          : currentParentCell instanceof Text
+            ? currentParentCell.toString()
+            : undefined;
+      currentParentRowId = currentParentIdentity
+        ? rowIdByIdentity.get(currentParentIdentity)
+        : undefined;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      updateCells(this._model, propertyId, updates);
+    }
   }
 
   private isReadonlySystemColumn(propertyId: string) {
@@ -394,6 +1111,71 @@ export class DatabaseBlockDataSource extends DataSourceBase {
           });
         }
       },
+    });
+
+    this._model.store.transact(() => {
+      let descendantDemotedFromDone = false;
+
+      const statusColumn = this._model.props.columns.find(
+        column => column.id === propertyId && column.type === 'select'
+      );
+      if (statusColumn && this.isTaskStatusColumn(statusColumn)) {
+        const options = ((statusColumn.data as { options?: StatusOption[] })
+          .options ?? []) as StatusOption[];
+        const optionById = new Map(options.map(option => [option.id, option]));
+        const currentId = this.resolveSelectStatusValue(old);
+        const currentStage = currentId
+          ? this.resolveWorkflowStageFromOption(optionById.get(currentId))
+          : 'no_status';
+        const nextId = this.resolveSelectStatusValue(value);
+        const nextOption = nextId ? optionById.get(nextId) : undefined;
+        const nextStage = nextOption
+          ? this.resolveWorkflowStageFromOption(nextOption)
+          : 'no_status';
+        const wasDone = currentStage === 'done';
+        const isDone = nextStage === 'done';
+        descendantDemotedFromDone = wasDone && !isDone;
+        const manualLock: ManualLock =
+          isDone || wasDone ? 'done_locked' : 'none';
+        this.setRowStatusState(rowId, {
+          provenance: 'manual',
+          manualLock,
+        });
+
+        if (nextStage === 'todo') {
+          const todoOption = options.find(
+            option => this.resolveWorkflowStageFromOption(option) === 'todo'
+          );
+          if (todoOption) {
+            this.cascadeStatusToDescendants(
+              rowId,
+              propertyId,
+              todoOption,
+              'auto',
+              'none'
+            );
+          }
+        } else if (
+          nextStage === 'done' &&
+          nextOption &&
+          this.getTaskStatusInheritance().cascadeManualDoneToDescendants
+        ) {
+          this.cascadeStatusToDescendants(
+            rowId,
+            propertyId,
+            nextOption,
+            'auto',
+            'done_locked'
+          );
+        }
+      }
+
+      this.recomputeParentStatusesFromChildren(rowId, propertyId, 'auto', {
+        descendantDemotedFromDone,
+      });
+      if (descendantDemotedFromDone) {
+        this.recomputeAllParentStatusesFromChildren();
+      }
     });
   }
 
@@ -887,6 +1669,13 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     return viewData.id;
   }
 
+  viewDataAddWithoutCapture(viewData: DataViewDataType): string {
+    this._model.store.transact(() => {
+      this._model.props.views = [...this._model.props.views, viewData];
+    });
+    return viewData.id;
+  }
+
   viewDataDelete(viewId: string): void {
     this._model.store.captureSync();
     deleteView(this._model, viewId);
@@ -933,13 +1722,54 @@ export class DatabaseBlockDataSource extends DataSourceBase {
 
 export const databaseViewInitTemplate = (
   datasource: DatabaseBlockDataSource,
-  viewType: string
+  viewType: string,
+  options?: {
+    taskWorkflowDefaults?: ReturnType<typeof TaskWorkflowDefaultsSchema.parse>;
+  }
 ) => {
+  const taskWorkflowDefaults =
+    options?.taskWorkflowDefaults ?? DEFAULT_TASK_WORKFLOW_DEFAULTS;
+  datasource.setTaskStatusInheritance(
+    taskWorkflowDefaults.database.taskStatusInheritance
+  );
+  if (viewType === 'kanban') {
+    const statusColumnId = datasource.propertyAdd('end', {
+      type: 'select',
+      name:
+        taskWorkflowDefaults.list.statusMapping.statusColumnName || 'Status',
+    });
+    if (statusColumnId) {
+      datasource.propertyDataSet(statusColumnId, {
+        options: createTaskWorkflowStatusOptions(
+          taskWorkflowDefaults,
+          taskWorkflowDefaults.list.statusMapping.doneTagLabel
+        ),
+      });
+    }
+  }
   Array.from({ length: 3 }).forEach(() => {
     datasource.rowAdd('end');
   });
   datasource.viewManager.viewAdd(viewType);
 };
+
+const addDatabaseViewWithoutCapture = (
+  datasource: DatabaseBlockDataSource,
+  viewType: string
+) => {
+  const meta = datasource.viewMetaGet(viewType);
+  const id = nanoid();
+  const data = meta.model.defaultData(datasource.viewManager);
+  datasource.viewDataAddWithoutCapture({
+    ...data,
+    id,
+    name: meta.model.defaultName,
+    mode: viewType,
+  });
+  datasource.viewManager.setCurrentView(id);
+  return id;
+};
+
 export const convertToDatabase = (host: EditorHost, viewType: string) => {
   const [_, ctx] = host.std.command.exec(getSelectedModelsCommand, {
     types: ['block', 'text'],
@@ -967,265 +1797,349 @@ export const convertToDatabase = (host: EditorHost, viewType: string) => {
   if (!databaseModel) {
     return;
   }
-  const getPathFromRoot = (model: BlockModel) => {
-    const path: number[] = [];
-    let current: BlockModel | null = model;
-    while (current) {
-      const parent = host.store.getParent(current);
-      if (!parent) break;
-      path.unshift(
-        parent.children.findIndex(child => child.id === current?.id)
-      );
-      current = parent;
-    }
-    return path;
-  };
 
-  const comparePath = (a: number[], b: number[]) => {
-    const len = Math.min(a.length, b.length);
-    for (let i = 0; i < len; i++) {
-      const left = a[i] ?? -1;
-      const right = b[i] ?? -1;
-      if (left !== right) return left - right;
-    }
-    return a.length - b.length;
-  };
+  host.store.transact(() => {
+    const getPathFromRoot = (model: BlockModel) => {
+      const path: number[] = [];
+      let current: BlockModel | null = model;
+      while (current) {
+        const parent = host.store.getParent(current);
+        if (!parent) break;
+        path.unshift(
+          parent.children.findIndex(child => child.id === current?.id)
+        );
+        current = parent;
+      }
+      return path;
+    };
 
-  const orderedSelectedModels = [...selectedModels].sort((a, b) =>
-    comparePath(getPathFromRoot(a), getPathFromRoot(b))
-  );
+    const comparePath = (a: number[], b: number[]) => {
+      const len = Math.min(a.length, b.length);
+      for (let i = 0; i < len; i++) {
+        const left = a[i] ?? -1;
+        const right = b[i] ?? -1;
+        if (left !== right) return left - right;
+      }
+      return a.length - b.length;
+    };
 
-  const collectTodoRowsPreorder = (roots: BlockModel[]) => {
-    const visited = new Set<string>();
-    const result: ListBlockModel[] = [];
+    const orderedSelectedModels = [...selectedModels].sort((a, b) =>
+      comparePath(getPathFromRoot(a), getPathFromRoot(b))
+    );
 
-    const walk = (node: BlockModel) => {
-      if (visited.has(node.id)) return;
-      visited.add(node.id);
+    const collectTodoRowsPreorder = (roots: BlockModel[]) => {
+      const visited = new Set<string>();
+      const result: ListBlockModel[] = [];
 
-      if (node.flavour === 'affine:list' && node.props.type === 'todo') {
-        result.push(node as ListBlockModel);
+      const walk = (node: BlockModel) => {
+        if (visited.has(node.id)) return;
+        visited.add(node.id);
+
+        if (node.flavour === 'affine:list' && node.props.type === 'todo') {
+          result.push(node as ListBlockModel);
+        }
+
+        for (const child of node.children) {
+          walk(child);
+        }
+      };
+
+      for (const root of roots) {
+        walk(root);
       }
 
-      for (const child of node.children) {
-        walk(child);
+      return result;
+    };
+
+    const datasource = new DatabaseBlockDataSource(databaseModel);
+
+    const taskWorkflowDefaults = TaskWorkflowDefaultsSchema.parse(
+      host.std.getOptional(EditorSettingProvider)?.setting$.peek()
+        .taskWorkflowDefaults
+    );
+    databaseModel.props.taskStatusInheritance =
+      taskWorkflowDefaults.database.taskStatusInheritance;
+
+    const listRows = collectTodoRowsPreorder(orderedSelectedModels);
+    const hierarchyLevelByRowId = new Map<string, number>();
+    const parentTaskIdentityByRowId = new Map<string, string | undefined>();
+    const ancestorTaskIdentitiesByRowId = new Map<string, string | undefined>();
+    const getHierarchyLevel = (row: ListBlockModel) => {
+      let depth = 0;
+      let parent = host.store.getParent(row) as ListBlockModel | null;
+      while (
+        parent?.flavour === 'affine:list' &&
+        parent.props.type === 'todo'
+      ) {
+        depth += 1;
+        parent = host.store.getParent(parent) as ListBlockModel | null;
+      }
+      return depth;
+    };
+    for (const row of listRows) {
+      hierarchyLevelByRowId.set(row.id, getHierarchyLevel(row));
+      const ancestors: string[] = [];
+      let parent = host.store.getParent(row) as ListBlockModel | null;
+      while (
+        parent?.flavour === 'affine:list' &&
+        parent.props.type === 'todo'
+      ) {
+        ancestors.unshift(
+          createTaskIdentity({
+            docId: host.store.id,
+            blockId: parent.id,
+          })
+        );
+        parent = host.store.getParent(parent) as ListBlockModel | null;
+      }
+      const directParentIdentity = ancestors.at(-1);
+      if (directParentIdentity) {
+        parentTaskIdentityByRowId.set(row.id, directParentIdentity);
+      }
+      if (ancestors.length > 0) {
+        ancestorTaskIdentitiesByRowId.set(
+          row.id,
+          encodeTaskAncestorIdentities(ancestors)
+        );
+      }
+    }
+
+    host.store.moveBlocks(orderedSelectedModels, databaseModel);
+
+    const desiredRowOrder = listRows.map(row => row.id);
+    for (let i = 0; i < desiredRowOrder.length; i++) {
+      const rowId = desiredRowOrder[i];
+      if (!rowId) continue;
+      const currentIndex = databaseModel.children.findIndex(
+        c => c.id === rowId
+      );
+      if (currentIndex < 0 || currentIndex === i) {
+        continue;
+      }
+
+      const rowModel = host.store.getModelById(rowId);
+      const targetModel = databaseModel.children[i];
+      if (!rowModel) {
+        continue;
+      }
+      host.store.moveBlocks([rowModel], databaseModel, targetModel);
+    }
+
+    const fieldDefs = new Map<
+      string,
+      { label: string; type: 'text' | 'number' }
+    >();
+    for (const def of taskWorkflowDefaults.list.fieldDefs) {
+      fieldDefs.set(def.key, { label: def.label, type: def.type });
+    }
+    let statusColumnName =
+      taskWorkflowDefaults.list.statusMapping.statusColumnName || 'Status';
+    let doneTagLabel =
+      taskWorkflowDefaults.list.statusMapping.doneTagLabel || 'Done';
+    let notDoneTagLabel =
+      taskWorkflowDefaults.list.statusMapping.notDoneTagLabel || undefined;
+
+    for (const row of listRows) {
+      let root: ListBlockModel = row;
+      let parent = host.store.getParent(root) as ListBlockModel | null;
+      while (
+        parent?.flavour === 'affine:list' &&
+        parent.props.type === 'todo'
+      ) {
+        root = parent;
+        parent = host.store.getParent(root) as ListBlockModel | null;
+      }
+      for (const def of root.props.todoFieldDefs ?? []) {
+        fieldDefs.set(def.key, { label: def.label, type: def.type });
+      }
+      if (root.props.todoDatabaseStatusMapping) {
+        statusColumnName =
+          root.props.todoDatabaseStatusMapping.statusColumnName ||
+          statusColumnName;
+        doneTagLabel =
+          root.props.todoDatabaseStatusMapping.doneTagLabel || doneTagLabel;
+        notDoneTagLabel =
+          root.props.todoDatabaseStatusMapping.notDoneTagLabel || undefined;
+      }
+    }
+
+    const statusOptions = createTaskWorkflowStatusOptions(
+      taskWorkflowDefaults,
+      doneTagLabel
+    );
+    if (notDoneTagLabel) {
+      statusOptions.unshift({
+        id: 'not_done',
+        value: notDoneTagLabel,
+        color: 'var(--affine-tag-yellow)',
+      });
+    }
+    const statusColumnId = addProperty(
+      databaseModel,
+      'end',
+      databaseBlockProperties.selectColumnConfig.create(statusColumnName, {
+        options: statusOptions,
+      })
+    );
+
+    if (fieldDefs.size > 0) {
+      const columnByKey = new Map<
+        string,
+        { id: string; type: 'text' | 'number' }
+      >();
+      for (const [key, def] of fieldDefs) {
+        const columnId = addProperty(
+          databaseModel,
+          'end',
+          def.type === 'number'
+            ? databaseBlockProperties.numberColumnConfig.create(def.label)
+            : databaseBlockProperties.richTextColumnConfig.create(def.label)
+        );
+        columnByKey.set(key, { id: columnId, type: def.type });
+      }
+
+      for (const row of listRows) {
+        for (const [key, value] of Object.entries(
+          row.props.todoFieldValues ?? {}
+        )) {
+          const column = columnByKey.get(key);
+          if (!column) continue;
+          updateCell(databaseModel, row.id, {
+            columnId: column.id,
+            value: column.type === 'number' ? value : new Text(String(value)),
+          });
+        }
+      }
+    }
+
+    const hierarchyLevelColumnId = addProperty(
+      databaseModel,
+      'end',
+      databaseBlockProperties.numberColumnConfig.create(
+        TASK_HIERARCHY_LEVEL_COLUMN_NAME
+      )
+    );
+    const parentTaskIdentityColumnId = addProperty(
+      databaseModel,
+      'end',
+      databaseBlockProperties.richTextColumnConfig.create(
+        TASK_PARENT_IDENTIFIER_COLUMN_NAME
+      )
+    );
+    const ancestorTaskIdentitiesColumnId = addProperty(
+      databaseModel,
+      'end',
+      databaseBlockProperties.richTextColumnConfig.create(
+        TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME
+      )
+    );
+
+    for (const row of listRows) {
+      if (row.props.checked) {
+        updateCell(databaseModel, row.id, {
+          columnId: statusColumnId,
+          value: 'done',
+        });
+        databaseModel.props.taskStatusState = {
+          ...databaseModel.props.taskStatusState,
+          [row.id]: {
+            provenance: 'manual',
+            manualLock: 'done_locked',
+          },
+        };
+      } else if (notDoneTagLabel) {
+        updateCell(databaseModel, row.id, {
+          columnId: statusColumnId,
+          value: 'not_done',
+        });
+        databaseModel.props.taskStatusState = {
+          ...databaseModel.props.taskStatusState,
+          [row.id]: {
+            provenance: 'manual',
+            manualLock: 'none',
+          },
+        };
+      }
+      updateCell(databaseModel, row.id, {
+        columnId: hierarchyLevelColumnId,
+        value: hierarchyLevelByRowId.get(row.id) ?? 0,
+      });
+      const parentIdentity = parentTaskIdentityByRowId.get(row.id);
+      if (parentIdentity) {
+        updateCell(databaseModel, row.id, {
+          columnId: parentTaskIdentityColumnId,
+          value: new Text(parentIdentity),
+        });
+      }
+      const ancestorIdentities = ancestorTaskIdentitiesByRowId.get(row.id);
+      if (ancestorIdentities) {
+        updateCell(databaseModel, row.id, {
+          columnId: ancestorTaskIdentitiesColumnId,
+          value: new Text(ancestorIdentities),
+        });
+      }
+
+      updateCell(databaseModel, row.id, {
+        columnId: TASK_INTEROP_COLUMN_ID,
+        value: createDatabaseRowTaskInteropLink({
+          docId: host.store.id,
+          blockId: row.id,
+          databaseId: databaseModel.id,
+          sourceFlavor: row.flavour,
+        }),
+      });
+    }
+
+    addDatabaseViewWithoutCapture(datasource, viewType);
+
+    const hideColumnByDefaultInViews = (columnId: string) => {
+      for (const view of databaseModel.props.views) {
+        if (view.mode === 'kanban') {
+          updateView(databaseModel, view.id, data => {
+            const columns = (data.columns ?? []) as Array<{
+              id: string;
+              hide?: boolean;
+            }>;
+            const idx = columns.findIndex(column => column.id === columnId);
+            if (idx >= 0) {
+              const current = columns[idx];
+              if (!current) return {};
+              const next = [...columns];
+              next[idx] = { ...current, hide: true };
+              return { columns: next };
+            }
+            return { columns: [...columns, { id: columnId, hide: true }] };
+          });
+        }
+
+        if (view.mode === 'table') {
+          updateView(databaseModel, view.id, data => {
+            const columns = (data.columns ?? []) as Array<{
+              id: string;
+              width: number;
+              hide?: boolean;
+            }>;
+            const idx = columns.findIndex(column => column.id === columnId);
+            if (idx >= 0) {
+              const current = columns[idx];
+              if (!current) return {};
+              const next = [...columns];
+              next[idx] = { ...current, hide: true };
+              return { columns: next };
+            }
+            return {
+              columns: [...columns, { id: columnId, width: 180, hide: true }],
+            };
+          });
+        }
       }
     };
 
-    for (const root of roots) {
-      walk(root);
-    }
+    hideColumnByDefaultInViews(parentTaskIdentityColumnId);
+    hideColumnByDefaultInViews(ancestorTaskIdentitiesColumnId);
+    hideColumnByDefaultInViews(hierarchyLevelColumnId);
 
-    return result;
-  };
-
-  const datasource = new DatabaseBlockDataSource(databaseModel);
-  datasource.viewManager.viewAdd(viewType);
-
-  const listRows = collectTodoRowsPreorder(orderedSelectedModels);
-  const hierarchyLevelByRowId = new Map<string, number>();
-  const parentTaskIdentityByRowId = new Map<string, string | undefined>();
-  const ancestorTaskIdentitiesByRowId = new Map<string, string | undefined>();
-  const getHierarchyLevel = (row: ListBlockModel) => {
-    let depth = 0;
-    let parent = host.store.getParent(row) as ListBlockModel | null;
-    while (parent?.flavour === 'affine:list' && parent.props.type === 'todo') {
-      depth += 1;
-      parent = host.store.getParent(parent) as ListBlockModel | null;
-    }
-    return depth;
-  };
-  for (const row of listRows) {
-    hierarchyLevelByRowId.set(row.id, getHierarchyLevel(row));
-    const ancestors: string[] = [];
-    let parent = host.store.getParent(row) as ListBlockModel | null;
-    while (parent?.flavour === 'affine:list' && parent.props.type === 'todo') {
-      ancestors.unshift(
-        createTaskIdentity({
-          docId: host.store.id,
-          blockId: parent.id,
-        })
-      );
-      parent = host.store.getParent(parent) as ListBlockModel | null;
-    }
-    const directParentIdentity = ancestors.at(-1);
-    if (directParentIdentity) {
-      parentTaskIdentityByRowId.set(row.id, directParentIdentity);
-    }
-    if (ancestors.length > 0) {
-      ancestorTaskIdentitiesByRowId.set(
-        row.id,
-        encodeTaskAncestorIdentities(ancestors)
-      );
-    }
-  }
-
-  host.store.moveBlocks(orderedSelectedModels, databaseModel);
-
-  const desiredRowOrder = listRows.map(row => row.id);
-  for (let i = 0; i < desiredRowOrder.length; i++) {
-    const rowId = desiredRowOrder[i];
-    if (!rowId) continue;
-    const currentIndex = databaseModel.children.findIndex(c => c.id === rowId);
-    if (currentIndex < 0 || currentIndex === i) {
-      continue;
-    }
-
-    const rowModel = host.store.getModelById(rowId);
-    const targetModel = databaseModel.children[i];
-    if (!rowModel) {
-      continue;
-    }
-    host.store.moveBlocks([rowModel], databaseModel, targetModel);
-  }
-
-  const fieldDefs = new Map<
-    string,
-    { label: string; type: 'text' | 'number' }
-  >();
-
-  for (const row of listRows) {
-    let root: ListBlockModel = row;
-    let parent = host.store.getParent(root) as ListBlockModel | null;
-    while (parent?.flavour === 'affine:list' && parent.props.type === 'todo') {
-      root = parent;
-      parent = host.store.getParent(root) as ListBlockModel | null;
-    }
-    for (const def of root.props.todoFieldDefs ?? []) {
-      fieldDefs.set(def.key, { label: def.label, type: def.type });
-    }
-  }
-
-  if (fieldDefs.size > 0) {
-    const columnByKey = new Map<
-      string,
-      { id: string; type: 'text' | 'number' }
-    >();
-    for (const [key, def] of fieldDefs) {
-      const columnId = addProperty(
-        databaseModel,
-        'end',
-        def.type === 'number'
-          ? databaseBlockProperties.numberColumnConfig.create(def.label)
-          : databaseBlockProperties.richTextColumnConfig.create(def.label)
-      );
-      columnByKey.set(key, { id: columnId, type: def.type });
-    }
-
-    for (const row of listRows) {
-      for (const [key, value] of Object.entries(
-        row.props.todoFieldValues ?? {}
-      )) {
-        const column = columnByKey.get(key);
-        if (!column) continue;
-        updateCell(databaseModel, row.id, {
-          columnId: column.id,
-          value: column.type === 'number' ? value : new Text(String(value)),
-        });
-      }
-    }
-  }
-
-  const hierarchyLevelColumnId = addProperty(
-    databaseModel,
-    'end',
-    databaseBlockProperties.numberColumnConfig.create(
-      TASK_HIERARCHY_LEVEL_COLUMN_NAME
-    )
-  );
-  const parentTaskIdentityColumnId = addProperty(
-    databaseModel,
-    'end',
-    databaseBlockProperties.richTextColumnConfig.create(
-      TASK_PARENT_IDENTIFIER_COLUMN_NAME
-    )
-  );
-  const ancestorTaskIdentitiesColumnId = addProperty(
-    databaseModel,
-    'end',
-    databaseBlockProperties.richTextColumnConfig.create(
-      TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME
-    )
-  );
-
-  for (const row of listRows) {
-    updateCell(databaseModel, row.id, {
-      columnId: hierarchyLevelColumnId,
-      value: hierarchyLevelByRowId.get(row.id) ?? 0,
-    });
-    const parentIdentity = parentTaskIdentityByRowId.get(row.id);
-    if (parentIdentity) {
-      updateCell(databaseModel, row.id, {
-        columnId: parentTaskIdentityColumnId,
-        value: new Text(parentIdentity),
-      });
-    }
-    const ancestorIdentities = ancestorTaskIdentitiesByRowId.get(row.id);
-    if (ancestorIdentities) {
-      updateCell(databaseModel, row.id, {
-        columnId: ancestorTaskIdentitiesColumnId,
-        value: new Text(ancestorIdentities),
-      });
-    }
-
-    datasource.setTaskInteropLink(
-      row.id,
-      createDatabaseRowTaskInteropLink({
-        docId: host.store.id,
-        blockId: row.id,
-        databaseId: databaseModel.id,
-        sourceFlavor: row.flavour,
-      })
-    );
-  }
-
-  const hideColumnByDefaultInViews = (columnId: string) => {
-    for (const view of databaseModel.props.views) {
-      if (view.mode === 'kanban') {
-        updateView(databaseModel, view.id, data => {
-          const columns = (data.columns ?? []) as Array<{
-            id: string;
-            hide?: boolean;
-          }>;
-          const idx = columns.findIndex(column => column.id === columnId);
-          if (idx >= 0) {
-            const current = columns[idx];
-            if (!current) return {};
-            const next = [...columns];
-            next[idx] = { ...current, hide: true };
-            return { columns: next };
-          }
-          return { columns: [...columns, { id: columnId, hide: true }] };
-        });
-      }
-
-      if (view.mode === 'table') {
-        updateView(databaseModel, view.id, data => {
-          const columns = (data.columns ?? []) as Array<{
-            id: string;
-            width: number;
-            hide?: boolean;
-          }>;
-          const idx = columns.findIndex(column => column.id === columnId);
-          if (idx >= 0) {
-            const current = columns[idx];
-            if (!current) return {};
-            const next = [...columns];
-            next[idx] = { ...current, hide: true };
-            return { columns: next };
-          }
-          return {
-            columns: [...columns, { id: columnId, width: 180, hide: true }],
-          };
-        });
-      }
-    }
-  };
-
-  hideColumnByDefaultInViews(parentTaskIdentityColumnId);
-  hideColumnByDefaultInViews(ancestorTaskIdentitiesColumnId);
-  hideColumnByDefaultInViews(hierarchyLevelColumnId);
-
-  const selectionManager = host.selection;
-  selectionManager.clear();
+    const selectionManager = host.selection;
+    selectionManager.clear();
+  });
 };

@@ -142,9 +142,9 @@ export const listBlockStyles = css`
   }
 
   .affine-list-rich-text-wrapper[data-todo-layout='inline'] rich-text {
-    flex: 0 0 auto;
+    flex: 0 1 auto;
     width: auto;
-    min-width: 0;
+    min-width: 1em;
   }
 
   .affine-list-rich-text-wrapper[data-todo-layout='inline'] {

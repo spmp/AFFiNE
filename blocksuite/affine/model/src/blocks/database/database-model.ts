@@ -20,6 +20,19 @@ export type DatabaseBlockProps = {
   // Which view (by id, into `views`) was last displayed, so a reload shows
   // the same tab instead of always falling back to `views[0]`.
   currentViewId?: string;
+  taskStatusInheritance?: {
+    done: 'require-all-subtasks-complete' | 'disabled';
+    inProgress: 'start-when-any-subtask-starts' | 'disabled';
+    autoDemoteAutoDone: boolean;
+    cascadeManualDoneToDescendants: boolean;
+  };
+  taskStatusState?: Record<
+    string,
+    {
+      provenance: 'manual' | 'auto';
+      manualLock: 'none' | 'done_locked';
+    }
+  >;
 };
 
 export class DatabaseBlockModel extends BlockModel<DatabaseBlockProps> {}
@@ -33,6 +46,8 @@ export const DatabaseBlockSchema = defineBlockSchema({
     columns: [],
     comments: undefined,
     currentViewId: undefined,
+    taskStatusInheritance: undefined,
+    taskStatusState: undefined,
   }),
   metadata: {
     role: 'hub',
