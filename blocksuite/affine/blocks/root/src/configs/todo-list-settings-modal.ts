@@ -5,8 +5,61 @@ import { property, state } from 'lit/decorators.js';
 export type TodoFieldDef = {
   key: string;
   label: string;
-  type: 'text' | 'number';
+  type: TodoFieldType;
 };
+
+export const TODO_FIELD_TYPES = [
+  'text',
+  'number',
+  'date',
+  'select',
+  'multi_select',
+  'progress',
+] as const;
+
+export type TodoFieldType = (typeof TODO_FIELD_TYPES)[number];
+
+export const TODO_FIELD_TYPES_LABEL = TODO_FIELD_TYPES.join('|');
+
+const normalizeTodoFieldType = (type: string): TodoFieldType => {
+  const normalized = type.trim().replaceAll('-', '_');
+  return TODO_FIELD_TYPES.includes(normalized as TodoFieldType)
+    ? (normalized as TodoFieldType)
+    : 'text';
+};
+
+const isValidTodoFieldKey = (key: string) => /^[A-Za-z0-9_-]+$/.test(key);
+
+export const parseTodoFieldDefs = (value: string): TodoFieldDef[] => {
+  const seenKeys = new Set<string>();
+  return value
+    .split(',')
+    .map(v => v.trim())
+    .filter(Boolean)
+    .map(item => {
+      const [rawKey, rawType = 'text', ...labelParts] = item
+        .split(':')
+        .map(v => v.trim());
+      if (!rawKey || !isValidTodoFieldKey(rawKey)) return null;
+      if (seenKeys.has(rawKey)) return null;
+      seenKeys.add(rawKey);
+      return {
+        key: rawKey,
+        label: labelParts.join(':').trim() || rawKey,
+        type: normalizeTodoFieldType(rawType),
+      } satisfies TodoFieldDef;
+    })
+    .filter((v): v is TodoFieldDef => v !== null);
+};
+
+export const serializeTodoFieldDefs = (fields: TodoFieldDef[]) =>
+  fields
+    .map(field =>
+      field.label === field.key
+        ? `${field.key}:${field.type}`
+        : `${field.key}:${field.type}:${field.label}`
+    )
+    .join(', ');
 
 export class TodoListSettingsModal extends LitElement {
   static override styles = css`
@@ -92,7 +145,7 @@ export class TodoListSettingsModal extends LitElement {
   @property({ attribute: false }) accessor initialLayout:
     | 'inline'
     | 'aligned'
-    | 'right' = 'inline';
+    | 'right' = 'aligned';
   @property({ attribute: false }) accessor onSave:
     | ((payload: {
         fields: TodoFieldDef[];
@@ -109,16 +162,14 @@ export class TodoListSettingsModal extends LitElement {
   @property({ attribute: false }) accessor initialNotDoneTagLabel = '';
 
   @state() private accessor _fieldsText = '';
-  @state() private accessor _layout: 'inline' | 'aligned' | 'right' = 'inline';
+  @state() private accessor _layout: 'inline' | 'aligned' | 'right' = 'aligned';
   @state() private accessor _statusColumnName = 'Status';
   @state() private accessor _doneTagLabel = 'Done';
   @state() private accessor _notDoneTagLabel = '';
 
   override connectedCallback(): void {
     super.connectedCallback();
-    this._fieldsText = this.initialFields
-      .map(v => `${v.key}:${v.type}`)
-      .join(', ');
+    this._fieldsText = serializeTodoFieldDefs(this.initialFields);
     this._layout = this.initialLayout;
     this._statusColumnName = this.initialStatusColumnName;
     this._doneTagLabel = this.initialDoneTagLabel;
@@ -130,20 +181,7 @@ export class TodoListSettingsModal extends LitElement {
   };
 
   private readonly _save = () => {
-    const fields = this._fieldsText
-      .split(',')
-      .map(v => v.trim())
-      .filter(Boolean)
-      .map(item => {
-        const [rawKey, rawType] = item.split(':').map(v => v.trim());
-        if (!rawKey) return null;
-        return {
-          key: rawKey,
-          label: rawKey,
-          type: rawType === 'number' ? 'number' : 'text',
-        } as TodoFieldDef;
-      })
-      .filter((v): v is TodoFieldDef => v !== null);
+    const fields = parseTodoFieldDefs(this._fieldsText);
 
     this.onSave?.({
       fields,
@@ -157,11 +195,21 @@ export class TodoListSettingsModal extends LitElement {
     this._close();
   };
 
+  setFieldDraftForTesting(value: string) {
+    this._fieldsText = value;
+  }
+
+  saveForTesting() {
+    this._save();
+  }
+
   override render() {
     return html`<div class="panel" @click=${stopPropagation}>
       <div class="title">Todo List Settings</div>
       <div class="label">
-        Fields (comma-separated key:type, type is text|number)
+        Fields (comma-separated key:type or key:type:label, type is
+        ${TODO_FIELD_TYPES_LABEL}). Keys cannot contain spaces; use label for
+        display names.
       </div>
       <textarea
         .value=${this._fieldsText}

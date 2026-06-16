@@ -18,7 +18,7 @@ export type ListProps = {
   todoFieldDefs?: Array<{
     key: string;
     label: string;
-    type: 'text' | 'number';
+    type: 'text' | 'number' | 'date' | 'select' | 'multi_select' | 'progress';
   }>;
   todoFieldLayout?: 'inline' | 'aligned' | 'right';
   todoFieldValues?: Record<string, string | number>;

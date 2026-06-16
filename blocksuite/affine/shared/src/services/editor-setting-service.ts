@@ -9,14 +9,21 @@ import { NodePropsSchema } from '../utils/index.js';
 const TodoFieldDefSchema = z.object({
   key: z.string(),
   label: z.string(),
-  type: z.enum(['text', 'number']),
+  type: z.enum([
+    'text',
+    'number',
+    'date',
+    'select',
+    'multi_select',
+    'progress',
+  ]),
 });
 
 export const TaskWorkflowDefaultsSchema = z.object({
   list: z
     .object({
       fieldDefs: z.array(TodoFieldDefSchema).default([]),
-      fieldLayout: z.enum(['inline', 'aligned', 'right']).default('inline'),
+      fieldLayout: z.enum(['inline', 'aligned', 'right']).default('aligned'),
       statusMapping: z
         .object({
           statusColumnName: z.string().default('Status'),

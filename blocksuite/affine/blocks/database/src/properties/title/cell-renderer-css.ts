@@ -29,3 +29,19 @@ export const headerAreaIconStyle = css({
   color: cssVarV2.icon.primary,
   backgroundColor: 'var(--affine-background-secondary-color)',
 });
+
+export const titleTaskCheckboxStyle = css({
+  height: 'max-content',
+  display: 'flex',
+  alignItems: 'center',
+  marginRight: '8px',
+  marginTop: '2px',
+  color: cssVarV2.icon.primary,
+  cursor: 'pointer',
+  selectors: {
+    '&.readonly': {
+      cursor: 'default',
+      opacity: 0.5,
+    },
+  },
+});
