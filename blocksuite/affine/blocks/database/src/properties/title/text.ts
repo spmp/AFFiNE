@@ -7,7 +7,11 @@ import {
 import { getViewportElement } from '@blocksuite/affine-shared/utils';
 import { BaseCellRenderer } from '@blocksuite/data-view';
 import { IS_MAC } from '@blocksuite/global/env';
-import { LinkedPageIcon } from '@blocksuite/icons/lit';
+import {
+  CheckBoxCheckSolidIcon,
+  CheckBoxUnIcon,
+  LinkedPageIcon,
+} from '@blocksuite/icons/lit';
 import type { BlockSnapshot, DeltaInsert, Text } from '@blocksuite/store';
 import { computed, signal } from '@preact/signals-core';
 import { property } from 'lit/decorators.js';
@@ -22,7 +26,22 @@ import {
   headerAreaIconStyle,
   titleCellStyle,
   titleRichTextStyle,
+  titleTaskCheckboxStyle,
 } from './cell-renderer-css.js';
+
+type TaskStatusDataSource = {
+  getTaskStatusColumn?: () => { id: string } | undefined;
+  getTaskStatusInfo?: (
+    rowId: string,
+    propertyId?: string
+  ) => { checked: boolean } | null;
+  cellValueGet?: (rowId: string, propertyId: string) => unknown;
+  setTaskStatusChecked?: (
+    rowId: string,
+    checked: boolean,
+    propertyId?: string
+  ) => void;
+};
 
 export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
   activity = true;
@@ -248,7 +267,45 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
   }
 
   protected override render(): unknown {
-    return html`${this.renderIcon()}${this.renderBlockText()}`;
+    return html`${this.renderTaskStatusCheckbox()}${this.renderIcon()}${this.renderBlockText()}`;
+  }
+
+  renderTaskStatusCheckbox() {
+    const dataSource = this.view.manager.dataSource as TaskStatusDataSource;
+    const statusColumn = dataSource.getTaskStatusColumn?.();
+    if (!statusColumn || !dataSource.getTaskStatusInfo) {
+      return;
+    }
+
+    void dataSource.cellValueGet?.(this.cell.rowId, statusColumn.id);
+    const info = dataSource.getTaskStatusInfo(this.cell.rowId, statusColumn.id);
+    if (!info) {
+      return;
+    }
+
+    const checked = info.checked;
+    const onClick = (event: MouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (this.readonly) {
+        return;
+      }
+      dataSource.setTaskStatusChecked?.(
+        this.cell.rowId,
+        !checked,
+        statusColumn.id
+      );
+    };
+
+    return html`<div
+      contenteditable="false"
+      class=${`${titleTaskCheckboxStyle} ${this.readonly ? 'readonly' : ''}`}
+      @click=${onClick}
+    >
+      ${checked
+        ? CheckBoxCheckSolidIcon({ style: 'color: #1E96EB' })
+        : CheckBoxUnIcon()}
+    </div>`;
   }
 
   renderBlockText() {

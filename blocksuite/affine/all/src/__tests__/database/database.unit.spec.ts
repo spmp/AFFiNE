@@ -1,12 +1,15 @@
 import {
   addProperty,
+  convertToDatabase,
   copyCellsByProperty,
   createTaskWorkflowStatusOptions,
   DatabaseBlockDataSource,
   databaseBlockProperties,
+  databaseViewInitTemplate,
   deleteColumn,
   getCell,
   getProperty,
+  parseTaskDateFieldValue,
   updateCell,
 } from '@blocksuite/affine-block-database';
 import {
@@ -14,6 +17,7 @@ import {
   type ColumnDataType,
   type DatabaseBlockModel,
   DatabaseBlockSchemaExtension,
+  ListBlockSchemaExtension,
   NoteBlockSchemaExtension,
   ParagraphBlockSchemaExtension,
   RootBlockSchemaExtension,
@@ -21,6 +25,7 @@ import {
 import { TaskWorkflowDefaultsSchema } from '@blocksuite/affine-shared/services';
 import {
   createTaskIdentity,
+  TASK_HIERARCHY_LEVEL_COLUMN_NAME,
   TASK_PARENT_IDENTIFIER_COLUMN_NAME,
 } from '@blocksuite/affine-shared/utils';
 import { propertyModelPresets } from '@blocksuite/data-view/property-pure-presets';
@@ -32,10 +37,21 @@ import {
 } from '@blocksuite/store/test';
 import { beforeEach, describe, expect, test } from 'vitest';
 
+import { HeaderAreaTextCell } from '../../../../blocks/database/src/properties/title/text.js';
+import { getTodoConfigFromProvider } from '../../../../blocks/list/src/todo-config.js';
+import {
+  parseTodoFieldDefs,
+  serializeTodoFieldDefs,
+  TODO_FIELD_TYPES_LABEL,
+  TodoListSettingsModal,
+} from '../../../../blocks/root/src/configs/todo-list-settings-modal.js';
+import { getAttachedTodoConfigTargets } from '../../../../blocks/root/src/configs/todo-list-settings-utils.js';
+
 const extensions = [
   RootBlockSchemaExtension,
   NoteBlockSchemaExtension,
   ParagraphBlockSchemaExtension,
+  ListBlockSchemaExtension,
   DatabaseBlockSchemaExtension,
 ];
 
@@ -262,7 +278,7 @@ describe('DatabaseManager', () => {
     expect(TaskWorkflowDefaultsSchema.parse({})).toEqual({
       list: {
         fieldDefs: [],
-        fieldLayout: 'inline',
+        fieldLayout: 'aligned',
         statusMapping: {
           statusColumnName: 'Status',
           doneTagLabel: 'Done',
@@ -278,6 +294,120 @@ describe('DatabaseManager', () => {
         kanbanColumns: ['Todo:todo', 'In Progress:in_progress', 'Done:done'],
       },
     });
+  });
+
+  test('parses expanded todo settings field types and defaults layout to aligned', () => {
+    expect(
+      parseTodoFieldDefs(
+        'owner:select:Owner, tags:multi-select:Tags, due:date:Due, done:progress:Done, cost:number:Cost'
+      )
+    ).toEqual([
+      { key: 'owner', type: 'select', label: 'Owner' },
+      { key: 'tags', type: 'multi_select', label: 'Tags' },
+      { key: 'due', type: 'date', label: 'Due' },
+      { key: 'done', type: 'progress', label: 'Done' },
+      { key: 'cost', type: 'number', label: 'Cost' },
+    ]);
+    expect(TODO_FIELD_TYPES_LABEL).toContain('date');
+    expect(TODO_FIELD_TYPES_LABEL).toContain('select');
+    expect(TODO_FIELD_TYPES_LABEL).toContain('multi_select');
+    expect(TODO_FIELD_TYPES_LABEL).toContain('progress');
+    expect(
+      serializeTodoFieldDefs([
+        { key: 'due', type: 'date', label: 'Due' },
+        { key: 'owner', type: 'select', label: 'owner' },
+      ])
+    ).toBe('due:date:Due, owner:select');
+    expect(new TodoListSettingsModal().initialLayout).toBe('aligned');
+  });
+
+  test('deduplicates todo settings field keys by keeping the first definition', () => {
+    expect(
+      parseTodoFieldDefs('owner:text:Owner, owner:select:Assignee')
+    ).toEqual([{ key: 'owner', type: 'text', label: 'Owner' }]);
+  });
+
+  test('rejects spaces in todo field keys and uses label for display names', () => {
+    expect(
+      parseTodoFieldDefs('multi_select:multi_select:Multi Select')
+    ).toEqual([
+      { key: 'multi_select', type: 'multi_select', label: 'Multi Select' },
+    ]);
+    expect(parseTodoFieldDefs('Multi Select:multi_select')).toEqual([]);
+  });
+
+  test('todo settings modal keeps draft changes local until save', () => {
+    const modal = new TodoListSettingsModal();
+    const saved: unknown[] = [];
+    modal.initialFields = [];
+    modal.onSave = payload => saved.push(payload);
+    modal.connectedCallback();
+
+    modal.setFieldDraftForTesting('owner:text:Owner');
+
+    expect(saved).toEqual([]);
+
+    modal.saveForTesting();
+
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({
+      fields: [{ key: 'owner', type: 'text', label: 'Owner' }],
+    });
+  });
+
+  test('todo settings save targets only attached todo roots provided by toolbar', () => {
+    const root = {
+      id: 'root',
+      flavour: 'affine:list',
+      props: { type: 'todo' },
+    };
+    const detached = {
+      id: 'detached',
+      flavour: 'affine:list',
+      props: { type: 'todo' },
+    };
+    const parentById = new Map<string, unknown>([['root', { id: 'note' }]]);
+
+    expect(
+      getAttachedTodoConfigTargets(
+        { getParent: model => parentById.get(model.id) },
+        [root, detached] as never
+      )
+    ).toEqual([root]);
+  });
+
+  test('descendant todo config subscribes to inherited provider field signals', () => {
+    const provider = {
+      props: {
+        todoFieldDefs: undefined,
+        todoFieldLayout: undefined,
+        todoFieldDefs$: {
+          value: [{ key: 'owner', type: 'text', label: 'Owner' }],
+        },
+        todoFieldLayout$: { value: 'right' },
+      },
+    };
+
+    expect(
+      getTodoConfigFromProvider(provider as never, {
+        fieldDefs: [],
+        fieldLayout: 'aligned',
+        statusMapping: { statusColumnName: 'Status', doneTagLabel: 'Done' },
+      })
+    ).toEqual({
+      fieldDefs: [{ key: 'owner', type: 'text', label: 'Owner' }],
+      layout: 'right',
+    });
+  });
+
+  test('parses optional task date fields with unambiguous input only', () => {
+    const dashed = parseTaskDateFieldValue('2026-06-05');
+    const slashed = parseTaskDateFieldValue('2026/06/05');
+
+    expect(typeof dashed).toBe('number');
+    expect(slashed).toBe(dashed);
+    expect(parseTaskDateFieldValue('06/05/2026')).toBeUndefined();
+    expect(parseTaskDateFieldValue('2026-02-31')).toBeUndefined();
   });
 
   test('creates status options for every configured kanban column', () => {
@@ -347,6 +477,677 @@ describe('DatabaseManager', () => {
       color: 'var(--affine-tag-green)',
       semantic: 'done',
     });
+  });
+
+  test('exposes canonical task status mapping helpers for checkbox consumers', () => {
+    const options = [
+      {
+        id: 'todo',
+        value: 'Todo',
+        color: 'var(--affine-tag-yellow)',
+        semantic: 'todo' as const,
+      },
+      {
+        id: 'workflow_review',
+        value: 'Review',
+        color: 'var(--affine-tag-blue)',
+        semantic: 'in_progress' as const,
+      },
+      {
+        id: 'workflow_not_doing',
+        value: 'Not Doing',
+        color: 'var(--affine-tag-yellow)',
+        semantic: 'none' as const,
+      },
+      {
+        id: 'done',
+        value: 'Finished',
+        color: 'var(--affine-tag-green)',
+        semantic: 'done' as const,
+      },
+    ];
+    const statusColumnId = addProperty(
+      db,
+      'end',
+      propertyModelPresets.selectPropertyModelConfig.create('State', {
+        options,
+      })
+    );
+
+    const dataSource = new DatabaseBlockDataSource(db);
+    expect(dataSource.getTaskStatusColumn()?.id).toBe(statusColumnId);
+    expect(dataSource.getTaskStatusTargetOption('done')?.id).toBe('done');
+    expect(dataSource.getTaskStatusTargetOption('todo')?.id).toBe('todo');
+
+    updateCell(db, p1, { columnId: statusColumnId, value: 'done' });
+    expect(dataSource.getTaskStatusInfo(p1)).toMatchObject({
+      columnId: statusColumnId,
+      selectedOptionId: 'done',
+      semantic: 'done',
+      checked: true,
+    });
+
+    updateCell(db, p1, {
+      columnId: statusColumnId,
+      value: { id: 'workflow_review' },
+    });
+    expect(dataSource.getTaskStatusInfo(p1)).toMatchObject({
+      selectedOptionId: 'workflow_review',
+      semantic: 'in_progress',
+      checked: false,
+    });
+
+    updateCell(db, p1, {
+      columnId: statusColumnId,
+      value: [{ id: 'workflow_not_doing' }],
+    });
+    expect(dataSource.getTaskStatusInfo(p1)).toMatchObject({
+      selectedOptionId: 'workflow_not_doing',
+      semantic: 'none',
+      checked: false,
+    });
+  });
+
+  test('maps legacy not_done status option to todo semantic', () => {
+    const options = [
+      { id: 'not_done', value: 'Open', color: 'var(--affine-tag-yellow)' },
+      { id: 'done', value: 'Finished', color: 'var(--affine-tag-green)' },
+    ];
+    const statusColumnId = addProperty(
+      db,
+      'end',
+      propertyModelPresets.selectPropertyModelConfig.create('Status', {
+        options,
+      })
+    );
+    updateCell(db, p1, { columnId: statusColumnId, value: 'not_done' });
+
+    const dataSource = new DatabaseBlockDataSource(db);
+    expect(dataSource.getTaskStatusTargetOption('todo')?.id).toBe('not_done');
+    expect(dataSource.getTaskStatusInfo(p1)).toMatchObject({
+      selectedOptionId: 'not_done',
+      semantic: 'todo',
+      checked: false,
+    });
+  });
+
+  test('task status checkbox toggle uses status change path for roll-up and configured targets', () => {
+    const options = [
+      { id: 'not_done', value: 'Open', color: 'var(--affine-tag-yellow)' },
+      { id: 'done', value: 'Finished', color: 'var(--affine-tag-green)' },
+    ];
+    const statusColumnId = addProperty(
+      db,
+      'end',
+      propertyModelPresets.selectPropertyModelConfig.create('Status', {
+        options,
+      })
+    );
+    const parentIdentityColumnId = addProperty(
+      db,
+      'end',
+      databaseBlockProperties.richTextColumnConfig.create(
+        TASK_PARENT_IDENTIFIER_COLUMN_NAME
+      )
+    );
+    const parent = doc.addBlock(
+      'affine:paragraph',
+      { text: new Text('parent') },
+      databaseBlockId
+    );
+    const child = doc.addBlock(
+      'affine:paragraph',
+      { text: new Text('child') },
+      databaseBlockId
+    );
+    updateCell(db, child, {
+      columnId: parentIdentityColumnId,
+      value: new Text(createTaskIdentity({ docId: doc.id, blockId: parent })),
+    });
+
+    const dataSource = new DatabaseBlockDataSource(db);
+    dataSource.setTaskStatusChecked(child, true);
+    expect(getCell(db, child, statusColumnId)?.value).toBe('done');
+    expect(getCell(db, parent, statusColumnId)?.value).toBe('done');
+    expect(dataSource.getTaskStatusInfo(child)?.checked).toBe(true);
+
+    dataSource.setTaskStatusChecked(child, false);
+    expect(getCell(db, child, statusColumnId)?.value).toBe('not_done');
+    expect(getCell(db, parent, statusColumnId)?.value).toBe('not_done');
+    expect(dataSource.getTaskStatusInfo(child)?.checked).toBe(false);
+  });
+
+  test('creates list database view through generic view initialization without list block mirroring', () => {
+    const listDatabaseId = doc.addBlock(
+      'affine:database',
+      { columns: [], titleColumn: 'Title' },
+      noteBlockId
+    );
+    const listDatabase = doc.getModelById(listDatabaseId) as DatabaseBlockModel;
+    const dataSource = new DatabaseBlockDataSource(listDatabase);
+
+    databaseViewInitTemplate(dataSource, 'list');
+
+    expect(listDatabase.props.views.some(view => view.mode === 'list')).toBe(
+      true
+    );
+    expect(dataSource.getTaskStatusColumn()?.name).toBe('Status');
+    expect(
+      listDatabase.children.every(child => child.flavour !== 'affine:list')
+    ).toBe(true);
+  });
+
+  test('does not infer task status from arbitrary Status select column name', () => {
+    const arbitraryDatabaseId = doc.addBlock(
+      'affine:database',
+      { columns: [], titleColumn: 'Title' },
+      noteBlockId
+    );
+    const arbitraryDatabase = doc.getModelById(
+      arbitraryDatabaseId
+    ) as DatabaseBlockModel;
+    addProperty(
+      arbitraryDatabase,
+      'end',
+      propertyModelPresets.selectPropertyModelConfig.create('Status', {
+        options: [
+          { id: 'blocked', value: 'Blocked', color: 'var(--affine-tag-red)' },
+          { id: 'ready', value: 'Ready', color: 'var(--affine-tag-green)' },
+        ],
+      })
+    );
+
+    expect(
+      new DatabaseBlockDataSource(arbitraryDatabase).getTaskStatusColumn()
+    ).toBeUndefined();
+  });
+
+  test('task checkbox render path does not create cells during render', () => {
+    expect(
+      HeaderAreaTextCell.prototype.renderTaskStatusCheckbox.toString()
+    ).not.toContain('cellGetOrCreate(this.cell.rowId, statusColumn.id)');
+  });
+
+  test.each([
+    [
+      'affine:paragraph',
+      { text: new Text('Plain text row') },
+      'Plain text row',
+    ],
+    [
+      'affine:list',
+      { type: 'bulleted', text: new Text('Bulleted row') },
+      'Bulleted row',
+    ],
+    [
+      'affine:list',
+      { type: 'numbered', text: new Text('Numbered row') },
+      'Numbered row',
+    ],
+  ] as const)(
+    'uses vanilla database conversion for non-todo %s selection',
+    (flavour, props, expectedText) => {
+      const blockId = doc.addBlock(flavour, props, noteBlockId);
+      const selectedModels = [doc.getModelById(blockId)];
+
+      convertToDatabase(
+        {
+          store: doc,
+          selection: {
+            clear: () => {},
+          },
+          std: {
+            command: {
+              exec: () => [null, { selectedModels }],
+            },
+            getOptional: () => ({
+              setting$: {
+                peek: () => ({ taskWorkflowDefaults: {} }),
+              },
+            }),
+          },
+        } as never,
+        'table'
+      );
+
+      const convertedDatabase = doc
+        .getModelById(noteBlockId)
+        ?.children.find(
+          child =>
+            child.flavour === 'affine:database' && child.id !== databaseBlockId
+        ) as DatabaseBlockModel | undefined;
+
+      expect(
+        convertedDatabase?.children.map(child => child.props.text.toString())
+      ).toEqual([expectedText]);
+    }
+  );
+
+  test('uses vanilla database conversion for mixed todo and non-todo selections', () => {
+    const todoId = doc.addBlock(
+      'affine:list',
+      { type: 'todo', text: new Text('Todo row') },
+      noteBlockId
+    );
+    const paragraphId = doc.addBlock(
+      'affine:paragraph',
+      { text: new Text('Plain row') },
+      noteBlockId
+    );
+    const selectedModels = [
+      doc.getModelById(todoId),
+      doc.getModelById(paragraphId),
+    ];
+
+    convertToDatabase(
+      {
+        store: doc,
+        selection: {
+          clear: () => {},
+        },
+        std: {
+          command: {
+            exec: () => [null, { selectedModels }],
+          },
+          getOptional: () => ({
+            setting$: {
+              peek: () => ({ taskWorkflowDefaults: {} }),
+            },
+          }),
+        },
+      } as never,
+      'table'
+    );
+
+    const convertedDatabase = doc
+      .getModelById(noteBlockId)
+      ?.children.find(
+        child =>
+          child.flavour === 'affine:database' && child.id !== databaseBlockId
+      ) as DatabaseBlockModel | undefined;
+
+    expect(
+      convertedDatabase?.children.map(child => child.props.text.toString())
+    ).toEqual(['Todo row', 'Plain row']);
+    expect(
+      convertedDatabase?.props.columns.map(column => column.name)
+    ).not.toContain(TASK_HIERARCHY_LEVEL_COLUMN_NAME);
+  });
+
+  test('preserves nested todo preorder when converting list selection to database', () => {
+    const addTodo = (text: string, parentId: string) =>
+      doc.addBlock(
+        'affine:list',
+        { type: 'todo', text: new Text(text) },
+        parentId
+      );
+
+    const parent1 = addTodo('Parent 1', noteBlockId);
+    const child11 = addTodo('Child 1.1', parent1);
+    const grandchild111 = addTodo('Grandchild 1.1.1', child11);
+    const greatGrandchild1111 = addTodo(
+      'Great grandchild 1.1.1.1',
+      grandchild111
+    );
+    const grandchild112 = addTodo('Grandchild 1.1.2', child11);
+    const child12 = addTodo('Child 1.2', parent1);
+    const parent2 = addTodo('Parent 2', noteBlockId);
+    const child21 = addTodo('Child 2.1', parent2);
+    const child22 = addTodo('Child 2.2', parent2);
+    const grandchild221 = addTodo('Grandchild 2.2.1', child22);
+    const parent3 = addTodo('Parent 3', noteBlockId);
+
+    const selectedIds = [
+      parent1,
+      child11,
+      grandchild111,
+      greatGrandchild1111,
+      grandchild112,
+      child12,
+      parent2,
+      child21,
+      child22,
+      grandchild221,
+      parent3,
+    ];
+    const selectedModels = selectedIds.map(id => doc.getModelById(id));
+
+    convertToDatabase(
+      {
+        store: doc,
+        selection: {
+          clear: () => {},
+        },
+        std: {
+          command: {
+            exec: () => [null, { selectedModels }],
+          },
+          getOptional: () => ({
+            setting$: {
+              peek: () => ({ taskWorkflowDefaults: {} }),
+            },
+          }),
+        },
+      } as never,
+      'table'
+    );
+
+    const convertedDatabase = doc
+      .getModelById(noteBlockId)
+      ?.children.find(
+        child =>
+          child.flavour === 'affine:database' && child.id !== databaseBlockId
+      ) as DatabaseBlockModel | undefined;
+
+    expect(
+      convertedDatabase?.children.map(child => child.props.text.toString())
+    ).toEqual([
+      'Parent 1',
+      'Child 1.1',
+      'Grandchild 1.1.1',
+      'Great grandchild 1.1.1.1',
+      'Grandchild 1.1.2',
+      'Child 1.2',
+      'Parent 2',
+      'Child 2.1',
+      'Child 2.2',
+      'Grandchild 2.2.1',
+      'Parent 3',
+    ]);
+  });
+
+  test('does not merge global task fields when selected todos have explicit field definitions', () => {
+    const todo = doc.addBlock(
+      'affine:list',
+      {
+        type: 'todo',
+        text: new Text('Task with local fields'),
+        todoFieldDefs: [{ key: 'priority', type: 'text', label: 'Priority' }],
+        todoFieldValues: { priority: 'High' },
+      },
+      noteBlockId
+    );
+    const selectedModels = [doc.getModelById(todo)];
+
+    convertToDatabase(
+      {
+        store: doc,
+        selection: {
+          clear: () => {},
+        },
+        std: {
+          command: {
+            exec: () => [null, { selectedModels }],
+          },
+          getOptional: () => ({
+            setting$: {
+              peek: () => ({
+                taskWorkflowDefaults: {
+                  list: {
+                    fieldDefs: [
+                      { key: 'cost', type: 'number', label: 'Cost' },
+                      { key: 'note', type: 'text', label: 'Note' },
+                    ],
+                  },
+                },
+              }),
+            },
+          }),
+        },
+      } as never,
+      'table'
+    );
+
+    const convertedDatabase = doc
+      .getModelById(noteBlockId)
+      ?.children.find(
+        child =>
+          child.flavour === 'affine:database' && child.id !== databaseBlockId
+      ) as DatabaseBlockModel | undefined;
+
+    expect(
+      convertedDatabase?.props.columns.map(column => column.name)
+    ).toContain('Priority');
+    expect(
+      convertedDatabase?.props.columns.map(column => column.name)
+    ).not.toContain('Cost');
+    expect(
+      convertedDatabase?.props.columns.map(column => column.name)
+    ).not.toContain('Note');
+  });
+
+  test('preserves default fields for todos without explicit fields in mixed conversion', () => {
+    const explicitTodo = doc.addBlock(
+      'affine:list',
+      {
+        type: 'todo',
+        text: new Text('Explicit task'),
+        todoFieldDefs: [{ key: 'priority', type: 'text', label: 'Priority' }],
+        todoFieldValues: { priority: 'High' },
+      },
+      noteBlockId
+    );
+    const defaultTodo = doc.addBlock(
+      'affine:list',
+      {
+        type: 'todo',
+        text: new Text('Default task'),
+        todoFieldValues: { cost: 3 },
+      },
+      noteBlockId
+    );
+    const selectedModels = [
+      doc.getModelById(explicitTodo),
+      doc.getModelById(defaultTodo),
+    ];
+
+    convertToDatabase(
+      {
+        store: doc,
+        selection: { clear: () => {} },
+        std: {
+          command: { exec: () => [null, { selectedModels }] },
+          getOptional: () => ({
+            setting$: {
+              peek: () => ({
+                taskWorkflowDefaults: {
+                  list: {
+                    fieldDefs: [{ key: 'cost', type: 'number', label: 'Cost' }],
+                  },
+                },
+              }),
+            },
+          }),
+        },
+      } as never,
+      'table'
+    );
+
+    const convertedDatabase = doc
+      .getModelById(noteBlockId)
+      ?.children.find(
+        child =>
+          child.flavour === 'affine:database' && child.id !== databaseBlockId
+      ) as DatabaseBlockModel | undefined;
+
+    expect(convertedDatabase?.props.columns.map(column => column.name)).toEqual(
+      expect.arrayContaining(['Priority', 'Cost'])
+    );
+  });
+
+  test('preserves inherited todo field config for child-only conversion', () => {
+    const parent = doc.addBlock(
+      'affine:list',
+      {
+        type: 'todo',
+        text: new Text('Parent task'),
+        todoFieldDefs: [{ key: 'owner', type: 'select', label: 'Owner' }],
+        todoDatabaseStatusMapping: {
+          statusColumnName: 'State',
+          doneTagLabel: 'Finished',
+        },
+      },
+      noteBlockId
+    );
+    const child = doc.addBlock(
+      'affine:list',
+      {
+        type: 'todo',
+        text: new Text('Child task'),
+        todoFieldValues: { owner: 'Ada' },
+      },
+      parent
+    );
+    const selectedModels = [doc.getModelById(child)];
+
+    convertToDatabase(
+      {
+        store: doc,
+        selection: { clear: () => {} },
+        std: {
+          command: { exec: () => [null, { selectedModels }] },
+          getOptional: () => ({
+            setting$: { peek: () => ({ taskWorkflowDefaults: {} }) },
+          }),
+        },
+      } as never,
+      'table'
+    );
+
+    const convertedDatabase = doc
+      .getModelById(noteBlockId)
+      ?.children.find(
+        model =>
+          model.flavour === 'affine:database' && model.id !== databaseBlockId
+      ) as DatabaseBlockModel | undefined;
+
+    expect(convertedDatabase?.props.columns.map(column => column.name)).toEqual(
+      expect.arrayContaining(['State', 'Owner'])
+    );
+    expect(
+      convertedDatabase?.props.columns.find(column => column.name === 'State')
+        ?.data.options ?? []
+    ).toContainEqual(expect.objectContaining({ value: 'Finished' }));
+  });
+
+  test('converts expanded todo optional field types to database columns', () => {
+    const todo = doc.addBlock(
+      'affine:list',
+      {
+        type: 'todo',
+        text: new Text('Task with typed fields'),
+        todoFieldDefs: [
+          { key: 'owner', type: 'select', label: 'Owner' },
+          { key: 'tags', type: 'multi_select', label: 'Tags' },
+          { key: 'done', type: 'progress', label: 'Done' },
+          { key: 'due', type: 'date', label: 'Due' },
+        ],
+        todoFieldValues: {
+          owner: 'Ada',
+          tags: 'Backend, Urgent',
+          done: 75,
+          due: '2026-06-05',
+        },
+      },
+      noteBlockId
+    );
+    const selectedModels = [doc.getModelById(todo)];
+
+    convertToDatabase(
+      {
+        store: doc,
+        selection: {
+          clear: () => {},
+        },
+        std: {
+          command: {
+            exec: () => [null, { selectedModels }],
+          },
+          getOptional: () => ({
+            setting$: {
+              peek: () => ({ taskWorkflowDefaults: {} }),
+            },
+          }),
+        },
+      } as never,
+      'table'
+    );
+
+    const convertedDatabase = doc
+      .getModelById(noteBlockId)
+      ?.children.find(
+        child =>
+          child.flavour === 'affine:database' && child.id !== databaseBlockId
+      ) as DatabaseBlockModel | undefined;
+    const columns = convertedDatabase?.props.columns ?? [];
+    const ownerColumn = columns.find(column => column.name === 'Owner');
+    const tagsColumn = columns.find(column => column.name === 'Tags');
+    const progressColumn = columns.find(column => column.name === 'Done');
+    const dueColumn = columns.find(column => column.name === 'Due');
+
+    expect(ownerColumn?.type).toBe('select');
+    expect(tagsColumn?.type).toBe('multi-select');
+    expect(progressColumn?.type).toBe('progress');
+    expect(dueColumn?.type).toBe('date');
+    expect(getCell(convertedDatabase!, todo, ownerColumn!.id)?.value).toEqual(
+      ownerColumn?.data.options[0]?.id
+    );
+    expect(getCell(convertedDatabase!, todo, tagsColumn!.id)?.value).toEqual(
+      tagsColumn?.data.options.map(option => option.id)
+    );
+    expect(getCell(convertedDatabase!, todo, progressColumn!.id)?.value).toBe(
+      75
+    );
+    expect(typeof getCell(convertedDatabase!, todo, dueColumn!.id)?.value).toBe(
+      'number'
+    );
+  });
+
+  test('skips invalid number and progress todo values during conversion', () => {
+    const todo = doc.addBlock(
+      'affine:list',
+      {
+        type: 'todo',
+        text: new Text('Invalid typed fields'),
+        todoFieldDefs: [
+          { key: 'cost', type: 'number', label: 'Cost' },
+          { key: 'done', type: 'progress', label: 'Done' },
+        ],
+        todoFieldValues: { cost: 'Infinity', done: 999 },
+      },
+      noteBlockId
+    );
+    const selectedModels = [doc.getModelById(todo)];
+
+    convertToDatabase(
+      {
+        store: doc,
+        selection: { clear: () => {} },
+        std: {
+          command: { exec: () => [null, { selectedModels }] },
+          getOptional: () => ({
+            setting$: { peek: () => ({ taskWorkflowDefaults: {} }) },
+          }),
+        },
+      } as never,
+      'table'
+    );
+
+    const convertedDatabase = doc
+      .getModelById(noteBlockId)
+      ?.children.find(
+        model =>
+          model.flavour === 'affine:database' && model.id !== databaseBlockId
+      ) as DatabaseBlockModel | undefined;
+    const costColumn = convertedDatabase?.props.columns.find(
+      column => column.name === 'Cost'
+    );
+    const doneColumn = convertedDatabase?.props.columns.find(
+      column => column.name === 'Done'
+    );
+
+    expect(getCell(convertedDatabase!, todo, costColumn!.id)).toBeFalsy();
+    expect(getCell(convertedDatabase!, todo, doneColumn!.id)).toBeFalsy();
   });
 
   test('recomputes parent status from children in status select column', () => {

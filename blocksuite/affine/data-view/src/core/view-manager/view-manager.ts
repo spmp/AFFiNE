@@ -45,7 +45,11 @@ export class ViewManagerBase implements ViewManager {
   });
 
   currentViewId$ = computed(() => {
-    return this._currentViewId$.value ?? this.views$.value[0];
+    const current = this._currentViewId$.value;
+    if (current && this.views$.value.includes(current)) {
+      return current;
+    }
+    return this.views$.value[0];
   });
 
   currentView$ = computed(() => {

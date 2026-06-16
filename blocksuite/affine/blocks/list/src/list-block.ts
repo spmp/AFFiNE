@@ -39,6 +39,7 @@ import { styleMap } from 'lit/directives/style-map.js';
 
 import { correctNumberedListsOrderToPrev } from './commands/utils.js';
 import { listBlockStyles } from './styles.js';
+import { getTodoConfigFromProvider } from './todo-config.js';
 import { getListIcon } from './utils/get-list-icon.js';
 
 export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> {
@@ -182,10 +183,7 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
       this.std.getOptional(EditorSettingProvider)?.setting$.peek()
         .taskWorkflowDefaults
     );
-    return {
-      fieldDefs: provider.props.todoFieldDefs ?? defaults.list.fieldDefs,
-      layout: provider.props.todoFieldLayout ?? defaults.list.fieldLayout,
-    };
+    return getTodoConfigFromProvider(provider, defaults.list);
   }
 
   private readonly _stopInputEvent = (e: Event) => {
@@ -195,7 +193,14 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
   private readonly _onTodoCostInput = (e: InputEvent) => {
     const target = e.target as HTMLInputElement;
     const key = target.dataset.todoFieldKey;
-    const type = target.dataset.todoFieldType as 'text' | 'number' | undefined;
+    const type = target.dataset.todoFieldType as
+      | 'text'
+      | 'number'
+      | 'date'
+      | 'select'
+      | 'multi_select'
+      | 'progress'
+      | undefined;
     if (
       this.store.readonly ||
       this.model.props.type !== 'todo' ||
@@ -208,9 +213,10 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
     const currentValues = { ...this.model.props.todoFieldValues };
     if (raw.length === 0) {
       delete currentValues[key];
-    } else if (type === 'number') {
+    } else if (type === 'number' || type === 'progress') {
       const n = Number(raw);
-      if (Number.isNaN(n)) return;
+      if (!Number.isFinite(n)) return;
+      if (type === 'progress' && (n < 0 || n > 100)) return;
       currentValues[key] = n;
     } else {
       currentValues[key] = raw;
@@ -410,7 +416,8 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
                   field => field.key,
                   field =>
                     html`<input
-                      class=${field.type === 'number'
+                      class=${field.type === 'number' ||
+                      field.type === 'progress'
                         ? 'affine-list-todo-field-input affine-list-todo-field-input-number'
                         : 'affine-list-todo-field-input'}
                       data-todo-field-key=${field.key}
@@ -425,7 +432,10 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
                           )
                         : 1}
                       placeholder=${field.label}
-                      inputmode=${field.type === 'number' ? 'decimal' : 'text'}
+                      inputmode=${field.type === 'number' ||
+                      field.type === 'progress'
+                        ? 'decimal'
+                        : 'text'}
                       @input=${this._onTodoCostInput}
                     />`
                 )}

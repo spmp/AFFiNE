@@ -78,6 +78,7 @@ import { html } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 
 import { TodoListSettingsModal } from './todo-list-settings-modal.js';
+import { getAttachedTodoConfigTargets } from './todo-list-settings-utils.js';
 
 const conversionsActionGroup = {
   id: 'a.conversions',
@@ -473,25 +474,19 @@ const configureTodoList = {
           '';
         modal.onSave = ({ fields, layout, statusMapping }) => {
           store.captureSync();
-          const applyTodoConfigRecursively = (node: ListBlockModel) => {
+          const applyTodoConfig = (node: ListBlockModel) => {
             store.updateBlock(node, {
               todoFieldDefs: fields.length ? fields : undefined,
               todoFieldLayout: layout,
               todoDatabaseStatusMapping: statusMapping,
             });
-
-            for (const child of node.children) {
-              if (
-                child.flavour === 'affine:list' &&
-                child.props.type === 'todo'
-              ) {
-                applyTodoConfigRecursively(child as ListBlockModel);
-              }
-            }
           };
 
-          for (const todoRoot of todoRootGroup) {
-            applyTodoConfigRecursively(todoRoot);
+          for (const todoRoot of getAttachedTodoConfigTargets(
+            store,
+            todoRootGroup
+          )) {
+            applyTodoConfig(todoRoot);
           }
         };
 

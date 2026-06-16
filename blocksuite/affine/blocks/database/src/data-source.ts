@@ -38,6 +38,9 @@ import { BlockSuiteError, ErrorCode } from '@blocksuite/global/exceptions';
 import type { EditorHost } from '@blocksuite/std';
 import { type BlockModel, nanoid, Text } from '@blocksuite/store';
 import { computed, type ReadonlySignal, signal } from '@preact/signals-core';
+import { format } from 'date-fns/format';
+import { isValid } from 'date-fns/isValid';
+import { parse } from 'date-fns/parse';
 
 import { getIcon } from './block-icons.js';
 import {
@@ -82,6 +85,13 @@ const DEFAULT_TASK_WORKFLOW_DEFAULTS = TaskWorkflowDefaultsSchema.parse({});
 
 type WorkflowStage = 'no_status' | 'todo' | 'in_progress' | 'review' | 'done';
 type WorkflowSemantic = 'none' | 'todo' | 'in_progress' | 'done';
+type TodoFieldType =
+  | 'text'
+  | 'number'
+  | 'date'
+  | 'select'
+  | 'multi_select'
+  | 'progress';
 type StatusProvenance = 'manual' | 'auto';
 type ManualLock = 'none' | 'done_locked';
 type StatusOption = {
@@ -89,6 +99,13 @@ type StatusOption = {
   value: string;
   color?: string;
   semantic?: WorkflowSemantic;
+};
+export type TaskStatusInfo = {
+  columnId: string;
+  selectedOptionId?: string;
+  selectedOption?: StatusOption;
+  semantic: WorkflowSemantic;
+  checked: boolean;
 };
 
 const TASK_STATUS_ENGINE_CONFIG = {
@@ -289,6 +306,27 @@ export const createTaskWorkflowStatusOptions = (
   return options;
 };
 
+export const parseTaskDateFieldValue = (value: unknown): number | undefined => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const raw = value.trim();
+  const normalized = /^\d{4}\/\d{2}\/\d{2}$/.test(raw)
+    ? raw.replaceAll('/', '-')
+    : raw;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    return undefined;
+  }
+  const date = parse(normalized, 'yyyy-MM-dd', new Date());
+  if (!isValid(date)) {
+    return undefined;
+  }
+  return format(date, 'yyyy-MM-dd') === normalized ? +date : undefined;
+};
+
 export type TaskIdentityRowLookup =
   | { status: 'unique'; rowId: string }
   | { status: 'missing' }
@@ -370,8 +408,96 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     });
   }
 
+  getTaskStatusColumn() {
+    return this.getTaskStatusColumns()[0];
+  }
+
+  getTaskStatusInfo(rowId: string, propertyId?: string): TaskStatusInfo | null {
+    const column = propertyId
+      ? this._model.props.columns.find(
+          column => column.id === propertyId && this.isTaskStatusColumn(column)
+        )
+      : this.getTaskStatusColumn();
+    if (!column) {
+      return null;
+    }
+
+    const options = this.getTaskStatusOptions(column);
+    const optionById = new Map(options.map(option => [option.id, option]));
+    const selectedOptionId = this.resolveSelectStatusValue(
+      getCell(this._model, rowId, column.id)?.value
+    );
+    const selectedOption = selectedOptionId
+      ? optionById.get(selectedOptionId)
+      : undefined;
+    const semantic = this.resolveWorkflowSemanticFromOption(selectedOption);
+
+    return {
+      columnId: column.id,
+      selectedOptionId,
+      selectedOption,
+      semantic,
+      checked: semantic === 'done',
+    };
+  }
+
+  getTaskStatusTargetOption(
+    semantic: WorkflowSemantic,
+    propertyId?: string
+  ): StatusOption | undefined {
+    const column = propertyId
+      ? this._model.props.columns.find(
+          column => column.id === propertyId && this.isTaskStatusColumn(column)
+        )
+      : this.getTaskStatusColumn();
+    if (!column) {
+      return undefined;
+    }
+    const targetStage = semanticToStage(semantic);
+    return this.getTaskStatusOptions(column).find(
+      option => this.resolveWorkflowStageFromOption(option) === targetStage
+    );
+  }
+
+  setTaskStatusChecked(rowId: string, checked: boolean, propertyId?: string) {
+    const target = this.getTaskStatusTargetOption(
+      checked ? 'done' : 'todo',
+      propertyId
+    );
+    if (!target) {
+      return;
+    }
+    const column = propertyId
+      ? this._model.props.columns.find(
+          column => column.id === propertyId && this.isTaskStatusColumn(column)
+        )
+      : this.getTaskStatusColumn();
+    if (!column) {
+      return;
+    }
+    this.cellValueChange(rowId, column.id, target.id);
+  }
+
   private normalizeStatusLabel(value: string) {
     return value.trim().toLowerCase();
+  }
+
+  private getTaskStatusOptions(column: ColumnDataType): StatusOption[] {
+    return ((column.data as { options?: StatusOption[] })?.options ??
+      []) as StatusOption[];
+  }
+
+  private resolveWorkflowSemanticFromOption(
+    option?: StatusOption
+  ): WorkflowSemantic {
+    const stage = this.resolveWorkflowStageFromOption(option);
+    if (stage === 'done' || stage === 'todo' || stage === 'in_progress') {
+      return stage;
+    }
+    if (stage === 'review') {
+      return 'in_progress';
+    }
+    return 'none';
   }
 
   private resolveWorkflowStage(label: string): WorkflowStage | null {
@@ -398,9 +524,6 @@ export class DatabaseBlockDataSource extends DataSourceBase {
   private isTaskStatusColumn(column: ColumnDataType) {
     if (column.type !== 'select') {
       return false;
-    }
-    if (this.normalizeStatusLabel(column.name) === 'status') {
-      return true;
     }
     const options = ((
       column.data as {
@@ -1732,7 +1855,7 @@ export const databaseViewInitTemplate = (
   datasource.setTaskStatusInheritance(
     taskWorkflowDefaults.database.taskStatusInheritance
   );
-  if (viewType === 'kanban') {
+  if (viewType === 'kanban' || viewType === 'list') {
     const statusColumnId = datasource.propertyAdd('end', {
       type: 'select',
       name:
@@ -1780,7 +1903,12 @@ export const convertToDatabase = (host: EditorHost, viewType: string) => {
 
   host.store.captureSync();
 
-  const parentModel = host.store.getParent(firstModel);
+  let insertionTarget = firstModel;
+  let parentModel = host.store.getParent(insertionTarget);
+  while (parentModel?.flavour === 'affine:list') {
+    insertionTarget = parentModel;
+    parentModel = host.store.getParent(insertionTarget);
+  }
   if (!parentModel) {
     return;
   }
@@ -1789,7 +1917,7 @@ export const convertToDatabase = (host: EditorHost, viewType: string) => {
     'affine:database',
     {},
     parentModel,
-    parentModel.children.indexOf(firstModel)
+    parentModel.children.indexOf(insertionTarget)
   );
   const databaseModel = host.store.getBlock(id)?.model as
     | DatabaseBlockModel
@@ -1857,6 +1985,16 @@ export const convertToDatabase = (host: EditorHost, viewType: string) => {
       host.std.getOptional(EditorSettingProvider)?.setting$.peek()
         .taskWorkflowDefaults
     );
+    const isTodoSelection = orderedSelectedModels.every(
+      model => model.flavour === 'affine:list' && model.props.type === 'todo'
+    );
+    if (!isTodoSelection) {
+      host.store.moveBlocks(orderedSelectedModels, databaseModel);
+      addDatabaseViewWithoutCapture(datasource, viewType);
+      host.selection.clear();
+      return;
+    }
+
     databaseModel.props.taskStatusInheritance =
       taskWorkflowDefaults.database.taskStatusInheritance;
 
@@ -1904,42 +2042,7 @@ export const convertToDatabase = (host: EditorHost, viewType: string) => {
       }
     }
 
-    host.store.moveBlocks(orderedSelectedModels, databaseModel);
-
-    const desiredRowOrder = listRows.map(row => row.id);
-    for (let i = 0; i < desiredRowOrder.length; i++) {
-      const rowId = desiredRowOrder[i];
-      if (!rowId) continue;
-      const currentIndex = databaseModel.children.findIndex(
-        c => c.id === rowId
-      );
-      if (currentIndex < 0 || currentIndex === i) {
-        continue;
-      }
-
-      const rowModel = host.store.getModelById(rowId);
-      const targetModel = databaseModel.children[i];
-      if (!rowModel) {
-        continue;
-      }
-      host.store.moveBlocks([rowModel], databaseModel, targetModel);
-    }
-
-    const fieldDefs = new Map<
-      string,
-      { label: string; type: 'text' | 'number' }
-    >();
-    for (const def of taskWorkflowDefaults.list.fieldDefs) {
-      fieldDefs.set(def.key, { label: def.label, type: def.type });
-    }
-    let statusColumnName =
-      taskWorkflowDefaults.list.statusMapping.statusColumnName || 'Status';
-    let doneTagLabel =
-      taskWorkflowDefaults.list.statusMapping.doneTagLabel || 'Done';
-    let notDoneTagLabel =
-      taskWorkflowDefaults.list.statusMapping.notDoneTagLabel || undefined;
-
-    for (const row of listRows) {
+    const getTodoFieldConfigRoot = (row: ListBlockModel) => {
       let root: ListBlockModel = row;
       let parent = host.store.getParent(root) as ListBlockModel | null;
       while (
@@ -1949,17 +2052,54 @@ export const convertToDatabase = (host: EditorHost, viewType: string) => {
         root = parent;
         parent = host.store.getParent(root) as ListBlockModel | null;
       }
-      for (const def of root.props.todoFieldDefs ?? []) {
+      return root;
+    };
+    const fieldDefsByRowId = new Map<
+      string,
+      Array<{ key: string; label: string; type: TodoFieldType }>
+    >();
+    const statusMappingByRowId = new Map<
+      string,
+      | {
+          statusColumnName: string;
+          doneTagLabel: string;
+          notDoneTagLabel?: string;
+        }
+      | undefined
+    >();
+    for (const row of listRows) {
+      const root = getTodoFieldConfigRoot(row);
+      fieldDefsByRowId.set(
+        row.id,
+        root.props.todoFieldDefs ?? taskWorkflowDefaults.list.fieldDefs
+      );
+      statusMappingByRowId.set(row.id, root.props.todoDatabaseStatusMapping);
+    }
+
+    for (const row of listRows) {
+      const rowModel = host.store.getModelById(row.id);
+      if (!rowModel) {
+        continue;
+      }
+      host.store.moveBlocks([rowModel], databaseModel);
+    }
+    const fieldDefs = new Map<string, { label: string; type: TodoFieldType }>();
+    let statusColumnName =
+      taskWorkflowDefaults.list.statusMapping.statusColumnName || 'Status';
+    let doneTagLabel =
+      taskWorkflowDefaults.list.statusMapping.doneTagLabel || 'Done';
+    let notDoneTagLabel =
+      taskWorkflowDefaults.list.statusMapping.notDoneTagLabel || undefined;
+
+    for (const row of listRows) {
+      for (const def of fieldDefsByRowId.get(row.id) ?? []) {
         fieldDefs.set(def.key, { label: def.label, type: def.type });
       }
-      if (root.props.todoDatabaseStatusMapping) {
-        statusColumnName =
-          root.props.todoDatabaseStatusMapping.statusColumnName ||
-          statusColumnName;
-        doneTagLabel =
-          root.props.todoDatabaseStatusMapping.doneTagLabel || doneTagLabel;
-        notDoneTagLabel =
-          root.props.todoDatabaseStatusMapping.notDoneTagLabel || undefined;
+      const statusMapping = statusMappingByRowId.get(row.id);
+      if (statusMapping) {
+        statusColumnName = statusMapping.statusColumnName || statusColumnName;
+        doneTagLabel = statusMapping.doneTagLabel || doneTagLabel;
+        notDoneTagLabel = statusMapping.notDoneTagLabel || undefined;
       }
     }
 
@@ -1983,17 +2123,69 @@ export const convertToDatabase = (host: EditorHost, viewType: string) => {
     );
 
     if (fieldDefs.size > 0) {
+      const selectOptionsByKey = new Map<
+        string,
+        Map<string, { id: string; value: string; color: string }>
+      >();
+      const getSelectOptionNames = (value: unknown, multi: boolean) =>
+        String(value ?? '')
+          .split(multi ? ',' : '\u0000')
+          .map(v => v.trim())
+          .filter(Boolean);
+      for (const [key, def] of fieldDefs) {
+        if (def.type !== 'select' && def.type !== 'multi_select') continue;
+        const options = new Map<
+          string,
+          { id: string; value: string; color: string }
+        >();
+        for (const row of listRows) {
+          for (const name of getSelectOptionNames(
+            row.props.todoFieldValues?.[key],
+            def.type === 'multi_select'
+          )) {
+            if (!options.has(name)) {
+              options.set(name, {
+                id: nanoid(),
+                value: name,
+                color: 'var(--affine-tag-blue)',
+              });
+            }
+          }
+        }
+        selectOptionsByKey.set(key, options);
+      }
       const columnByKey = new Map<
         string,
-        { id: string; type: 'text' | 'number' }
+        { id: string; type: TodoFieldType }
       >();
       for (const [key, def] of fieldDefs) {
+        const selectOptions = [
+          ...(selectOptionsByKey.get(key)?.values() ?? []),
+        ];
         const columnId = addProperty(
           databaseModel,
           'end',
           def.type === 'number'
             ? databaseBlockProperties.numberColumnConfig.create(def.label)
-            : databaseBlockProperties.richTextColumnConfig.create(def.label)
+            : def.type === 'progress'
+              ? databaseBlockProperties.progressColumnConfig.create(def.label)
+              : def.type === 'date'
+                ? databaseBlockProperties.dateColumnConfig.create(def.label)
+                : def.type === 'select'
+                  ? databaseBlockProperties.selectColumnConfig.create(
+                      def.label,
+                      {
+                        options: selectOptions,
+                      }
+                    )
+                  : def.type === 'multi_select'
+                    ? databaseBlockProperties.multiSelectColumnConfig.create(
+                        def.label,
+                        { options: selectOptions }
+                      )
+                    : databaseBlockProperties.richTextColumnConfig.create(
+                        def.label
+                      )
         );
         columnByKey.set(key, { id: columnId, type: def.type });
       }
@@ -2004,9 +2196,48 @@ export const convertToDatabase = (host: EditorHost, viewType: string) => {
         )) {
           const column = columnByKey.get(key);
           if (!column) continue;
+          const numericValue =
+            column.type === 'number' || column.type === 'progress'
+              ? Number(value)
+              : undefined;
+          if (
+            (column.type === 'number' || column.type === 'progress') &&
+            !Number.isFinite(numericValue)
+          ) {
+            continue;
+          }
+          if (
+            column.type === 'progress' &&
+            (numericValue == null || numericValue < 0 || numericValue > 100)
+          ) {
+            continue;
+          }
+          const dateValue =
+            column.type === 'date' ? parseTaskDateFieldValue(value) : undefined;
+          if (column.type === 'date' && dateValue == null) continue;
+          const selectOptions = selectOptionsByKey.get(key);
+          const selectValue =
+            column.type === 'select'
+              ? selectOptions?.get(String(value).trim())?.id
+              : undefined;
+          const multiSelectValue =
+            column.type === 'multi_select'
+              ? getSelectOptionNames(value, true)
+                  .map(name => selectOptions?.get(name)?.id)
+                  .filter((id): id is string => Boolean(id))
+              : undefined;
           updateCell(databaseModel, row.id, {
             columnId: column.id,
-            value: column.type === 'number' ? value : new Text(String(value)),
+            value:
+              column.type === 'number' || column.type === 'progress'
+                ? numericValue
+                : column.type === 'date'
+                  ? dateValue
+                  : column.type === 'select'
+                    ? selectValue
+                    : column.type === 'multi_select'
+                      ? multiSelectValue
+                      : new Text(String(value)),
           });
         }
       }
