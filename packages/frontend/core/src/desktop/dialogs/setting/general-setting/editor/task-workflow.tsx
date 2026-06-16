@@ -72,11 +72,11 @@ export const TaskWorkflow = () => {
     <SettingWrapper title="List, Database, and Kanban">
       <SettingRow
         name="Optional list fields"
-        desc="Default TODO fields. Format: key:type:label, for example estimate:number:Estimate."
+        desc="Default TODO fields. Format: key:type:label. Keys cannot contain spaces; use label for display names. Types: text, number, date, select, multi_select, progress."
       >
         <DraftRowInput
           value={fieldText}
-          placeholder="estimate:number:Estimate, owner:text:Owner"
+          placeholder="estimate:number:Estimate, due:date:Due, owner:select:Owner"
           onCommit={value => {
             setDefaults({
               ...defaults,
@@ -87,6 +87,30 @@ export const TaskWorkflow = () => {
             });
           }}
         />
+      </SettingRow>
+      <SettingRow
+        name="Optional list field layout"
+        desc="Default placement for optional TODO fields. Aligned is the default."
+      >
+        <select
+          value={defaults.list.fieldLayout}
+          onChange={event => {
+            setDefaults({
+              ...defaults,
+              list: {
+                ...defaults.list,
+                fieldLayout: event.currentTarget.value as
+                  | 'inline'
+                  | 'aligned'
+                  | 'right',
+              },
+            });
+          }}
+        >
+          <option value="aligned">Aligned</option>
+          <option value="inline">Inline</option>
+          <option value="right">Right</option>
+        </select>
       </SettingRow>
       <SettingRow
         name="Database status column"
