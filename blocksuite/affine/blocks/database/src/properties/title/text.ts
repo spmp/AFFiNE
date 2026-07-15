@@ -30,17 +30,20 @@ import {
 } from './cell-renderer-css.js';
 
 type TaskStatusDataSource = {
+  ensureRowAsTodoList?: (rowId: string) => boolean;
   getTaskStatusColumn?: () => { id: string } | undefined;
   getTaskStatusInfo?: (
     rowId: string,
     propertyId?: string
   ) => { checked: boolean } | null;
+  getTodoListRowChecked?: (rowId: string) => boolean | undefined;
   cellValueGet?: (rowId: string, propertyId: string) => unknown;
   setTaskStatusChecked?: (
     rowId: string,
     checked: boolean,
     propertyId?: string
   ) => void;
+  setTodoListRowChecked?: (rowId: string, checked: boolean) => void;
 };
 
 export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
@@ -68,6 +71,18 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
 
   get std() {
     return this.view.serviceGet(EditorHostKey)?.std;
+  }
+
+  private ensureTodoListRowWhenMounted() {
+    if (this.view.type !== 'list') {
+      return false;
+    }
+    const dataSource = this.view.manager.dataSource as TaskStatusDataSource;
+    if (dataSource.ensureRowAsTodoList?.(this.cell.rowId)) {
+      this.requestUpdate();
+      return true;
+    }
+    return false;
   }
 
   private readonly _onCopy = (e: ClipboardEvent) => {
@@ -194,6 +209,8 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
     super.connectedCallback();
     this.classList.add(titleCellStyle);
 
+    this.ensureTodoListRowWhenMounted();
+
     const yText = this.value?.yText;
     if (yText) {
       const cb = () => {
@@ -221,6 +238,12 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
   }
 
   private readonly _handleKeyDown = (event: KeyboardEvent) => {
+    if (
+      this.view.type === 'list' &&
+      (event.key === 'Enter' || event.key === 'Tab')
+    ) {
+      return;
+    }
     if (event.key !== 'Escape') {
       if (event.key === 'Tab') {
         event.preventDefault();
@@ -228,6 +251,10 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
       }
       event.stopPropagation();
     }
+  };
+
+  private readonly _onRichTextKeyDown = (event: KeyboardEvent) => {
+    this._handleKeyDown(event);
   };
 
   override firstUpdated(props: Map<string, unknown>) {
@@ -273,28 +300,39 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
   renderTaskStatusCheckbox() {
     const dataSource = this.view.manager.dataSource as TaskStatusDataSource;
     const statusColumn = dataSource.getTaskStatusColumn?.();
-    if (!statusColumn || !dataSource.getTaskStatusInfo) {
+    let checked: boolean | undefined;
+    let setChecked: ((checked: boolean) => void) | undefined;
+    if (statusColumn && dataSource.getTaskStatusInfo) {
+      void dataSource.cellValueGet?.(this.cell.rowId, statusColumn.id);
+      const info = dataSource.getTaskStatusInfo(
+        this.cell.rowId,
+        statusColumn.id
+      );
+      if (info) {
+        checked = info.checked;
+        setChecked = next =>
+          dataSource.setTaskStatusChecked?.(
+            this.cell.rowId,
+            next,
+            statusColumn.id
+          );
+      }
+    } else {
+      checked = dataSource.getTodoListRowChecked?.(this.cell.rowId);
+      setChecked = next =>
+        dataSource.setTodoListRowChecked?.(this.cell.rowId, next);
+    }
+    if (checked == null || !setChecked) {
       return;
     }
 
-    void dataSource.cellValueGet?.(this.cell.rowId, statusColumn.id);
-    const info = dataSource.getTaskStatusInfo(this.cell.rowId, statusColumn.id);
-    if (!info) {
-      return;
-    }
-
-    const checked = info.checked;
     const onClick = (event: MouseEvent) => {
       event.preventDefault();
       event.stopPropagation();
       if (this.readonly) {
         return;
       }
-      dataSource.setTaskStatusChecked?.(
-        this.cell.rowId,
-        !checked,
-        statusColumn.id
-      );
+      setChecked(!checked);
     };
 
     return html`<div
@@ -321,6 +359,7 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
       .markdownMatches="${this.inlineManager?.markdownMatches}"
       .readonly="${!this.isEditing$.value}"
       .enableClipboard="${false}"
+      @keydown=${this._onRichTextKeyDown}
       .verticalScrollContainerGetter="${() =>
         this.topContenteditableElement?.host
           ? getViewportElement(this.topContenteditableElement.host)

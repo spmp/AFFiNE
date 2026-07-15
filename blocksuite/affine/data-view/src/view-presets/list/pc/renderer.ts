@@ -222,6 +222,14 @@ export class ListViewRenderer extends SignalWatcher(
   }
 
   @eventOptions({ capture: true })
+  private onRowFocusIn(event: FocusEvent) {
+    const rowId = (event.currentTarget as HTMLElement | null)?.dataset.rowId;
+    if (rowId) {
+      this.logic.ensureTodoListRow(rowId);
+    }
+  }
+
+  @eventOptions({ capture: true })
   private onRowKeyDown(event: KeyboardEvent) {
     if (event.defaultPrevented || event.isComposing) {
       return;
@@ -234,6 +242,7 @@ export class ListViewRenderer extends SignalWatcher(
     if (!rowId) {
       return;
     }
+    this.logic.ensureTodoListRow(rowId);
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -264,6 +273,11 @@ export class ListViewRenderer extends SignalWatcher(
       property => property.id !== titleColumn
     );
     const fieldLayout = this.view.fieldLayout$.value;
+    if (
+      this.logic.ensureTodoListRows(this.view.rows$.value.map(row => row.rowId))
+    ) {
+      this.requestUpdate();
+    }
     return html`${this.logic.headerWidget
         ? renderUniLit(this.logic.headerWidget, { dataViewLogic: this.logic })
         : nothing}
@@ -278,6 +292,7 @@ export class ListViewRenderer extends SignalWatcher(
               data-row-id=${row.rowId}
               tabindex="0"
               style="padding-left: ${8 + indent}px"
+              @focusin=${this.onRowFocusIn}
               @keydown=${this.onRowKeyDown}
             >
               <div class="affine-data-view-list-title">
