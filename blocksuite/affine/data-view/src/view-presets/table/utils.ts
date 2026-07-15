@@ -102,11 +102,27 @@ export function calculateHierarchyIndent(level: number): number {
   return Math.min(Math.max(0, level) * step, max);
 }
 
+const normalizeHierarchyTextValue = (value: unknown): string => {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (
+    value &&
+    typeof value === 'object' &&
+    'toString' in value &&
+    typeof value.toString === 'function'
+  ) {
+    return value.toString();
+  }
+  return '';
+};
+
 const decodeAncestorIdentities = (value: unknown): string[] => {
-  if (typeof value !== 'string' || value.length === 0) {
+  const normalized = normalizeHierarchyTextValue(value);
+  if (!normalized) {
     return [];
   }
-  return value
+  return normalized
     .split('|')
     .map(token => token.trim())
     .filter(Boolean);
@@ -214,7 +230,8 @@ export const computeIndentMutation = (
   const rootLevel = levels[rowIndex] ?? 0;
   const prevIndex = rowIndex - 1;
   const prevLevel = levels[prevIndex] ?? 0;
-  const nextRootLevel = prevLevel + 1;
+  const nextRootLevel =
+    rootLevel === 0 && prevLevel > 0 ? prevLevel : prevLevel + 1;
   if (nextRootLevel === rootLevel) {
     return null;
   }
@@ -319,7 +336,7 @@ export const computeUnindentMutation = (
   if (!props) {
     return null;
   }
-  const { levelProperty, parentProperty, ancestorProperty } = props;
+  const { levelProperty, ancestorProperty } = props;
   const rowIndex = context.rowIds.indexOf(context.rowId);
   if (rowIndex < 0) {
     return null;
@@ -339,19 +356,9 @@ export const computeUnindentMutation = (
   const movedSet = new Set(movedRange);
   const rootRowId = context.rowId;
   const rootIdentity = buildTaskIdentity(context.docId, rootRowId);
-  const currentParentIdentityRaw =
-    parentProperty.cellGetOrCreate(rootRowId).jsonValue$.value;
-  const currentParentIdentity =
-    typeof currentParentIdentityRaw === 'string' && currentParentIdentityRaw
-      ? currentParentIdentityRaw
-      : undefined;
   const rootAncestors = decodeAncestorIdentities(
     ancestorProperty.cellGetOrCreate(rootRowId).jsonValue$.value
   );
-  if (!currentParentIdentity || rootAncestors.length === 0) {
-    return null;
-  }
-
   const nextRootAncestors = rootAncestors.slice(0, -1);
   const nextParentIdentity = nextRootAncestors.at(-1);
   const oldRootPrefix = [...rootAncestors, rootIdentity];

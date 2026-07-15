@@ -7,6 +7,10 @@ import { viewConverts, viewPresets } from '../view-presets/index.js';
 import { ListSingleView, listViewModel } from '../view-presets/list/index.js';
 import { ListViewUILogic } from '../view-presets/list/pc/list-view-ui-logic.js';
 import { ListViewRenderer } from '../view-presets/list/pc/renderer.js';
+import {
+  computeIndentMutation,
+  computeUnindentMutation,
+} from '../view-presets/table/utils.js';
 
 const getListRendererSource = () =>
   ListViewRenderer.prototype.render.toString();
@@ -231,6 +235,32 @@ describe('list view preset', () => {
     expect(values.get('ancestors:row-2')).toBe('root|parent-id');
   });
 
+  test('adds follow-up rows through datasource TODO-list creation when available', () => {
+    let insertPosition: unknown;
+    const logic = {
+      view: {
+        rowIds$: { value: ['row-1'] },
+        manager: {
+          dataSource: {
+            rowAddAsTodoList: (position: unknown) => {
+              insertPosition = position;
+              return 'todo-row';
+            },
+          },
+        },
+        rowAdd: () => {
+          throw new Error('plain rowAdd should not be used');
+        },
+        propertiesRaw$: { value: [] },
+      },
+    } as unknown as ListViewUILogic;
+
+    expect(ListViewUILogic.prototype.addRowAfter.call(logic, 'row-1')).toBe(
+      'todo-row'
+    );
+    expect(insertPosition).toBe('end');
+  });
+
   test('creates row after a grandchild without reordering surrounding hierarchy', () => {
     const values = new Map<string, unknown>([
       ['level:parent-1', 0],
@@ -300,8 +330,22 @@ describe('list view preset', () => {
       createHierarchyProperty(values, id, name);
     const logic = {
       view: {
+        rowIds$: {
+          value: [
+            'parent-1',
+            'child-1',
+            'grandchild-1',
+            'great-grandchild-1',
+            'grandchild-2',
+          ],
+        },
         manager: {
           dataSource: {
+            rowAddAsTodoList: (position: unknown) => {
+              expect(position).toEqual({ before: true, id: 'grandchild-2' });
+              insertedRowId = 'new-great-grandchild';
+              return insertedRowId;
+            },
             applyTaskHierarchyMutation: (
               levels: Map<string, number>,
               parents: Map<string, string | undefined>,
@@ -312,15 +356,6 @@ describe('list view preset', () => {
               updatedAncestors = ancestors;
             },
           },
-        },
-        rowIds$: {
-          value: [
-            'parent-1',
-            'child-1',
-            'grandchild-1',
-            'great-grandchild-1',
-            'grandchild-2',
-          ],
         },
         rowAdd: () => {
           insertedRowId = 'new-great-grandchild';
@@ -343,6 +378,207 @@ describe('list view preset', () => {
     expect(updatedParents?.get(insertedRowId)).toBe('grandchild-1-id');
     expect(updatedAncestors?.get(insertedRowId)).toBe(
       'parent-1-id|child-1-id|grandchild-1-id'
+    );
+  });
+
+  test('indents a root-level continuation row to match nested previous row level', () => {
+    const values = new Map<string, unknown>([
+      ['level:above', 4],
+      ['level:new-row', 0],
+      ['ancestors:above', '|doc:root|doc:parent|doc:child|doc:grandchild|'],
+      ['ancestors:new-row', ''],
+    ]);
+    const property = (id: string, name: string) =>
+      createHierarchyProperty(values, id, name);
+
+    const result = computeIndentMutation({
+      rowIds: ['above', 'new-row'],
+      rowId: 'new-row',
+      docId: 'doc',
+      properties: [
+        property('level', 'Hierarchy Level'),
+        property('parent', 'Parent Identifier'),
+        property('ancestors', 'Ancestor Identifiers'),
+      ],
+    });
+
+    expect(result?.updatedLevels.get('new-row')).toBe(4);
+  });
+
+  test('indents a nested row below a same-level previous row as a child', () => {
+    const values = new Map<string, unknown>([
+      ['level:above', 4],
+      ['level:row', 4],
+      ['ancestors:above', '|doc:root|doc:parent|doc:child|doc:grandchild|'],
+      ['ancestors:row', '|doc:root|doc:parent|doc:child|doc:grandchild|'],
+    ]);
+    const property = (id: string, name: string) =>
+      createHierarchyProperty(values, id, name);
+
+    const result = computeIndentMutation({
+      rowIds: ['above', 'row'],
+      rowId: 'row',
+      docId: 'doc',
+      properties: [
+        property('level', 'Hierarchy Level'),
+        property('parent', 'Parent Identifier'),
+        property('ancestors', 'Ancestor Identifiers'),
+      ],
+    });
+
+    expect(result?.updatedLevels.get('row')).toBe(5);
+  });
+
+  test('unindents one hierarchy level when parent metadata is rich-text-like', () => {
+    const textValue = (value: string) => ({ toString: () => value });
+    const values = new Map<string, unknown>([
+      ['level:parent', 2],
+      ['level:row', 4],
+      ['parent:row', textValue('doc:grandparent')],
+      ['ancestors:row', textValue('doc:root|doc:parent|doc:grandparent')],
+    ]);
+    const property = (id: string, name: string) =>
+      createHierarchyProperty(values, id, name);
+
+    const result = computeUnindentMutation({
+      rowIds: ['parent', 'row'],
+      rowId: 'row',
+      docId: 'doc',
+      properties: [
+        property('level', 'Hierarchy Level'),
+        property('parent', 'Parent Identifier'),
+        property('ancestors', 'Ancestor Identifiers'),
+      ],
+    });
+
+    expect(result?.updatedLevels.get('row')).toBe(3);
+    expect(result?.updatedParents.get('row')).toBe('doc:parent');
+    expect(result?.updatedAncestors.get('row')).toBe('|doc:root|doc:parent|');
+  });
+
+  test('repeated unindent walks hierarchy back to root one level at a time', () => {
+    const values = new Map<string, unknown>([
+      ['level:row', 4],
+      ['parent:row', 'doc:level-3'],
+      ['ancestors:row', '|doc:level-0|doc:level-1|doc:level-2|doc:level-3|'],
+    ]);
+    const property = (id: string, name: string) =>
+      createHierarchyProperty(values, id, name);
+    const properties = [
+      property('level', 'Hierarchy Level'),
+      property('parent', 'Parent Identifier'),
+      property('ancestors', 'Ancestor Identifiers'),
+    ];
+    const levels: number[] = [];
+
+    for (let i = 0; i < 4; i++) {
+      const result = computeUnindentMutation({
+        rowIds: ['row'],
+        rowId: 'row',
+        docId: 'doc',
+        properties,
+      });
+      const level = result?.updatedLevels.get('row');
+      expect(level).toBeDefined();
+      levels.push(level as number);
+      values.set('level:row', level);
+      values.set('parent:row', result?.updatedParents.get('row') ?? '');
+      values.set('ancestors:row', result?.updatedAncestors.get('row') ?? '');
+    }
+
+    expect(levels).toEqual([3, 2, 1, 0]);
+    expect(
+      computeUnindentMutation({
+        rowIds: ['row'],
+        rowId: 'row',
+        docId: 'doc',
+        properties,
+      })
+    ).toBeNull();
+  });
+
+  test('repeated unindent falls back to level-only demotion when ancestors are missing', () => {
+    const values = new Map<string, unknown>([
+      ['level:row', 4],
+      ['parent:row', ''],
+      ['ancestors:row', ''],
+    ]);
+    const property = (id: string, name: string) =>
+      createHierarchyProperty(values, id, name);
+    const properties = [
+      property('level', 'Hierarchy Level'),
+      property('parent', 'Parent Identifier'),
+      property('ancestors', 'Ancestor Identifiers'),
+    ];
+    const levels: number[] = [];
+
+    for (let i = 0; i < 4; i++) {
+      const result = computeUnindentMutation({
+        rowIds: ['row'],
+        rowId: 'row',
+        docId: 'doc',
+        properties,
+      });
+      const level = result?.updatedLevels.get('row');
+      expect(level).toBeDefined();
+      levels.push(level as number);
+      values.set('level:row', level);
+      values.set('parent:row', result?.updatedParents.get('row') ?? '');
+      values.set('ancestors:row', result?.updatedAncestors.get('row') ?? '');
+    }
+
+    expect(levels).toEqual([3, 2, 1, 0]);
+  });
+
+  test('initializes focused empty rows through datasource TODO-list conversion', () => {
+    let convertedRowId = '';
+    const logic = {
+      view: {
+        manager: {
+          dataSource: {
+            ensureRowAsTodoList: (rowId: string) => {
+              convertedRowId = rowId;
+              return true;
+            },
+          },
+        },
+      },
+    } as unknown as ListViewUILogic;
+
+    expect(
+      ListViewUILogic.prototype.ensureTodoListRow.call(logic, 'row-1')
+    ).toBe(true);
+    expect(convertedRowId).toBe('row-1');
+  });
+
+  test('initializes rendered list rows without status-column side effects', () => {
+    const convertedRowIds: string[] = [];
+    const logic = {
+      view: {
+        manager: {
+          dataSource: {
+            ensureRowAsTodoList: (rowId: string) => {
+              convertedRowIds.push(rowId);
+              return rowId === 'empty-row';
+            },
+          },
+        },
+      },
+    } as unknown as ListViewUILogic;
+
+    expect(
+      ListViewUILogic.prototype.ensureTodoListRows.call(logic, [
+        'text-row',
+        'empty-row',
+      ])
+    ).toBe(true);
+    expect(convertedRowIds).toEqual(['text-row', 'empty-row']);
+  });
+
+  test('list renderer initializes rows before rendering title cells', () => {
+    expect(getListRendererSource()).toMatch(/ensureTodoListRows/);
+    expect(getListRendererSource().indexOf('ensureTodoListRows')).toBeLessThan(
+      getListRendererSource().indexOf('renderCell')
     );
   });
 

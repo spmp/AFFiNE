@@ -22,13 +22,42 @@ import {
 import type { ListSingleView } from '../list-view-manager.js';
 import { ListViewRenderer } from './renderer.js';
 
+type TodoListRowDataSource = {
+  rowAddAsTodoList?: (position: InsertToPosition | number) => string;
+  ensureRowAsTodoList?: (rowId: string) => boolean;
+};
+
+const addTodoListRow = (
+  view: ListSingleView,
+  position: InsertToPosition | number
+) => {
+  const dataSource = view.manager?.dataSource as
+    | TodoListRowDataSource
+    | undefined;
+  return dataSource?.rowAddAsTodoList?.(position) ?? view.rowAdd(position);
+};
+
 export class ListViewUILogic extends DataViewUILogicBase<ListSingleView> {
   clearSelection = () => {
     this.setSelection();
   };
 
+  ensureTodoListRow(rowId: string) {
+    const dataSource = this.view.manager?.dataSource as
+      | TodoListRowDataSource
+      | undefined;
+    return dataSource?.ensureRowAsTodoList?.(rowId) ?? false;
+  }
+
+  ensureTodoListRows(rowIds: string[]) {
+    const dataSource = this.view.manager?.dataSource as
+      | TodoListRowDataSource
+      | undefined;
+    return rowIds.some(rowId => dataSource?.ensureRowAsTodoList?.(rowId));
+  }
+
   addRow = (position: InsertToPosition) => {
-    return this.view.rowAdd(position);
+    return addTodoListRow(this.view, position);
   };
 
   addRowAfter(rowId: string) {
@@ -62,7 +91,7 @@ export class ListViewUILogic extends DataViewUILogicBase<ListSingleView> {
       insertIndex >= rowIds.length
         ? 'end'
         : { before: true, id: rowIds[insertIndex] as string };
-    const newRowId = this.view.rowAdd(insertPosition);
+    const newRowId = addTodoListRow(this.view, insertPosition);
     const getColumnStringValue = (columnName: string) => {
       const property = this.view.propertiesRaw$.value.find(
         property => property.name$.value === columnName
