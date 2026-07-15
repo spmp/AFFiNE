@@ -617,7 +617,7 @@ describe('DatabaseManager', () => {
     expect(dataSource.getTaskStatusInfo(child)?.checked).toBe(false);
   });
 
-  test('creates list database view through generic view initialization without list block mirroring', () => {
+  test('creates list database view through generic view initialization without converting initial rows', () => {
     const listDatabaseId = doc.addBlock(
       'affine:database',
       { columns: [], titleColumn: 'Title' },
@@ -635,6 +635,90 @@ describe('DatabaseManager', () => {
     expect(
       listDatabase.children.every(child => child.flavour !== 'affine:list')
     ).toBe(true);
+  });
+
+  test('adds database list-view rows as todo list blocks', () => {
+    const dataSource = new DatabaseBlockDataSource(db);
+
+    const rowId = dataSource.rowAddAsTodoList('end');
+    const row = doc.getModelById(rowId);
+
+    expect(row?.flavour).toBe('affine:list');
+    expect(row?.props.type).toBe('todo');
+    expect(row?.props.checked).toBe(false);
+  });
+
+  test('does not create task status column for list-view row creation unless configured', () => {
+    const dataSource = new DatabaseBlockDataSource(db);
+
+    const rowId = dataSource.rowAddAsTodoList('end');
+    const levelColumn = db.props.columns.find(
+      column => column.name === TASK_HIERARCHY_LEVEL_COLUMN_NAME
+    );
+
+    expect(dataSource.getTaskStatusColumn()).toBeUndefined();
+    expect(db.props.columns.map(column => column.name)).not.toContain('Status');
+    expect(levelColumn).toBeTruthy();
+    expect(getCell(db, rowId, levelColumn!.id)?.value).toBe(0);
+  });
+
+  test('todo list rows expose checkbox state without task status column', () => {
+    const dataSource = new DatabaseBlockDataSource(db);
+    const rowId = dataSource.rowAddAsTodoList('end');
+
+    expect(dataSource.getTaskStatusColumn()).toBeUndefined();
+    expect(dataSource.getTodoListRowChecked(rowId)).toBe(false);
+
+    dataSource.setTodoListRowChecked(rowId, true);
+
+    expect(dataSource.getTodoListRowChecked(rowId)).toBe(true);
+    expect(dataSource.getTaskStatusColumn()).toBeUndefined();
+  });
+
+  test('converts an empty paragraph row to todo list in place', () => {
+    const emptyRowId = doc.addBlock('affine:paragraph', {}, databaseBlockId);
+    updateCell(db, emptyRowId, { columnId: col1, value: 42 });
+    const dataSource = new DatabaseBlockDataSource(db);
+
+    expect(dataSource.ensureRowAsTodoList(emptyRowId)).toBe(true);
+
+    const row = doc.getModelById(emptyRowId);
+    expect(row?.id).toBe(emptyRowId);
+    expect(row?.flavour).toBe('affine:list');
+    expect(row?.props.type).toBe('todo');
+    expect(row?.props.checked).toBe(false);
+    expect(getCell(db, emptyRowId, col1)?.value).toBe(42);
+  });
+
+  test('preserves non-empty paragraph and existing list row types in list view initialization', () => {
+    const emptyRowId = doc.addBlock('affine:paragraph', {}, databaseBlockId);
+    const bulletRowId = doc.addBlock(
+      'affine:list',
+      { type: 'bulleted', text: new Text('bullet') },
+      databaseBlockId
+    );
+    const numberedRowId = doc.addBlock(
+      'affine:list',
+      { type: 'numbered', text: new Text('number') },
+      databaseBlockId
+    );
+    const todoRowId = doc.addBlock(
+      'affine:list',
+      { type: 'todo', text: new Text('todo') },
+      databaseBlockId
+    );
+    const dataSource = new DatabaseBlockDataSource(db);
+
+    expect(dataSource.ensureRowAsTodoList(p1)).toBe(false);
+    expect(dataSource.ensureRowAsTodoList(bulletRowId)).toBe(false);
+    expect(dataSource.ensureRowAsTodoList(numberedRowId)).toBe(false);
+    expect(dataSource.ensureRowAsTodoList(todoRowId)).toBe(true);
+    expect(dataSource.ensureRowAsTodoList(emptyRowId)).toBe(true);
+
+    expect(doc.getModelById(p1)?.flavour).toBe('affine:paragraph');
+    expect(doc.getModelById(bulletRowId)?.props.type).toBe('bulleted');
+    expect(doc.getModelById(numberedRowId)?.props.type).toBe('numbered');
+    expect(doc.getModelById(todoRowId)?.props.type).toBe('todo');
   });
 
   test('does not infer task status from arbitrary Status select column name', () => {
@@ -666,6 +750,66 @@ describe('DatabaseManager', () => {
     expect(
       HeaderAreaTextCell.prototype.renderTaskStatusCheckbox.toString()
     ).not.toContain('cellGetOrCreate(this.cell.rowId, statusColumn.id)');
+  });
+
+  test('task checkbox render falls back to todo row state without status column', () => {
+    const dataSource = new DatabaseBlockDataSource(db);
+    const rowId = dataSource.rowAddAsTodoList('end');
+    const cell = {
+      cell: {
+        rowId,
+        view: {
+          manager: { dataSource },
+        },
+      },
+      readonly: false,
+    };
+    Object.setPrototypeOf(cell, HeaderAreaTextCell.prototype);
+
+    expect(
+      HeaderAreaTextCell.prototype.renderTaskStatusCheckbox.call(cell)
+    ).toBeTruthy();
+  });
+
+  test('database title cell lets list-view Enter and Tab reach list row handlers', () => {
+    expect(HeaderAreaTextCell.toString()).toContain(
+      'this.view.type === "list"'
+    );
+    expect(HeaderAreaTextCell.toString()).toContain('event.key === "Enter"');
+    expect(HeaderAreaTextCell.toString()).toContain('event.key === "Tab"');
+    expect(HeaderAreaTextCell.prototype.renderBlockText.toString()).toContain(
+      '@keydown'
+    );
+  });
+
+  test('database title cell initializes empty rows when mounted in list view', () => {
+    const emptyRowId = doc.addBlock('affine:paragraph', {}, databaseBlockId);
+    const dataSource = new DatabaseBlockDataSource(db);
+    const cell = {
+      cell: {
+        rowId: emptyRowId,
+        property: { type$: { value: 'title' }, readonly$: { value: false } },
+        value$: { value: doc.getModelById(emptyRowId)?.text },
+        view: {
+          type: 'list',
+          manager: { dataSource },
+          mainProperties$: { value: {} },
+        },
+      },
+      requestUpdate: () => {},
+    };
+    Object.setPrototypeOf(cell, HeaderAreaTextCell.prototype);
+
+    HeaderAreaTextCell.prototype['ensureTodoListRowWhenMounted'].call(cell);
+
+    const row = doc.getModelById(emptyRowId);
+    expect(row?.flavour).toBe('affine:list');
+    expect(row?.props.type).toBe('todo');
+    expect(dataSource.getTaskStatusColumn()).toBeUndefined();
+    expect(db.props.columns.map(column => column.name)).not.toContain('Status');
+    expect(db.props.columns.map(column => column.name)).toContain(
+      TASK_HIERARCHY_LEVEL_COLUMN_NAME
+    );
   });
 
   test.each([
@@ -771,7 +915,90 @@ describe('DatabaseManager', () => {
     ).toEqual(['Todo row', 'Plain row']);
     expect(
       convertedDatabase?.props.columns.map(column => column.name)
-    ).not.toContain(TASK_HIERARCHY_LEVEL_COLUMN_NAME);
+    ).toContain(TASK_HIERARCHY_LEVEL_COLUMN_NAME);
+  });
+
+  test('preserves mixed text/list/todo conversion order and list indentation metadata', () => {
+    const paragraphId = doc.addBlock(
+      'affine:paragraph',
+      { text: new Text('Plain row') },
+      noteBlockId
+    );
+    const bulletParentId = doc.addBlock(
+      'affine:list',
+      { type: 'bulleted', text: new Text('Bullet parent') },
+      noteBlockId
+    );
+    const bulletChildId = doc.addBlock(
+      'affine:list',
+      { type: 'bulleted', text: new Text('Bullet child') },
+      bulletParentId
+    );
+    const numberedId = doc.addBlock(
+      'affine:list',
+      { type: 'numbered', text: new Text('Numbered row') },
+      noteBlockId
+    );
+    const todoId = doc.addBlock(
+      'affine:list',
+      { type: 'todo', text: new Text('Todo row') },
+      noteBlockId
+    );
+    const selectedModels = [
+      paragraphId,
+      bulletParentId,
+      bulletChildId,
+      numberedId,
+      todoId,
+    ].map(id => doc.getModelById(id));
+
+    convertToDatabase(
+      {
+        store: doc,
+        selection: { clear: () => {} },
+        std: {
+          command: { exec: () => [null, { selectedModels }] },
+          getOptional: () => ({
+            setting$: { peek: () => ({ taskWorkflowDefaults: {} }) },
+          }),
+        },
+      } as never,
+      'table'
+    );
+
+    const convertedDatabase = doc
+      .getModelById(noteBlockId)
+      ?.children.find(
+        child =>
+          child.flavour === 'affine:database' && child.id !== databaseBlockId
+      ) as DatabaseBlockModel | undefined;
+    const levelColumn = convertedDatabase?.props.columns.find(
+      column => column.name === TASK_HIERARCHY_LEVEL_COLUMN_NAME
+    );
+
+    expect(
+      convertedDatabase?.children.map(child => child.props.text.toString())
+    ).toEqual([
+      'Plain row',
+      'Bullet parent',
+      'Bullet child',
+      'Numbered row',
+      'Todo row',
+    ]);
+    expect(levelColumn).toBeTruthy();
+    expect(
+      getCell(convertedDatabase!, paragraphId, levelColumn!.id)?.value
+    ).toBe(0);
+    expect(
+      getCell(convertedDatabase!, bulletParentId, levelColumn!.id)?.value
+    ).toBe(0);
+    expect(
+      getCell(convertedDatabase!, bulletChildId, levelColumn!.id)?.value
+    ).toBe(1);
+    expect(
+      getCell(convertedDatabase!, numberedId, levelColumn!.id)?.value
+    ).toBe(0);
+    expect(getCell(convertedDatabase!, todoId, levelColumn!.id)?.value).toBe(0);
   });
 
   test('preserves nested todo preorder when converting list selection to database', () => {

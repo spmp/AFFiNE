@@ -478,6 +478,99 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     this.cellValueChange(rowId, column.id, target.id);
   }
 
+  getTodoListRowChecked(rowId: string): boolean | undefined {
+    const model = this.getModelById(rowId);
+    if (model?.flavour !== 'affine:list' || model.props.type !== 'todo') {
+      return undefined;
+    }
+    return Boolean(model.props.checked);
+  }
+
+  setTodoListRowChecked(rowId: string, checked: boolean) {
+    const model = this.getModelById(rowId);
+    if (model?.flavour !== 'affine:list' || model.props.type !== 'todo') {
+      return;
+    }
+    this.doc.captureSync();
+    this.doc.updateBlock(model as ListBlockModel, { checked });
+  }
+
+  private hidePropertyInViews(columnId: string) {
+    for (const view of this._model.props.views) {
+      if (view.mode === 'table') {
+        updateView(this._model, view.id, data => {
+          const columns = (data.columns ?? []) as Array<{
+            id: string;
+            width: number;
+            hide?: boolean;
+          }>;
+          const idx = columns.findIndex(column => column.id === columnId);
+          if (idx >= 0) {
+            const current = columns[idx];
+            if (!current) return {};
+            const next = [...columns];
+            next[idx] = { ...current, hide: true };
+            return { columns: next };
+          }
+          return {
+            columns: [...columns, { id: columnId, width: 180, hide: true }],
+          };
+        });
+        continue;
+      }
+
+      updateView(this._model, view.id, data => {
+        const columns = (data.columns ?? []) as Array<{
+          id: string;
+          hide?: boolean;
+        }>;
+        const idx = columns.findIndex(column => column.id === columnId);
+        if (idx >= 0) {
+          const current = columns[idx];
+          if (!current) return {};
+          const next = [...columns];
+          next[idx] = { ...current, hide: true };
+          return { columns: next };
+        }
+        return { columns: [...columns, { id: columnId, hide: true }] };
+      });
+    }
+  }
+
+  ensureTaskHierarchyColumns() {
+    const getOrAdd = (
+      name: string,
+      create: () => ColumnDataType
+    ): string | undefined => {
+      const existing = this._model.props.columns.find(
+        column => column.name === name
+      );
+      if (existing) {
+        return existing.id;
+      }
+      const columnId = addProperty(this._model, 'end', create());
+      this.hidePropertyInViews(columnId);
+      return columnId;
+    };
+    return {
+      levelColumnId: getOrAdd(TASK_HIERARCHY_LEVEL_COLUMN_NAME, () =>
+        databaseBlockProperties.numberColumnConfig.create(
+          TASK_HIERARCHY_LEVEL_COLUMN_NAME
+        )
+      ),
+      parentColumnId: getOrAdd(TASK_PARENT_IDENTIFIER_COLUMN_NAME, () =>
+        databaseBlockProperties.richTextColumnConfig.create(
+          TASK_PARENT_IDENTIFIER_COLUMN_NAME
+        )
+      ),
+      ancestorColumnId: getOrAdd(TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME, () =>
+        databaseBlockProperties.richTextColumnConfig.create(
+          TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME
+        )
+      ),
+    };
+  }
+
   private normalizeStatusLabel(value: string) {
     return value.trim().toLowerCase();
   }
@@ -1592,6 +1685,60 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     return this.doc.addBlock('affine:paragraph', {}, this._model.id, index);
   }
 
+  rowAddAsTodoList(insertPosition: InsertToPosition | number): string {
+    const { levelColumnId } = this.ensureTaskHierarchyColumns();
+    this.doc.captureSync();
+    const index =
+      typeof insertPosition === 'number'
+        ? insertPosition
+        : insertPositionToIndex(insertPosition, this._model.children);
+    const rowId = this.doc.addBlock(
+      'affine:list',
+      { type: 'todo', checked: false },
+      this._model.id,
+      index
+    );
+    if (levelColumnId) {
+      updateCell(this._model, rowId, { columnId: levelColumnId, value: 0 });
+    }
+    return rowId;
+  }
+
+  ensureRowAsTodoList(rowId: string): boolean {
+    const model = this.getModelById(rowId);
+    if (!model) {
+      return false;
+    }
+    if (model.flavour === 'affine:list') {
+      return model.props.type === 'todo';
+    }
+    if (model.flavour !== 'affine:paragraph') {
+      return false;
+    }
+    const row = model as ParagraphBlockModel;
+    if (row.props.type !== 'text' || !row.isEmpty()) {
+      return false;
+    }
+    const { levelColumnId } = this.ensureTaskHierarchyColumns();
+    const index = this._model.children.findIndex(child => child.id === rowId);
+    if (index < 0) {
+      return false;
+    }
+
+    this.doc.captureSync();
+    this.doc.deleteBlock(row);
+    this.doc.addBlock(
+      'affine:list',
+      { id: rowId, type: 'todo', checked: false, text: row.text?.clone() },
+      this._model.id,
+      index
+    );
+    if (levelColumnId) {
+      updateCell(this._model, rowId, { columnId: levelColumnId, value: 0 });
+    }
+    return true;
+  }
+
   rowDelete(ids: string[]): void {
     this.doc.captureSync();
     for (const id of ids) {
@@ -1989,7 +2136,88 @@ export const convertToDatabase = (host: EditorHost, viewType: string) => {
       model => model.flavour === 'affine:list' && model.props.type === 'todo'
     );
     if (!isTodoSelection) {
-      host.store.moveBlocks(orderedSelectedModels, databaseModel);
+      const selectedIds = new Set(orderedSelectedModels.map(model => model.id));
+      const listRows = orderedSelectedModels.filter(
+        (model): model is ListBlockModel => model.flavour === 'affine:list'
+      );
+      const hierarchyLevelByRowId = new Map<string, number>();
+      const parentTaskIdentityByRowId = new Map<string, string | undefined>();
+      const ancestorTaskIdentitiesByRowId = new Map<string, string>();
+      for (const row of listRows) {
+        const ancestors: string[] = [];
+        let parent = host.store.getParent(row) as ListBlockModel | null;
+        while (parent?.flavour === 'affine:list') {
+          if (selectedIds.has(parent.id)) {
+            ancestors.unshift(
+              createTaskIdentity({ docId: host.store.id, blockId: parent.id })
+            );
+          }
+          parent = host.store.getParent(parent) as ListBlockModel | null;
+        }
+        hierarchyLevelByRowId.set(row.id, ancestors.length);
+        const directParentIdentity = ancestors.at(-1);
+        if (directParentIdentity) {
+          parentTaskIdentityByRowId.set(row.id, directParentIdentity);
+        }
+        if (ancestors.length > 0) {
+          ancestorTaskIdentitiesByRowId.set(
+            row.id,
+            encodeTaskAncestorIdentities(ancestors)
+          );
+        }
+      }
+      for (const model of orderedSelectedModels) {
+        const rowModel = host.store.getModelById(model.id);
+        if (rowModel) {
+          host.store.moveBlocks([rowModel], databaseModel);
+        }
+      }
+      if (listRows.length > 0) {
+        const hierarchyLevelColumnId = addProperty(
+          databaseModel,
+          'end',
+          databaseBlockProperties.numberColumnConfig.create(
+            TASK_HIERARCHY_LEVEL_COLUMN_NAME
+          )
+        );
+        const parentTaskIdentityColumnId = addProperty(
+          databaseModel,
+          'end',
+          databaseBlockProperties.richTextColumnConfig.create(
+            TASK_PARENT_IDENTIFIER_COLUMN_NAME
+          )
+        );
+        const ancestorTaskIdentitiesColumnId = addProperty(
+          databaseModel,
+          'end',
+          databaseBlockProperties.richTextColumnConfig.create(
+            TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME
+          )
+        );
+        for (const row of orderedSelectedModels) {
+          updateCell(databaseModel, row.id, {
+            columnId: hierarchyLevelColumnId,
+            value: hierarchyLevelByRowId.get(row.id) ?? 0,
+          });
+          if (row.flavour !== 'affine:list') {
+            continue;
+          }
+          const parentIdentity = parentTaskIdentityByRowId.get(row.id);
+          if (parentIdentity) {
+            updateCell(databaseModel, row.id, {
+              columnId: parentTaskIdentityColumnId,
+              value: new Text(parentIdentity),
+            });
+          }
+          const ancestorIdentities = ancestorTaskIdentitiesByRowId.get(row.id);
+          if (ancestorIdentities) {
+            updateCell(databaseModel, row.id, {
+              columnId: ancestorTaskIdentitiesColumnId,
+              value: new Text(ancestorIdentities),
+            });
+          }
+        }
+      }
       addDatabaseViewWithoutCapture(datasource, viewType);
       host.selection.clear();
       return;
