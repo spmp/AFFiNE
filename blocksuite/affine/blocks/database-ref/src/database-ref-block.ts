@@ -95,8 +95,10 @@ function releasePreviewStore(
 
 /**
  * Renders a live view of a single `affine:database` block, addressed by
- * `refBlockId` (currently same-doc only; `refDocId` defaults to the current
- * doc — cross-doc addressing is a planned follow-on once this is solid).
+ * `refBlockId` + `refDocId` (defaults to the current doc when unset,
+ * preserving Story 0.2's same-page-only behavior exactly; a real foreign
+ * doc id, populated by Story 0.3's cross-doc picker, resolves against that
+ * doc's own `Store` instead — see `_getUnfilteredTargetStore` below).
  *
  * Unlike `affine:surface-ref` (which crops an edgeless viewport around a
  * Gfx element's `xywh` bound), a database block is flow content with no
@@ -229,12 +231,13 @@ export class DatabaseRefBlockComponent extends BlockComponent<DatabaseRefBlockMo
    * near-simultaneous Yjs updates as the whole doc syncs in, hitting both
    * wrapper sets together).
    *
-   * The actual fix: in the only case this package currently supports
-   * (`refDocId` unset, defaulting to the current doc —
-   * cross-doc addressing is a later phase), the correct "unfiltered store
-   * for this doc" already exists and is exactly `this.std.store` — the
-   * same instance the rest of the page is using. Only a genuinely
-   * different doc (future work) needs its own lookup at all.
+   * The actual fix: for the same-doc case (`refDocId` unset, defaulting to
+   * the current doc), the correct "unfiltered store for this doc" already
+   * exists and is exactly `this.std.store` — the same instance the rest of
+   * the page is using, so reuse it rather than minting a second one. A
+   * genuinely different doc (cross-doc referencing, Story 0.3) has no such
+   * existing instance to reuse and needs its own stable-id lookup, which is
+   * exactly what the `else` branch below does.
    */
   private _getUnfilteredTargetStore(refDoc: Store['doc']): Store {
     if (refDoc === this.std.store.doc) {
@@ -263,6 +266,12 @@ export class DatabaseRefBlockComponent extends BlockComponent<DatabaseRefBlockMo
       this._replacePreviewStore(null, null, null);
       return;
     }
+    // Cross-doc: the target doc's content streams in asynchronously from
+    // local storage (or a remote peer) — `load()` kicks that off. Without
+    // this, a doc the user hasn't opened this session never starts loading
+    // at all, so `_subscribeTargetDoc`'s `update` listener below would have
+    // nothing to ever fire on.
+    if (!refDoc.ready) refDoc.load();
 
     const targetStore = this._getUnfilteredTargetStore(refDoc);
     const targetModel = targetStore.getBlock(refBlockId)?.model;
@@ -502,6 +511,7 @@ export class DatabaseRefBlockComponent extends BlockComponent<DatabaseRefBlockMo
 
     const refDoc = this.std.workspace.getDoc(this._targetDocId);
     if (!refDoc) return;
+    if (!refDoc.ready) refDoc.load();
 
     const targetStore = this._getUnfilteredTargetStore(refDoc);
 

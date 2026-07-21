@@ -412,6 +412,8 @@
   "com.affine.cmdk.affine.switch-state.on": "ON",
   "com.affine.cmdk.affine.translucent-ui-on-the-sidebar.to": "Change translucent UI on the sidebar to",
   "com.affine.cmdk.affine.whats-new": "What's new",
+  "com.affine.cmdk.cross-doc-reference.placeholder": "Search frames and tables in other docs...",
+  "com.affine.cmdk.cross-doc-reference.title": "Reference a frame or table",
   "com.affine.cmdk.docs.placeholder": "Search docs or paste link...",
   "com.affine.cmdk.insert-links": "Insert links",
   "com.affine.cmdk.no-results": "No results found",

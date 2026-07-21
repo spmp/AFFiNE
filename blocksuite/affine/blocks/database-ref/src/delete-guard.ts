@@ -3,6 +3,7 @@ import type {
   DatabaseRefBlockModel,
   NoteBlockModel,
 } from '@blocksuite/affine-model';
+import { ensureDocLoaded } from '@blocksuite/affine-shared/utils';
 import { Store } from '@blocksuite/store';
 
 import { forgetLastActiveRef } from './database-ref-block';
@@ -49,7 +50,8 @@ export function installDatabaseRefCascadeDelete() {
       return;
     }
 
-    const refBlockId = (targetModel as DatabaseRefBlockModel).props.refBlockId;
+    const { refBlockId, refDocId } = (targetModel as DatabaseRefBlockModel)
+      .props;
     // Deletions can be issued through a filtered/queried preview store that
     // can't see references living elsewhere in the doc — resolve siblings
     // through the full, unfiltered store instead. `{ id: this.doc.id }`
@@ -59,23 +61,63 @@ export function installDatabaseRefCascadeDelete() {
     // per call adds up exactly like the churn `database-ref-block.ts` had
     // to fix in its own polling path.
     const fullStore = this.doc.getStore({ id: this.doc.id });
-    const hasOtherRefs = fullStore
-      .getBlocksByFlavour('affine:database-ref')
-      .some(
-        b =>
-          b.model.id !== targetModel.id &&
-          (b.model as DatabaseRefBlockModel).props.refBlockId === refBlockId
-      );
+
+    // The canonical table doesn't necessarily live in *this* doc — a
+    // cross-doc reference (this story) points `refDocId` at wherever it
+    // actually lives, defaulting to this doc for the same-doc case (0.2).
+    // And other references to the same table can themselves be scattered
+    // across any number of *other* docs too, not just this one or the
+    // canonical's own — so "does any other reference exist" has to check
+    // every doc currently loaded in the workspace, not just this one.
+    // Mirrors the same brute-force-over-loaded-docs pattern this story
+    // already added to `surface-ref`'s own cross-doc resolver, for the
+    // same reason: there is no per-block cross-doc index to query instead.
+    //
+    // `deleteBlock` is a synchronous API, so this can only kick off loading
+    // (`ensureDocLoaded`) for any doc that isn't ready yet — it can't block
+    // waiting for one to actually finish streaming in. A doc that's
+    // genuinely cold (never opened this session) is therefore still
+    // invisible to this scan for *this* call: a sibling reference living
+    // there won't be found (false-negative `hasOtherRefs`), and if it's the
+    // canonical's own doc, cleanup is silently skipped rather than run
+    // against incomplete data. Kicking off the load at least means a
+    // second delete (or any other operation that touches that doc) will
+    // see accurate state once it's had time to arrive.
+    const canonicalDocId = refDocId || this.doc.id;
+    const canonicalDoc = this.doc.workspace.getDoc(canonicalDocId);
+    if (canonicalDoc) ensureDocLoaded(canonicalDoc);
+
+    const hasOtherRefs = Array.from(this.doc.workspace.docs.values()).some(
+      otherDoc => {
+        if (otherDoc.id !== this.doc.id) ensureDocLoaded(otherDoc);
+        const otherStore =
+          otherDoc.id === this.doc.id
+            ? fullStore
+            : otherDoc.getStore({ id: otherDoc.id });
+        return otherStore
+          .getBlocksByFlavour('affine:database-ref')
+          .some(
+            b =>
+              b.model.id !== targetModel.id &&
+              (b.model as DatabaseRefBlockModel).props.refBlockId === refBlockId
+          );
+      }
+    );
 
     original.call(this, model, options);
 
     if (hasOtherRefs) return;
+    if (!canonicalDoc) return;
 
-    const canonical = fullStore.getBlock(refBlockId)?.model;
+    const canonicalStore =
+      canonicalDoc.id === this.doc.id
+        ? fullStore
+        : canonicalDoc.getStore({ id: canonicalDoc.id });
+    const canonical = canonicalStore.getBlock(refBlockId)?.model;
     if (!canonical) return;
 
-    const hiddenNote = fullStore.getParent(canonical);
-    original.call(fullStore, canonical, undefined);
+    const hiddenNote = canonicalStore.getParent(canonical);
+    original.call(canonicalStore, canonical, undefined);
     forgetLastActiveRef(refBlockId);
 
     if (
@@ -83,10 +125,10 @@ export function installDatabaseRefCascadeDelete() {
       hiddenNote.flavour === 'affine:note' &&
       (hiddenNote as NoteBlockModel).props.displayMode ===
         NoteDisplayMode.EdgelessOnly &&
-      fullStore.getBlock(hiddenNote.id) &&
+      canonicalStore.getBlock(hiddenNote.id) &&
       hiddenNote.children.length === 0
     ) {
-      original.call(fullStore, hiddenNote, undefined);
+      original.call(canonicalStore, hiddenNote, undefined);
     }
   };
 }

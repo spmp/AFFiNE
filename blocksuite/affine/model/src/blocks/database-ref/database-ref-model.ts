@@ -13,11 +13,11 @@ import {
  * only ever lives as flow content inside an `affine:note`. So this is a
  * distinct block type rather than a `refFlavour` variant of `surface-ref`.
  *
- * `refDocId` is optional and defaults to the current doc when absent — this
- * block currently only supports same-doc references (multiple views of one
+ * `refDocId` is optional and defaults to the current doc when absent —
+ * Story 0.2 only ever exercised the same-doc case (multiple views of one
  * table on the same page, mirroring how a Frame can appear more than once
- * via `surface-ref`); cross-doc addressing is a planned follow-on once the
- * same-doc case is solid.
+ * via `surface-ref`); Story 0.3 wires up genuine cross-doc resolution when
+ * a real foreign `refDocId` is set.
  */
 export type DatabaseRefProps = {
   refBlockId: string;

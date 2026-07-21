@@ -34,11 +34,12 @@ export function useBlockSuiteMetaHelper() {
     [docRecordList]
   );
 
-  const permanentlyDeletePage = useCallback(
-    (pageId: string) => {
+  const permanentlyDeletePage = useAsyncCallback(
+    async (pageId: string) => {
+      await docsService.rescueReferencedDatabasesBeforeDelete(pageId);
       workspace.docCollection.removeDoc(pageId);
     },
-    [workspace]
+    [docsService, workspace]
   );
 
   const duplicate = useAsyncCallback(
