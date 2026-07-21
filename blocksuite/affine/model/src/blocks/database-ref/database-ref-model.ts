@@ -23,6 +23,11 @@ export type DatabaseRefProps = {
   refBlockId: string;
   refDocId?: string;
   caption: string;
+  // This reference's own last-displayed view id, independent of the
+  // canonical table's `currentViewId` (and of every other reference to the
+  // same table) — so two references to one table can each remember a
+  // different view across reload, exactly as they already do live.
+  currentViewId?: string;
 };
 
 export const DatabaseRefBlockSchema = defineBlockSchema({
@@ -31,6 +36,7 @@ export const DatabaseRefBlockSchema = defineBlockSchema({
     refBlockId: '',
     refDocId: undefined,
     caption: '',
+    currentViewId: undefined,
   }),
   metadata: {
     version: 1,
