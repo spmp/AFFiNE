@@ -4,6 +4,7 @@ import { CalloutStoreExtension } from '@blocksuite/affine-block-callout/store';
 import { CodeStoreExtension } from '@blocksuite/affine-block-code/store';
 import { DataViewStoreExtension } from '@blocksuite/affine-block-data-view/store';
 import { DatabaseStoreExtension } from '@blocksuite/affine-block-database/store';
+import { DatabaseRefStoreExtension } from '@blocksuite/affine-block-database-ref/store';
 import { DividerStoreExtension } from '@blocksuite/affine-block-divider/store';
 import { EdgelessTextStoreExtension } from '@blocksuite/affine-block-edgeless-text/store';
 import { EmbedStoreExtension } from '@blocksuite/affine-block-embed/store';
@@ -41,6 +42,7 @@ export function getInternalStoreExtensions() {
     CodeStoreExtension,
     DataViewStoreExtension,
     DatabaseStoreExtension,
+    DatabaseRefStoreExtension,
     DividerStoreExtension,
     EdgelessTextStoreExtension,
     EmbedStoreExtension,

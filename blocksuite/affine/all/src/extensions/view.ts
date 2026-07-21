@@ -4,6 +4,7 @@ import { CalloutViewExtension } from '@blocksuite/affine-block-callout/view';
 import { CodeBlockViewExtension } from '@blocksuite/affine-block-code/view';
 import { DataViewViewExtension } from '@blocksuite/affine-block-data-view/view';
 import { DatabaseViewExtension } from '@blocksuite/affine-block-database/view';
+import { DatabaseRefViewExtension } from '@blocksuite/affine-block-database-ref/view';
 import { DividerViewExtension } from '@blocksuite/affine-block-divider/view';
 import { EdgelessTextViewExtension } from '@blocksuite/affine-block-edgeless-text/view';
 import { EmbedViewExtension } from '@blocksuite/affine-block-embed/view';
@@ -81,6 +82,7 @@ export function getInternalViewExtensions() {
     CodeBlockViewExtension,
     DataViewViewExtension,
     DatabaseViewExtension,
+    DatabaseRefViewExtension,
     DividerViewExtension,
     EdgelessTextViewExtension,
     EmbedViewExtension,
