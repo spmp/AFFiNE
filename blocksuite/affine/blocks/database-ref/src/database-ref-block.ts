@@ -461,12 +461,33 @@ export class DatabaseRefBlockComponent extends BlockComponent<DatabaseRefBlockMo
       el.setAttribute(RANGE_QUERY_EXCLUDE_ATTR, 'true')
     );
     this._rangeExcludeObserver = new MutationObserver(mutations => {
+      let sawAddedNode = false;
       for (const mutation of mutations) {
         mutation.addedNodes.forEach(node => {
           if (node instanceof Element) {
+            sawAddedNode = true;
             this._excludeSubtreeFromOuterRangeQueries(node);
           }
         });
+      }
+      // The nested `<editor-host>` is inserted synchronously as part of
+      // this wrapper's own render, but it renders its *own* content (down
+      // to the nested `affine-database`) on its own, later Lit update
+      // cycle — so `updated()` (which only fires once, right after this
+      // wrapper's own render/connect settle, since nothing else on this
+      // wrapper's own reactive state changes afterward) can run *before*
+      // that child content exists yet, find nothing via
+      // `this.querySelector('affine-database')`, and never get a second
+      // chance. This observer already fires exactly when that child
+      // content actually lands in the DOM (that's what it exists for), so
+      // piggyback on it as the reliable trigger for both syncs, rather
+      // than depending solely on `updated()`'s single opportunistic pass
+      // (confirmed live: `_syncCurrentView` reported "no nested database
+      // found" on every single `updated()` call, forever, once the child
+      // failed to be ready on the first attempt).
+      if (sawAddedNode) {
+        this._syncFullWidthBleed();
+        this._syncCurrentView();
       }
     });
     this._rangeExcludeObserver.observe(this, {
@@ -627,8 +648,130 @@ export class DatabaseRefBlockComponent extends BlockComponent<DatabaseRefBlockMo
     );
   }
 
+  /**
+   * `database-block.ts` already persists a database's own last-displayed
+   * view onto its model's `currentViewId`, and reads it back on mount — but
+   * every reference to a canonical table shares that ONE canonical model
+   * (see the module comment on `previewStoreRefCounts`), so if references
+   * only relied on that, they'd all fight over one shared "current view"
+   * instead of each independently remembering its own (which already works
+   * live today, via each nested instance's own in-memory
+   * `ViewManagerBase._currentViewId$`; only persistence across reload was
+   * missing). This wrapper's own model — one per reference — is the
+   * natural place to persist each reference's override: on mount, if this
+   * reference has its own saved `currentViewId`, force the nested
+   * `ViewManagerBase` onto it (overriding whatever the canonical model's own
+   * value set as a fallback default); from then on, mirror every further
+   * view change on the nested instance back into this reference's own prop.
+   */
+  private _wiredViewNestedDatabase:
+    | (HTMLElement & {
+        // `database-block.ts`'s own `dataSource` field is `lazy(() => ...)`,
+        // which (per `data-view/src/core/utils/lazy.ts`) returns a plain
+        // `{ value: T }` getter object, NOT a callable — an earlier version of
+        // this fix called it as `nestedDatabase.dataSource()`, which threw
+        // "dataSource is not a function" on every render (confirmed live).
+        dataSource: {
+          value: {
+            viewManager: {
+              viewGet: (id: string) => unknown;
+              setCurrentView: (id: string) => void;
+              currentViewId$: {
+                value: string | undefined;
+                subscribe: (fn: (id: string | undefined) => void) => () => void;
+              };
+            };
+          };
+        };
+      })
+    | null = null;
+
+  private _viewSyncCleanup: (() => void) | null = null;
+
+  private _syncCurrentView() {
+    const nestedDatabase = this.querySelector('affine-database') as
+      | (HTMLElement & {
+          dataSource: {
+            value: {
+              viewManager: {
+                viewGet: (id: string) => unknown;
+                setCurrentView: (id: string) => void;
+                currentViewId$: {
+                  value: string | undefined;
+                  subscribe: (
+                    fn: (id: string | undefined) => void
+                  ) => () => void;
+                };
+              };
+            };
+          };
+        })
+      | null;
+    if (!nestedDatabase) return;
+
+    let viewManager: (typeof nestedDatabase)['dataSource']['value']['viewManager'];
+    try {
+      viewManager = nestedDatabase.dataSource.value.viewManager;
+    } catch (e) {
+      // Constructing `DatabaseBlockDataSource` shouldn't throw in practice,
+      // but this runs from a `MutationObserver` callback — an uncaught
+      // exception here would silently break that observer for every future
+      // mutation, not just this one call.
+      console.error('[database-ref] failed to read nested view manager', e);
+      return;
+    }
+
+    if (nestedDatabase !== this._wiredViewNestedDatabase) {
+      this._viewSyncCleanup?.();
+      this._wiredViewNestedDatabase = nestedDatabase;
+
+      // Apply this reference's own saved view *before* subscribing.
+      // `signal.subscribe(fn)` (preact-signals) fires `fn` immediately and
+      // synchronously with whatever is currently live, the moment you
+      // subscribe — not only on future changes. Subscribing first (as an
+      // earlier version of this did) meant that immediate fire wrote
+      // whatever the pre-override default happened to be straight back
+      // into this reference's own model, clobbering the very value we
+      // were about to apply, before the override line below ever ran.
+      // Confirmed live: two references to the same table always
+      // converged onto whichever view id happened to be the shared
+      // default, silently discarding the other's distinct saved choice —
+      // exactly what this ordering produces.
+      const ownViewId = this.model.props.currentViewId;
+      if (ownViewId && viewManager.viewGet(ownViewId)) {
+        viewManager.setCurrentView(ownViewId);
+      }
+
+      this._viewSyncCleanup = viewManager.currentViewId$.subscribe(id => {
+        if (id) this.model.props.currentViewId = id;
+      });
+    }
+
+    // Re-checked on *every* call, not just the first time this
+    // nestedDatabase is wired: this runs from both `updated()` and the
+    // range-exclusion `MutationObserver` (see `_observeForRangeQueryExclusion`)
+    // specifically because a one-shot check tied only to `updated()` can
+    // race the nested `<editor-host>`'s own, later, independent Lit update
+    // cycle (confirmed live: `updated()` fires once right after this
+    // wrapper's own render settles, before the nested `affine-database`
+    // exists yet, and never fires again since nothing else on this
+    // wrapper's own reactive state changes afterward — so a check tied
+    // only to it can permanently miss the child). Safe to redo
+    // unconditionally: `setCurrentView` with an already-current id is a
+    // no-op.
+    const ownViewId = this.model.props.currentViewId;
+    if (
+      ownViewId &&
+      viewManager.currentViewId$.value !== ownViewId &&
+      viewManager.viewGet(ownViewId)
+    ) {
+      viewManager.setCurrentView(ownViewId);
+    }
+  }
+
   override updated() {
     this._syncFullWidthBleed();
+    this._syncCurrentView();
   }
 
   override connectedCallback() {
@@ -653,6 +796,12 @@ export class DatabaseRefBlockComponent extends BlockComponent<DatabaseRefBlockMo
           this._maybeRefreshPreview();
           this._subscribeTargetDoc();
           this.requestUpdate();
+        } else if (key === 'currentViewId') {
+          // A late-arriving Yjs sync of this reference's own saved view
+          // (e.g. still hydrating right after a reload) needs another
+          // `updated()` pass so `_syncCurrentView` gets a chance to apply
+          // it — it isn't watched by any other trigger here.
+          this.requestUpdate();
         }
       })
     );
@@ -662,6 +811,7 @@ export class DatabaseRefBlockComponent extends BlockComponent<DatabaseRefBlockMo
       if (this._refreshDebounce) clearTimeout(this._refreshDebounce);
       this._rangeExcludeObserver?.disconnect();
       this._fullWidthBleedCleanup?.();
+      this._viewSyncCleanup?.();
       this._replacePreviewStore(null, null, null);
     });
   }
