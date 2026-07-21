@@ -43,6 +43,7 @@ export interface BlockDocumentInfo {
   parentBlockId?: string;
   additional?: {
     databaseName?: string;
+    frameTitle?: string;
     displayMode?: string;
     noteBlockId?: string;
   };
@@ -838,6 +839,22 @@ export async function readAllBlocksFromDoc({
               { refDocId: [], ref: [] }
             )
           : {}),
+      });
+    } else if (flavour === 'affine:frame') {
+      const frameTitle = block.get('prop:title');
+      const frameTitleText =
+        frameTitle instanceof YText ? frameTitle.toString() : undefined;
+      blockDocuments.push({
+        ...commonBlockProps,
+        // Frame titles live under `additional` (not indexed) like a
+        // database's title does — mirror how `affine:database` also folds
+        // its title into `content` so the picker's cross-doc search (which
+        // only full-text-matches against `content`) can find frames by name.
+        content: frameTitleText ?? '',
+        additional: {
+          ...commonBlockProps.additional,
+          frameTitle: frameTitleText,
+        },
       });
     } else if (flavour === 'affine:latex') {
       blockDocuments.push({

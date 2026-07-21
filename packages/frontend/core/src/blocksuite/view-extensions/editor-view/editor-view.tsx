@@ -16,6 +16,7 @@ import type { TemplateResult } from 'lit';
 import { z } from 'zod';
 
 import { patchForAudioEmbedView } from './audio/audio-view';
+import { patchCrossDocReferenceService } from './cross-doc-reference-service';
 import { buildDocDisplayMetaExtension } from './display-meta';
 import { patchDocModeService } from './doc-mode-service';
 import { patchDocUrlExtensions } from './doc-url';
@@ -110,7 +111,8 @@ export class AffineEditorViewExtension extends ViewExtensionProvider<AffineEdito
         patchForAudioEmbedView(reactToLit),
       ])
       .register(patchDocUrlExtensions(framework))
-      .register(patchQuickSearchService(framework));
+      .register(patchQuickSearchService(framework))
+      .register(patchCrossDocReferenceService(framework));
 
     if (scope === 'doc') {
       const docService = framework.get(DocService);

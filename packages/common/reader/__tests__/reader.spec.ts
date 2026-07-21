@@ -242,3 +242,44 @@ test('should index references from database rich-text cells', async () => {
     JSON.stringify({ docId: 'target-doc', mode: 'page' }),
   ]);
 });
+
+test('should index affine:frame blocks with their title', async () => {
+  const doc = new YDoc({
+    guid: 'frame-doc',
+  });
+  const blocks = doc.getMap('blocks');
+
+  const pageTitle = new YText();
+  pageTitle.insert(0, 'Page');
+  const page = new YMap();
+  page.set('sys:id', 'page');
+  page.set('sys:flavour', 'affine:page');
+  page.set('sys:children', YArray.from(['surface']));
+  page.set('prop:title', pageTitle);
+  blocks.set('page', page);
+
+  const surface = new YMap();
+  surface.set('sys:id', 'surface');
+  surface.set('sys:flavour', 'affine:surface');
+  surface.set('sys:children', YArray.from(['frame']));
+  blocks.set('surface', surface);
+
+  const frameTitle = new YText();
+  frameTitle.insert(0, 'My Frame');
+  const frame = new YMap();
+  frame.set('sys:id', 'frame');
+  frame.set('sys:flavour', 'affine:frame');
+  frame.set('sys:children', new YArray());
+  frame.set('prop:title', frameTitle);
+  blocks.set('frame', frame);
+
+  const result = await readAllBlocksFromDoc({
+    ydoc: doc,
+    spaceId: 'test-space',
+  });
+
+  const frameBlock = result?.blocks.find(block => block.blockId === 'frame');
+  expect(frameBlock?.flavour).toEqual('affine:frame');
+  expect(frameBlock?.content).toEqual('My Frame');
+  expect(frameBlock?.additional?.frameTitle).toEqual('My Frame');
+});

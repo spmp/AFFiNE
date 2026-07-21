@@ -7,7 +7,7 @@ use y_octo::merge_updates_v1;
 
 // Increment this whenever there is a breaking change in the index format or how
 // updates are applied
-const NBSTORE_INDEXER_VERSION: u32 = 1;
+const NBSTORE_INDEXER_VERSION: u32 = 2;
 
 use super::{
   error::{Error, Result},

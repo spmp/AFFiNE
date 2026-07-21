@@ -1,11 +1,15 @@
+import { insertSurfaceRefBlockCommand } from '@blocksuite/affine-block-surface-ref';
 import type { DatabaseBlockModel } from '@blocksuite/affine-model';
 import { DatabaseBlockSchema } from '@blocksuite/affine-model';
+import { toast } from '@blocksuite/affine-components/toast';
+import { CrossDocReferenceProvider } from '@blocksuite/affine-shared/services';
 import {
   type SlashMenuActionItem,
   type SlashMenuConfig,
+  type SlashMenuItem,
   SlashMenuConfigExtension,
 } from '@blocksuite/affine-widget-slash-menu';
-import { DatabaseTableViewIcon } from '@blocksuite/icons/lit';
+import { DatabaseTableViewIcon, LinkIcon } from '@blocksuite/icons/lit';
 import { BlockSelection } from '@blocksuite/std';
 
 import { insertDatabaseRefBlockCommand } from '../commands';
@@ -18,7 +22,7 @@ import { insertDatabaseRefBlockCommand } from '../commands';
  * `insertDatabaseRefBlockCommand`'s promotion (see commands.ts) the first
  * time a second reference to it is created.
  */
-const databaseRefSlashMenuConfig: SlashMenuConfig = {
+export const databaseRefSlashMenuConfig: SlashMenuConfig = {
   items: ({ std, model }) => {
     let index = 0;
 
@@ -26,7 +30,7 @@ const databaseRefSlashMenuConfig: SlashMenuConfig = {
       DatabaseBlockSchema.model.flavour
     );
 
-    return databaseBlocks
+    const sameDocItems = databaseBlocks
       .filter(block => block.id !== model.id)
       .map<SlashMenuActionItem>(block => {
         const databaseModel = block.model as DatabaseBlockModel;
@@ -54,6 +58,67 @@ const databaseRefSlashMenuConfig: SlashMenuConfig = {
           },
         };
       });
+
+    // Single seam point for "reference a block from another doc," covering
+    // every cross-doc-referenceable flavour at once (currently Frame and
+    // Database). Deliberately NOT split into a per-flavour item — the
+    // picker itself already returns candidates of any supported flavour, so
+    // adding a new referenceable block type (0.4/0.5) only needs a new
+    // branch below, not a new slash-menu item for the user to discover.
+    const crossDocItem: SlashMenuItem = {
+      name: 'Reference',
+      description: 'Reference a frame or table from a different doc',
+      icon: LinkIcon(),
+      group: `5_Edgeless Element@${index++}`,
+      action: async () => {
+        const crossDocReference = std.getOptional(CrossDocReferenceProvider);
+        if (!crossDocReference) {
+          toast(std.host, 'Cross-doc referencing is not available.');
+          return;
+        }
+
+        const candidate = await crossDocReference.openCrossDocReferencePicker(
+          std.store.id
+        );
+        // A `null` candidate means the user cancelled the picker — not a
+        // failure, so no toast here.
+        if (!candidate) return;
+
+        let insertedBlockId: string | undefined;
+        if (candidate.flavour === 'affine:database') {
+          const [_, result] = std.command.exec(insertDatabaseRefBlockCommand, {
+            refBlockId: candidate.blockId,
+            refDocId: candidate.docId,
+            place: 'after',
+            removeEmptyLine: true,
+            selectedModels: [model],
+          });
+          insertedBlockId = result.insertedDatabaseRefBlockId;
+        } else if (candidate.flavour === 'affine:frame') {
+          const [_, result] = std.command.exec(insertSurfaceRefBlockCommand, {
+            reference: candidate.blockId,
+            refDocId: candidate.docId,
+            refFlavour: candidate.flavour,
+            place: 'after',
+            removeEmptyLine: true,
+            selectedModels: [model],
+          });
+          insertedBlockId = result.insertedSurfaceRefBlockId;
+        }
+        if (!insertedBlockId) {
+          toast(std.host, 'Could not insert that reference.');
+          return;
+        }
+
+        std.selection.set([
+          std.selection.create(BlockSelection, {
+            blockId: insertedBlockId,
+          }),
+        ]);
+      },
+    };
+
+    return [...sameDocItems, crossDocItem];
   },
 };
 

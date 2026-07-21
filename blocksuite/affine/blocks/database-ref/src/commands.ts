@@ -3,6 +3,11 @@ import type {
   DatabaseRefProps,
   NoteBlockModel,
 } from '@blocksuite/affine-model';
+import { toast } from '@blocksuite/affine-components/toast';
+import {
+  ensureDocLoaded,
+  waitForBlockInDoc,
+} from '@blocksuite/affine-shared/utils';
 import type { Command } from '@blocksuite/std';
 import type { BlockModel, Store } from '@blocksuite/store';
 
@@ -24,7 +29,18 @@ import type { BlockModel, Store } from '@blocksuite/store';
  * unrelated reasons," since the only invariant this cares about is "not
  * reachable by ordinary in-flow selection," not who put it there.
  */
-function ensurePromoted(store: Store, targetBlock: BlockModel): void {
+/**
+ * The "move into a hidden note" half of `ensurePromoted`, extracted so
+ * anything that just needs a canonical table already living somewhere
+ * hidden (without also leaving a same-doc reference behind at the old
+ * spot — e.g. simulating a table that's only ever cross-doc referenced)
+ * can reuse the exact same logic instead of hand-rolling it. Returns the
+ * hidden note's id, or `null` if already promoted / nothing to do.
+ */
+export function moveIntoHiddenNote(
+  store: Store,
+  targetBlock: BlockModel
+): string | null {
   const parent = store.getParent(targetBlock);
   if (
     parent &&
@@ -32,13 +48,11 @@ function ensurePromoted(store: Store, targetBlock: BlockModel): void {
     (parent as NoteBlockModel).props.displayMode ===
       NoteDisplayMode.EdgelessOnly
   ) {
-    return;
+    return null;
   }
 
-  const oldIndex = parent ? parent.children.indexOf(targetBlock) : -1;
-
   const root = store.root;
-  if (!root) return;
+  if (!root) return null;
 
   const hiddenNoteId = store.addBlock(
     'affine:note',
@@ -54,9 +68,18 @@ function ensurePromoted(store: Store, targetBlock: BlockModel): void {
     root.id
   );
   const hiddenNote = store.getModelById(hiddenNoteId);
-  if (!hiddenNote) return;
+  if (!hiddenNote) return null;
 
   store.moveBlocks([targetBlock], hiddenNote);
+  return hiddenNoteId;
+}
+
+export function ensurePromoted(store: Store, targetBlock: BlockModel): void {
+  const parent = store.getParent(targetBlock);
+  const oldIndex = parent ? parent.children.indexOf(targetBlock) : -1;
+
+  const hiddenNoteId = moveIntoHiddenNote(store, targetBlock);
+  if (!hiddenNoteId) return;
 
   if (parent && oldIndex !== -1) {
     store.addBlock(
@@ -74,12 +97,19 @@ export const insertDatabaseRefBlockCommand: Command<
     place: 'after' | 'before';
     removeEmptyLine?: boolean;
     selectedModels?: BlockModel[];
+    // Set for a cross-doc reference (Story 0.3): the target database
+    // already lives in its own doc, so no promotion/move is needed — that
+    // dance exists only to avoid two sources of truth for a *same-doc*
+    // second reference. Unset (the 0.2 same-page case) defaults to the
+    // current doc, exactly as before.
+    refDocId?: string;
   },
   {
     insertedDatabaseRefBlockId: string;
   }
 > = (ctx, next) => {
-  const { selectedModels, refBlockId, place, removeEmptyLine, std } = ctx;
+  const { selectedModels, refBlockId, place, removeEmptyLine, refDocId, std } =
+    ctx;
   if (!selectedModels?.length) return;
 
   const targetModel =
@@ -88,22 +118,46 @@ export const insertDatabaseRefBlockCommand: Command<
       : selectedModels[selectedModels.length - 1];
 
   const store = std.store;
-  const targetBlock = store.getBlock(refBlockId)?.model;
-  if (!targetBlock || targetBlock.flavour !== 'affine:database') {
-    console.error(`referenced database block not found ${refBlockId}`);
-    return;
+  const isCrossDoc = !!refDocId && refDocId !== store.id;
+
+  if (isCrossDoc) {
+    // Unlike the same-doc case, the target doc may not have finished
+    // loading its content locally yet (a doc the user hasn't opened this
+    // session can take a real amount of time to stream in) — mirrors
+    // `insertSurfaceRefBlockCommand`'s cross-doc branch, which likewise
+    // trusts the caller (the cross-doc picker already validated the
+    // candidate via the indexer) rather than requiring the target to be
+    // synchronously resolvable at insertion time. The block's own renderer
+    // (`database-ref-block.ts`) already retries once the target doc's
+    // content actually arrives, so refusing to insert here would only
+    // strand the user with nothing created at all.
+    const refDoc = std.workspace.getDoc(refDocId);
+    if (!refDoc) {
+      console.error(`referenced doc not found ${refDocId}`);
+      return;
+    }
+    ensureDocLoaded(refDoc);
+  } else {
+    const targetBlock = store.getBlock(refBlockId)?.model;
+    if (!targetBlock || targetBlock.flavour !== 'affine:database') {
+      console.error(`referenced database block not found ${refBlockId}`);
+      return;
+    }
   }
 
   store.captureSync();
 
-  ensurePromoted(store, targetBlock);
+  if (!isCrossDoc) {
+    const targetBlock = store.getBlock(refBlockId)?.model;
+    if (targetBlock) ensurePromoted(store, targetBlock);
+  }
 
   const databaseRefProps: Partial<DatabaseRefProps> & {
     flavour: 'affine:database-ref';
   } = {
     flavour: 'affine:database-ref',
-    refBlockId: targetBlock.id,
-    refDocId: store.id,
+    refBlockId,
+    refDocId: refDocId ?? store.id,
   };
 
   const result = store.addSiblingBlocks(targetModel, [databaseRefProps], place);
@@ -111,6 +165,29 @@ export const insertDatabaseRefBlockCommand: Command<
 
   if (removeEmptyLine && targetModel.text?.length === 0) {
     store.deleteBlock(targetModel);
+  }
+
+  if (isCrossDoc) {
+    // Trusts the picker's candidate rather than validating it exists
+    // synchronously (see the comment above) — verifies in the background
+    // instead, and surfaces a toast if a stale/deleted candidate never
+    // actually materializes, rather than failing silently forever.
+    const refDoc = std.workspace.getDoc(refDocId);
+    if (refDoc) {
+      waitForBlockInDoc(refDoc, refBlockId)
+        .then(found => {
+          const targetFlavour = found
+            ? refDoc.getStore({ id: refDoc.id }).getBlock(refBlockId)?.model
+                .flavour
+            : undefined;
+          if (!found || targetFlavour !== 'affine:database') {
+            toast(std.host, 'The referenced table could not be found.');
+          }
+        })
+        .catch(() => {
+          // best-effort verification only; insertion already succeeded
+        });
+    }
   }
 
   next({

@@ -1,10 +1,15 @@
-import { insertDatabaseRefBlockCommand } from '@blocksuite/affine/blocks/database-ref';
+import {
+  databaseRefSlashMenuConfig,
+  insertDatabaseRefBlockCommand,
+  moveIntoHiddenNote,
+} from '@blocksuite/affine/blocks/database-ref';
 import type { DatabaseRefBlockComponent } from '@blocksuite/affine/blocks/database-ref';
 import type {
   DatabaseRefBlockModel,
   NoteBlockModel,
 } from '@blocksuite/affine/model';
 import { NoteDisplayMode } from '@blocksuite/affine/model';
+import { CrossDocReferenceProvider } from '@blocksuite/affine/shared/services';
 import { Store, Text } from '@blocksuite/store';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
@@ -611,5 +616,426 @@ describe('database (Table) appearing more than once on a page', () => {
 
     const databaseElAfter = refEl.querySelector('affine-database');
     expect(databaseElAfter).toBe(databaseElBefore);
+  });
+});
+
+// Story 0.3: genuine cross-doc (inter-page) referencing for Database,
+// building on 0.2's same-page-only primitive. The creation UI (a cross-doc
+// picker) doesn't exist yet (that's a separate task in this same story) —
+// these tests construct the cross-doc `affine:database-ref` block directly
+// (`refBlockId` + a real foreign `refDocId`), exercising the resolver and
+// delete-cascade logic in isolation from the not-yet-built picker UI.
+describe('database (Table) referenced across pages (cross-doc)', () => {
+  beforeEach(async () => {
+    const cleanup = await setupEditor('page');
+    return cleanup;
+  });
+
+  // Mirrors `initCollection` in `utils/setup.ts` — a second, genuinely
+  // separate doc within the same `TestWorkspace`/`collection`, the same
+  // shape a real second page would have.
+  function createSecondDoc() {
+    const secondDoc = collection
+      .createDoc(`doc:second-${Math.random().toString(16).slice(2, 8)}`)
+      .getStore();
+    secondDoc.load(() => {
+      const rootId = secondDoc.addBlock('affine:page', { title: new Text() });
+      secondDoc.addBlock('affine:surface', {}, rootId);
+    });
+    return secondDoc;
+  }
+
+  // Promotes `databaseId` into a hidden `EdgelessOnly` note directly,
+  // mirroring what `ensurePromoted` (`commands.ts`) does for the same-doc
+  // case — done manually here since the cross-doc creation picker doesn't
+  // exist yet; this isolates the resolver/delete-cascade behavior under
+  // test from that separate, not-yet-built UI.
+  function promoteToHiddenNote(targetDoc: Store, databaseId: string) {
+    // Reuses the real `moveIntoHiddenNote` (the same logic `ensurePromoted`
+    // itself calls) rather than hand-rolling it — but not `ensurePromoted`
+    // directly, since that also leaves a same-doc `database-ref` behind at
+    // the old spot, which would give these deliberately cross-doc-only
+    // scenarios an extra same-doc reference they don't want.
+    const hiddenNoteId = moveIntoHiddenNote(
+      targetDoc,
+      targetDoc.getModelById(databaseId)!
+    );
+    return hiddenNoteId!;
+  }
+
+  test('a database in another doc renders live and shares data across the two pages', async () => {
+    const secondDoc = createSecondDoc();
+    const secondNoteId = addNote(secondDoc);
+    const databaseId = secondDoc.addBlock(
+      'affine:database',
+      { title: new Text() },
+      secondNoteId
+    );
+    promoteToHiddenNote(secondDoc, databaseId);
+
+    const noteId = addNote(doc);
+    const refId = doc.addBlock(
+      'affine:database-ref',
+      { refBlockId: databaseId, refDocId: secondDoc.id },
+      noteId
+    );
+    await wait();
+
+    const refEl = document.querySelector(
+      `affine-database-ref[data-block-id="${refId}"]`
+    ) as DatabaseRefBlockComponent;
+    expect(refEl?.querySelector('affine-database')).toBeTruthy();
+    expect(refEl?.querySelector('.affine-database-ref-error')).toBeFalsy();
+
+    const rowCountBefore = secondDoc.getModelById(databaseId)!.children.length;
+    secondDoc.addBlock('affine:paragraph', {}, databaseId);
+    await wait();
+
+    // A row added directly on the source doc is visible through the
+    // cross-doc reference's own live rendering — the whole point of this
+    // story over the accidental brute-force scan `surface-ref` already had.
+    expect(secondDoc.getModelById(databaseId)!.children.length).toBe(
+      rowCountBefore + 1
+    );
+  });
+
+  test('deleting the only cross-doc reference cascades to the canonical data and hidden note in the other doc', async () => {
+    const secondDoc = createSecondDoc();
+    const secondNoteId = addNote(secondDoc);
+    const databaseId = secondDoc.addBlock(
+      'affine:database',
+      { title: new Text() },
+      secondNoteId
+    );
+    const hiddenNoteId = promoteToHiddenNote(secondDoc, databaseId);
+
+    const noteId = addNote(doc);
+    const refId = doc.addBlock(
+      'affine:database-ref',
+      { refBlockId: databaseId, refDocId: secondDoc.id },
+      noteId
+    );
+    await wait();
+
+    doc.deleteBlock(doc.getBlock(refId)!.model);
+    await wait();
+
+    expect(secondDoc.getBlock(databaseId)).toBeFalsy();
+    expect(secondDoc.getBlock(hiddenNoteId)).toBeFalsy();
+  });
+
+  test('deleting one of several cross-doc references (scattered across different docs) leaves the canonical and the others intact', async () => {
+    const secondDoc = createSecondDoc();
+    const secondNoteId = addNote(secondDoc);
+    const databaseId = secondDoc.addBlock(
+      'affine:database',
+      { title: new Text() },
+      secondNoteId
+    );
+    promoteToHiddenNote(secondDoc, databaseId);
+
+    const thirdDoc = createSecondDoc();
+    const thirdNoteId = addNote(thirdDoc);
+    const refInThirdId = thirdDoc.addBlock(
+      'affine:database-ref',
+      { refBlockId: databaseId, refDocId: secondDoc.id },
+      thirdNoteId
+    );
+
+    const noteId = addNote(doc);
+    const refInMainId = doc.addBlock(
+      'affine:database-ref',
+      { refBlockId: databaseId, refDocId: secondDoc.id },
+      noteId
+    );
+    await wait();
+
+    // Delete the reference living in the *current* doc — the other
+    // reference lives in a completely different (third) doc, neither the
+    // current one nor the canonical's own. The old (same-doc-only)
+    // delete-guard logic only ever checked for siblings within the
+    // deleting doc, so it would have missed this one and wrongly cascaded.
+    doc.deleteBlock(doc.getBlock(refInMainId)!.model);
+    await wait();
+
+    expect(secondDoc.getBlock(databaseId)).toBeTruthy();
+    expect(thirdDoc.getBlock(refInThirdId)).toBeTruthy();
+  });
+
+  test('insertDatabaseRefBlockCommand creates a cross-doc reference without promoting the source', async () => {
+    const secondDoc = createSecondDoc();
+    const secondNoteId = addNote(secondDoc);
+    const databaseId = secondDoc.addBlock(
+      'affine:database',
+      { title: new Text() },
+      secondNoteId
+    );
+
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+
+    const [success, result] = editor.std.command.exec(
+      insertDatabaseRefBlockCommand,
+      {
+        refBlockId: databaseId,
+        refDocId: secondDoc.id,
+        place: 'after',
+        selectedModels: [doc.getModelById(paragraphId)!],
+      }
+    );
+    await wait();
+
+    expect(success).toBeTruthy();
+    expect(result.insertedDatabaseRefBlockId).toBeTruthy();
+
+    const refModel = doc.getBlock(result.insertedDatabaseRefBlockId!)!
+      .model as DatabaseRefBlockModel;
+    expect(refModel.props.refBlockId).toBe(databaseId);
+    expect(refModel.props.refDocId).toBe(secondDoc.id);
+
+    // Cross-doc: the source database already lives in its own doc, so
+    // inserting a reference to it must NOT promote/move it into a hidden
+    // note the way the same-doc second-reference case does.
+    const sourceParent = secondDoc.getParent(
+      secondDoc.getModelById(databaseId)!
+    );
+    expect(sourceParent?.id).toBe(secondNoteId);
+    expect((sourceParent as NoteBlockModel).props.displayMode).not.toBe(
+      NoteDisplayMode.EdgelessOnly
+    );
+  });
+
+  // AC7: a database that is BOTH same-page-promoted (Story 0.2, 2+ local
+  // references) AND cross-doc referenced (this story) is the first case in
+  // this codebase rendered through 3+ simultaneous `Store` views of one
+  // block at once. The 0.2 multi-instance fixes (sibling-`SyncController`
+  // registry, `ReactiveYMap`'s cache-hit listener gap) were only proven at
+  // exactly 2 — this re-verifies they hold at 3, and across a doc boundary,
+  // not just within one doc.
+  test('a database that is both same-page-promoted and cross-doc referenced stays in sync across all 3 simultaneous views', async () => {
+    const noteId = addNote(doc);
+    const databaseId = doc.addBlock(
+      'affine:database',
+      { title: new Text() },
+      noteId
+    );
+
+    // Local reference #1: triggers promotion into a hidden note.
+    const firstRefNoteId = addNote(doc);
+    const firstAnchor = doc.getBlock(firstRefNoteId)!.model.children[0]!;
+    const [, result1] = editor.std.command.exec(insertDatabaseRefBlockCommand, {
+      refBlockId: databaseId,
+      place: 'after',
+      selectedModels: [firstAnchor],
+    });
+    await wait();
+
+    // Local reference #2: same doc, second local view.
+    const secondRefNoteId = addNote(doc);
+    const secondAnchor = doc.getBlock(secondRefNoteId)!.model.children[0]!;
+    const [, result2] = editor.std.command.exec(insertDatabaseRefBlockCommand, {
+      refBlockId: databaseId,
+      place: 'after',
+      selectedModels: [secondAnchor],
+    });
+    await wait();
+
+    // Cross-doc reference #3: a third doc referencing the same canonical.
+    const thirdDoc = createSecondDoc();
+    const thirdNoteId = addNote(thirdDoc);
+    const refInThirdId = thirdDoc.addBlock(
+      'affine:database-ref',
+      { refBlockId: databaseId, refDocId: doc.id },
+      thirdNoteId
+    );
+    await wait();
+
+    expect(result1.insertedDatabaseRefBlockId).toBeTruthy();
+    expect(result2.insertedDatabaseRefBlockId).toBeTruthy();
+
+    const refEls = [
+      document.querySelector(
+        `affine-database-ref[data-block-id="${result1.insertedDatabaseRefBlockId}"]`
+      ),
+      document.querySelector(
+        `affine-database-ref[data-block-id="${result2.insertedDatabaseRefBlockId}"]`
+      ),
+    ] as DatabaseRefBlockComponent[];
+    expect(refEls[0]?.querySelector('affine-database')).toBeTruthy();
+    expect(refEls[1]?.querySelector('affine-database')).toBeTruthy();
+
+    const rowCountBefore = doc.getModelById(databaseId)!.children.length;
+
+    // Add a row from the third (cross-doc) view's own Store instance —
+    // exercising the sibling-registry fan-out across a doc boundary, not
+    // just within one doc's own set of `SyncController`s.
+    thirdDoc.workspace
+      .getDoc(doc.id)!
+      .getStore()
+      .addBlock('affine:paragraph', {}, databaseId);
+    await wait();
+
+    expect(doc.getModelById(databaseId)!.children.length).toBe(
+      rowCountBefore + 1
+    );
+    // Both local references must observe the same update — proving all 3
+    // simultaneous views (2 local + 1 cross-doc) stay in sync together,
+    // not just pairwise.
+    expect(refEls[0]!.querySelector('affine-database')).toBeTruthy();
+    expect(refEls[1]!.querySelector('affine-database')).toBeTruthy();
+    expect(thirdDoc.getBlock(refInThirdId)).toBeTruthy();
+  });
+
+  // AC6: `docId` + `blockId` addressing (never a stored path) means a
+  // cross-doc reference must survive both the source block moving within
+  // its doc and the source doc itself being renamed.
+  test('a cross-doc reference survives the source block moving and the source doc being renamed', async () => {
+    const secondDoc = createSecondDoc();
+    const firstNoteId = addNote(secondDoc);
+    const databaseId = secondDoc.addBlock(
+      'affine:database',
+      { title: new Text() },
+      firstNoteId
+    );
+
+    const noteId = addNote(doc);
+    const refId = doc.addBlock(
+      'affine:database-ref',
+      { refBlockId: databaseId, refDocId: secondDoc.id },
+      noteId
+    );
+    await wait();
+
+    // Move the source database to a different note within the same doc.
+    const secondNoteId = addNote(secondDoc);
+    secondDoc.moveBlocks(
+      [secondDoc.getModelById(databaseId)!],
+      secondDoc.getModelById(secondNoteId)!
+    );
+
+    // Structural ancestor-chain changes trigger an async preview-store
+    // rebuild (`_maybeRefreshPreview`) — give it the same margin the
+    // same-doc reparenting regression test above uses.
+    await wait(500);
+
+    // Rename the source doc itself.
+    const pageBlock = secondDoc.getBlock(secondDoc.root!.id)!.model as {
+      props: { title: Text };
+    } & typeof secondDoc.root;
+    secondDoc.transact(() => {
+      pageBlock.props.title.clear();
+      pageBlock.props.title.insert('Renamed Doc', 0);
+    });
+    await wait();
+
+    const refEl = document.querySelector(
+      `affine-database-ref[data-block-id="${refId}"]`
+    ) as DatabaseRefBlockComponent;
+    expect(refEl?.querySelector('affine-database')).toBeTruthy();
+    expect(refEl?.querySelector('.affine-database-ref-error')).toBeFalsy();
+    expect(secondDoc.getParent(databaseId)?.id).toBe(secondNoteId);
+  });
+
+  // Exercises the real user-facing entry point — the unified "Reference"
+  // slash-menu item's own `action` — rather than bypassing it by setting
+  // `refDocId`/`refBlockId` directly like every test above does. Stubs
+  // `CrossDocReferenceProvider` (the picker's own bridge) so this can run
+  // without the full React QuickSearch UI.
+  test('the unified "Reference" slash-menu action inserts a database-ref via a stubbed picker', async () => {
+    const secondDoc = createSecondDoc();
+    const secondNoteId = addNote(secondDoc);
+    const databaseId = secondDoc.addBlock(
+      'affine:database',
+      { title: new Text() },
+      secondNoteId
+    );
+
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+
+    // Proxies `getOptional` to return a stub `CrossDocReferenceProvider`
+    // without touching the real `editor.std` — the slash-menu item's
+    // `action` closure captures whichever `std` is passed to `items(...)`.
+    const stubStd = new Proxy(editor.std, {
+      get(target, prop, receiver) {
+        if (prop === 'getOptional') {
+          return (identifier: unknown) =>
+            identifier === CrossDocReferenceProvider
+              ? {
+                  openCrossDocReferencePicker: async () => ({
+                    docId: secondDoc.id,
+                    blockId: databaseId,
+                    flavour: 'affine:database' as const,
+                  }),
+                }
+              : undefined;
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    const items = databaseRefSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stubStd, model }) : items;
+    const referenceItem = resolvedItems.find(item => item.name === 'Reference');
+    expect(referenceItem).toBeTruthy();
+    expect(referenceItem && 'action' in referenceItem).toBeTruthy();
+
+    await (
+      referenceItem as unknown as { action: () => Promise<void> }
+    ).action();
+    await wait();
+
+    const refs = doc.getBlocksByFlavour('affine:database-ref');
+    expect(refs.length).toBe(1);
+    const refModel = refs[0]!.model as DatabaseRefBlockModel;
+    expect(refModel.props.refBlockId).toBe(databaseId);
+    expect(refModel.props.refDocId).toBe(secondDoc.id);
+  });
+
+  test('the unified "Reference" slash-menu action inserts a surface-ref via a stubbed picker', async () => {
+    const secondDoc = createSecondDoc();
+    const surfaceId = secondDoc.getBlocksByFlavour('affine:surface')[0]!.id;
+    const frameId = secondDoc.addBlock(
+      'affine:frame',
+      { xywh: '[0, 0, 800, 200]', title: new Text('Stubbed Frame') },
+      surfaceId
+    );
+
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+
+    const stubStd = new Proxy(editor.std, {
+      get(target, prop, receiver) {
+        if (prop === 'getOptional') {
+          return (identifier: unknown) =>
+            identifier === CrossDocReferenceProvider
+              ? {
+                  openCrossDocReferencePicker: async () => ({
+                    docId: secondDoc.id,
+                    blockId: frameId,
+                    flavour: 'affine:frame' as const,
+                  }),
+                }
+              : undefined;
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    const items = databaseRefSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stubStd, model }) : items;
+    const referenceItem = resolvedItems.find(item => item.name === 'Reference');
+
+    await (
+      referenceItem as unknown as { action: () => Promise<void> }
+    ).action();
+    await wait();
+
+    const refs = doc.getBlocksByFlavour('affine:surface-ref');
+    expect(refs.length).toBe(1);
   });
 });
