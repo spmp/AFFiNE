@@ -14,6 +14,7 @@ import { ImageViewExtension } from '@blocksuite/affine-block-image/view';
 import { LatexViewExtension } from '@blocksuite/affine-block-latex/view';
 import { ListViewExtension } from '@blocksuite/affine-block-list/view';
 import { NoteViewExtension } from '@blocksuite/affine-block-note/view';
+import { NoteRefViewExtension } from '@blocksuite/affine-block-note-ref/view';
 import { ParagraphViewExtension } from '@blocksuite/affine-block-paragraph/view';
 import { RootViewExtension } from '@blocksuite/affine-block-root/view';
 import { SurfaceViewExtension } from '@blocksuite/affine-block-surface/view';
@@ -92,6 +93,7 @@ export function getInternalViewExtensions() {
     LatexViewExtension,
     ListViewExtension,
     NoteViewExtension,
+    NoteRefViewExtension,
     ParagraphViewExtension,
     SurfaceRefViewExtension,
     TableViewExtension,

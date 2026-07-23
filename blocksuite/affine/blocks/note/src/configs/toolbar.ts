@@ -8,15 +8,18 @@ import {
   type ToolbarModuleConfig,
   ToolbarModuleExtension,
 } from '@blocksuite/affine-shared/services';
+import { stopPropagation } from '@blocksuite/affine-shared/utils';
 import { Bound } from '@blocksuite/global/gfx';
 import {
   AutoHeightIcon,
+  CaptionIcon,
   CustomizedHeightIcon,
   InsertIntoPageIcon,
   ScissorsIcon,
 } from '@blocksuite/icons/lit';
 import { BlockFlavourIdentifier } from '@blocksuite/std';
 import type { ExtensionType } from '@blocksuite/store';
+import { cssVarV2 } from '@toeverything/theme/v2';
 import { computed } from '@preact/signals-core';
 import { html } from 'lit';
 
@@ -115,6 +118,75 @@ const builtinSurfaceToolbarConfig = {
         };
       },
     },
+    {
+      // Added for Story 0.6 (reusable-note referencing): a Note otherwise
+      // has no identifying title/name property at all (unlike Frame or
+      // Database). This edits the same `props.name` a `note-ref` pointing
+      // at this note also edits from its own toolbar
+      // (`blocks/note-ref/src/configs/toolbar.ts`) — renaming from either
+      // place stays in sync, since both write the same underlying prop.
+      //
+      // Rendered via `content()` + `<editor-menu-button>`, not an
+      // imperative `createPopup(popupTargetFromElement(blockElement), ...)`
+      // call — an earlier version did exactly that, anchoring the popup to
+      // the whole `affine-edgeless-note` block element. Floating-ui's
+      // `computePosition` had no sensible way to place a small popup
+      // relative to that anchor and put it far off-screen (confirmed live:
+      // the input rendered at `y: -1131`) — invisible, but still real and
+      // connected, so focusing it scrolled the page toward its position,
+      // which is what looked like "clicking rename just jumps to the top
+      // of the page and opens nothing". `editor-menu-button` sidesteps
+      // this entirely by anchoring its popper to its own trigger button
+      // (the icon actually clicked), the same mechanism every other
+      // working toolbar dropdown in this codebase already relies on.
+      id: 'c.rename',
+      when(ctx) {
+        return ctx.getSurfaceModelsByType(NoteBlockModel).length === 1;
+      },
+      run() {
+        // Handled by content() below.
+      },
+      content(ctx) {
+        const models = ctx.getSurfaceModelsByType(NoteBlockModel);
+        const model = models[0];
+        if (!model) return null;
+
+        const commit = (value: string) => {
+          ctx.store.updateBlock(model, { name: value || undefined });
+        };
+
+        return html`
+          <editor-menu-button
+            .contentPadding=${'8px'}
+            .button=${html`
+              <editor-icon-button
+                aria-label="rename"
+                .tooltip=${'Name this note'}
+              >
+                ${CaptionIcon()}
+              </editor-icon-button>
+            `}
+          >
+            <input
+              style="padding: 8px 12px; border: none; outline: none; width: 220px; font: inherit; background: ${cssVarV2
+                .layer.background.overlayPanel};"
+              .value=${model.props.name ?? ''}
+              placeholder="Name this note…"
+              @keydown=${(e: KeyboardEvent) => {
+                if (e.key === 'Enter') {
+                  commit((e.target as HTMLInputElement).value);
+                  (e.target as HTMLInputElement).blur();
+                }
+              }}
+              @blur=${(e: FocusEvent) =>
+                commit((e.target as HTMLInputElement).value)}
+              @click=${stopPropagation}
+              @pointerdown=${stopPropagation}
+            />
+          </editor-menu-button>
+        `;
+      },
+    } satisfies ToolbarAction,
     {
       id: 'd.style',
       when(ctx) {

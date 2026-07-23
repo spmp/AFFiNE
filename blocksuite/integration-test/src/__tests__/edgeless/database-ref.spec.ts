@@ -91,6 +91,35 @@ describe('database (Table) appearing more than once on a page', () => {
     ).toBe(true);
   });
 
+  test('the hidden host note inside a database-ref preview never shows the page-mode border/background', async () => {
+    // Regression: `affine-note` (the page-mode note component) defaults to
+    // showing a border for any non-primary note — but `database-ref`'s
+    // nested `'preview-page'` scope renders that same `affine-note`
+    // component for the promoted database's hidden `EdgelessOnly` host
+    // note (its ancestor-chain), which is never genuinely "in the page".
+    // Without excluding `EdgelessOnly` notes from that default, the
+    // border/padding bled straight into every referenced table.
+    const { databaseId } = createOrdinaryDatabase();
+    await wait();
+    const secondNoteId = addNote(doc);
+    const secondModel = doc.getBlock(secondNoteId)!.model.children[0]!;
+
+    const [_, result] = editor.std.command.exec(insertDatabaseRefBlockCommand, {
+      refBlockId: databaseId,
+      place: 'after',
+      selectedModels: [secondModel],
+    });
+    await wait();
+
+    const refEl = document.querySelector(
+      `affine-database-ref[data-block-id="${result.insertedDatabaseRefBlockId}"]`
+    ) as DatabaseRefBlockComponent;
+    const hiddenNoteContainer = refEl.querySelector(
+      '.affine-note-block-container'
+    );
+    expect(hiddenNoteContainer?.getAttribute('data-page-border')).toBe('false');
+  });
+
   test('both reference instances render the same live data', async () => {
     const { databaseId } = createOrdinaryDatabase();
     await wait();

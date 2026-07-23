@@ -3,6 +3,7 @@ import { Unreachable } from '@affine/env/constant';
 import type {
   DatabaseRefBlockModel,
   NoteBlockModel,
+  NoteRefBlockModel,
 } from '@blocksuite/affine/model';
 import { NoteDisplayMode } from '@blocksuite/affine/model';
 import { replaceIdMiddleware } from '@blocksuite/affine/shared/adapters';
@@ -489,6 +490,132 @@ export class DocsService extends Service {
           'Failed to rescue promoted database before permanent delete',
           { docId, databaseId: databaseModel.id, error: e }
         );
+      }
+    }
+  }
+
+  /**
+   * Before a doc is *permanently* deleted, rescue any `affine:note` it
+   * hosts that's still referenced by a live `affine:note-ref` block in some
+   * *other*, surviving doc (Story 0.6).
+   *
+   * Unlike `rescueReferencedDatabasesBeforeDelete`, there is no
+   * hidden-note-vs-bare-block branch to consider: `affine:note`'s own
+   * schema already permits `parent: ['@root']`, so the canonical Note is
+   * always independently valid the moment it's moved — it never needed a
+   * dedicated host note to begin with (see `note-ref-model.ts`'s own
+   * doc comment). The whole canonical Note block is simply relocated
+   * directly into the destination doc's root.
+   *
+   * The referenced doc's own primary/page note (`isPageBlock()`) is
+   * excluded — the slash-menu picker never offers it as a reference target
+   * in the first place (see `noteRefSlashMenuConfig`), so it should never
+   * have a live `note-ref` pointing at it in practice, but the guard is kept
+   * here too since relocating a doc's actual page content on delete would
+   * be a much larger behavior change than rescuing a purpose-made reusable
+   * note.
+   */
+  async rescueReferencedNotesBeforeDelete(docId: string): Promise<void> {
+    const collection = this.store.getBlocksuiteCollection();
+
+    const sourceDoc = collection.getDoc(docId);
+    if (!sourceDoc) return;
+    await waitForDocSettled(sourceDoc);
+
+    const sourceBsDoc = this.store.getBlockSuiteDoc(docId);
+    if (!sourceBsDoc) return;
+
+    const allNotes = sourceBsDoc
+      .getBlocksByFlavour('affine:note')
+      .map(b => b.model as NoteBlockModel)
+      .filter(note => !note.isPageBlock());
+
+    if (allNotes.length === 0) return;
+
+    await Promise.all(
+      Array.from(collection.docs.values())
+        .filter(otherDoc => otherDoc.id !== docId)
+        .map(otherDoc => waitForDocSettled(otherDoc))
+    );
+
+    for (const noteModel of allNotes) {
+      let destinationDocId: string | null = null;
+      for (const [otherDocId, otherDoc] of collection.docs) {
+        if (otherDocId === docId) continue;
+        const otherStore = otherDoc.getStore({ id: otherDocId });
+        const hasRef = otherStore
+          .getBlocksByFlavour('affine:note-ref')
+          .some(
+            b =>
+              (b.model as NoteRefBlockModel).props.refBlockId === noteModel.id
+          );
+        if (hasRef) {
+          destinationDocId = otherDocId;
+          break;
+        }
+      }
+      if (!destinationDocId) continue;
+
+      const destinationBsDoc = collection
+        .getDoc(destinationDocId)
+        ?.getStore({ id: destinationDocId });
+      if (!destinationBsDoc) continue;
+
+      try {
+        const transformer = new Transformer({
+          schema: getAFFiNEWorkspaceSchema(),
+          blobCRUD: collection.blobSync,
+          docCRUD: {
+            create: (id: string) => {
+              this.createDoc({ id });
+              const store = collection.getDoc(id)?.getStore({ id });
+              if (!store) {
+                throw new Error('Failed to create doc');
+              }
+              return store;
+            },
+            get: (id: string) =>
+              collection.getDoc(id)?.getStore({ id }) ?? null,
+            delete: (id: string) => collection.removeDoc(id),
+          },
+          // Deliberately no `replaceIdMiddleware` — every existing
+          // `note-ref`'s `refBlockId` must keep resolving after the move.
+          middlewares: [],
+        });
+
+        const slice = Slice.fromModels(sourceBsDoc, [noteModel]);
+        const snapshot = transformer.sliceToSnapshot(slice);
+        if (!snapshot) {
+          throw new Error('Failed to snapshot canonical note for rescue');
+        }
+
+        await transformer.snapshotToSlice(
+          snapshot,
+          destinationBsDoc,
+          destinationBsDoc.root?.id
+        );
+
+        for (const [otherDocId, otherDoc] of collection.docs) {
+          ensureDocLoaded(otherDoc);
+          const otherStore = otherDoc.getStore({ id: otherDocId });
+          for (const ref of otherStore.getBlocksByFlavour('affine:note-ref')) {
+            const refModel = ref.model as NoteRefBlockModel;
+            if (
+              refModel.props.refBlockId === noteModel.id &&
+              refModel.props.refDocId === docId
+            ) {
+              otherStore.updateBlock(refModel, {
+                refDocId: destinationDocId,
+              });
+            }
+          }
+        }
+      } catch (e) {
+        logger.error('Failed to rescue reusable note before permanent delete', {
+          docId,
+          noteId: noteModel.id,
+          error: e,
+        });
       }
     }
   }
