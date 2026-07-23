@@ -23,6 +23,7 @@
     { "path": "../blocks/latex" },
     { "path": "../blocks/list" },
     { "path": "../blocks/note" },
+    { "path": "../blocks/note-ref" },
     { "path": "../blocks/paragraph" },
     { "path": "../blocks/root" },
     { "path": "../blocks/surface" },

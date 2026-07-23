@@ -37,6 +37,7 @@ export function useBlockSuiteMetaHelper() {
   const permanentlyDeletePage = useAsyncCallback(
     async (pageId: string) => {
       await docsService.rescueReferencedDatabasesBeforeDelete(pageId);
+      await docsService.rescueReferencedNotesBeforeDelete(pageId);
       workspace.docCollection.removeDoc(pageId);
     },
     [docsService, workspace]
