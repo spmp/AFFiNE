@@ -8,6 +8,7 @@
   "include": ["./src"],
   "references": [
     { "path": "../database" },
+    { "path": "../note-ref" },
     { "path": "../surface-ref" },
     { "path": "../../components" },
     { "path": "../../ext-loader" },

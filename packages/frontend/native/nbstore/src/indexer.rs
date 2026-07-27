@@ -7,7 +7,13 @@ use y_octo::merge_updates_v1;
 
 // Increment this whenever there is a breaking change in the index format or how
 // updates are applied
-const NBSTORE_INDEXER_VERSION: u32 = 2;
+//
+// Bumped 3 -> 4 alongside the JS indexer (`impls/idb/indexer/index.ts`): a
+// doc whose page title was missing could throw during crawling and get
+// silently marked "indexed" with zero blocks, permanently hiding it from
+// search with no retry — fixed, but already-affected docs need a real
+// version bump to get another attempt.
+const NBSTORE_INDEXER_VERSION: u32 = 4;
 
 use super::{
   error::{Error, Result},

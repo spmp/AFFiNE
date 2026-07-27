@@ -5,11 +5,17 @@ import {
   EditPropsStore,
   ThemeProvider,
 } from '@blocksuite/affine-shared/services';
+import {
+  ensureDocLoaded,
+  waitForBlockInDoc,
+} from '@blocksuite/affine-shared/utils';
 import { Bound } from '@blocksuite/global/gfx';
 import type { BlockStdScope, Command } from '@blocksuite/std';
 import type { GfxController } from '@blocksuite/std/gfx';
 import { GfxControllerIdentifier } from '@blocksuite/std/gfx';
 import type { BlockModel } from '@blocksuite/store';
+
+import { findContainingNoteId, wouldCreateReferenceCycle } from './cycle';
 
 /**
  * A newly created `note-ref` should look the way a newly created
@@ -93,9 +99,10 @@ export const insertNoteRefBlockCommand: Command<
     place: 'after' | 'before';
     removeEmptyLine?: boolean;
     selectedModels?: BlockModel[];
-    // Same-doc only for Story 0.6 — kept for forward compatibility with a
-    // future cross-doc story (mirrors how `database-ref` shipped Story 0.2
-    // same-doc-only before Story 0.3 added real cross-doc resolution).
+    // Set for a cross-doc reference (Story 0.5): the target Note already
+    // lives in its own doc, so — like `database-ref`'s cross-doc branch —
+    // no same-doc validation applies. Unset (Story 0.6's same-page case)
+    // defaults to the current doc, exactly as before.
     refDocId?: string;
   },
   {
@@ -112,20 +119,50 @@ export const insertNoteRefBlockCommand: Command<
       : selectedModels[selectedModels.length - 1];
 
   const store = std.store;
+  const isCrossDoc = !!refDocId && refDocId !== store.id;
 
-  if (refDocId && refDocId !== store.id) {
-    // Cross-doc note referencing is out of scope for Story 0.6 (see its
-    // AC7) — a future story (folded into 0.5's remaining-Gfx-types scope)
-    // adds real cross-doc resolution here, mirroring `database-ref`'s own
-    // Story 0.2 -> 0.3 growth path.
-    console.error('cross-doc note referencing is not yet supported');
-    return;
+  if (isCrossDoc) {
+    // Unlike the same-doc case, the target doc may not have finished
+    // loading its content locally yet (a doc the user hasn't opened this
+    // session can take a real amount of time to stream in) — mirrors
+    // `insertDatabaseRefBlockCommand`'s cross-doc branch, which likewise
+    // trusts the caller (the cross-doc picker already validated the
+    // candidate via the indexer) rather than requiring the target to be
+    // synchronously resolvable at insertion time. `note-ref-block.ts`'s
+    // own `_subscribeTargetDoc` already retries once the target doc's
+    // content actually arrives, so refusing to insert here would only
+    // strand the user with nothing created at all.
+    const refDoc = std.workspace.getDoc(refDocId);
+    if (!refDoc) {
+      console.error(`referenced doc not found ${refDocId}`);
+      return;
+    }
+    ensureDocLoaded(refDoc);
+  } else {
+    const targetBlock = store.getBlock(refBlockId)?.model;
+    if (!targetBlock || targetBlock.flavour !== 'affine:note') {
+      console.error(`referenced note block not found ${refBlockId}`);
+      return;
+    }
   }
 
-  const targetBlock = store.getBlock(refBlockId)?.model;
-  if (!targetBlock || targetBlock.flavour !== 'affine:note') {
-    console.error(`referenced note block not found ${refBlockId}`);
-    return;
+  // Reject any reference whose target note transitively references (via
+  // its own nested `note-ref`s, any number of hops, across any number of
+  // docs) the note this new reference would itself live inside — see
+  // `cycle.ts` for why this wasn't caught anywhere before and what could
+  // go wrong left unchecked (unbounded nested-`BlockStdScope` recursion the
+  // moment such a reference is rendered).
+  const containingNoteId = findContainingNoteId(store, targetModel);
+  if (containingNoteId) {
+    const isCycle = wouldCreateReferenceCycle(
+      std,
+      { docId: store.id, blockId: containingNoteId },
+      { docId: refDocId ?? store.id, blockId: refBlockId }
+    );
+    if (isCycle) {
+      toast(std.host, 'Can’t add this reference — it would create a loop.');
+      return;
+    }
   }
 
   store.captureSync();
@@ -135,7 +172,7 @@ export const insertNoteRefBlockCommand: Command<
   } = {
     flavour: 'affine:note-ref',
     refBlockId,
-    refDocId: store.id,
+    refDocId: refDocId ?? store.id,
     ...resolveNoteRefStyleDefaults(std),
   };
 
@@ -144,6 +181,29 @@ export const insertNoteRefBlockCommand: Command<
 
   if (removeEmptyLine && targetModel.text?.length === 0) {
     store.deleteBlock(targetModel);
+  }
+
+  if (isCrossDoc) {
+    // Trusts the picker's candidate rather than validating it exists
+    // synchronously (see the comment above) — verifies in the background
+    // instead, and surfaces a toast if a stale/deleted candidate never
+    // actually materializes, rather than failing silently forever.
+    const refDoc = std.workspace.getDoc(refDocId);
+    if (refDoc) {
+      waitForBlockInDoc(refDoc, refBlockId)
+        .then(found => {
+          const targetFlavour = found
+            ? refDoc.getStore({ id: refDoc.id }).getBlock(refBlockId)?.model
+                .flavour
+            : undefined;
+          if (!found || targetFlavour !== 'affine:note') {
+            toast(std.host, 'The referenced note could not be found.');
+          }
+        })
+        .catch(() => {
+          // best-effort verification only; insertion already succeeded
+        });
+    }
   }
 
   next({

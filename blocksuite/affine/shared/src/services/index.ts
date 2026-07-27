@@ -17,6 +17,7 @@ export * from './generate-url-service';
 export * from './icon-picker-service';
 export * from './link-preview-service';
 export * from './native-clipboard-service';
+export * from './note-move-service';
 export * from './notification-service';
 export * from './open-doc-config';
 export * from './page-viewport-service';

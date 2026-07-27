@@ -15,17 +15,24 @@ import {
   createReusableNoteAndInsertRefCommand,
   insertNoteRefBlockCommand,
 } from '../commands';
+import { wouldCreateReferenceCycle } from '../cycle';
 
 /**
  * Same-doc "insert another view of this reusable note" items — mirrors
  * `database-ref`'s `databaseRefSlashMenuConfig`'s `sameDocItems` shape.
- * Excludes the current doc's own primary/page note (`isPageBlock()`) —
- * referencing "the page you're already writing" makes no sense as a
- * reusable-note target — and excludes the note that directly contains the
- * invoking model, to avoid an obviously-circular reference at the picker
- * layer (a deeper cycle further up the ancestor chain is still possible and
- * is left to the render layer's existing "note not found"/ancestor-chain
- * machinery rather than guarded against here).
+ * The current doc's own primary/page note is a valid target like any
+ * other — referencing "the page itself" is a real use case (e.g. showing
+ * this page's content live elsewhere). Excludes the note that directly
+ * contains the invoking model (the trivial 1-hop cycle) outright, and
+ * additionally runs every remaining candidate through
+ * `wouldCreateReferenceCycle` (see `cycle.ts`) to catch deeper cycles too —
+ * a real check, not the "left to the render layer" claim this comment used
+ * to make before that turned out not to hold up (`_getAncestorChain`/
+ * `_sameChain` are a cache-invalidation check, not cycle detection).
+ * `insertNoteRefBlockCommand` re-validates the same thing at insertion
+ * time regardless, so this is purely a UX improvement — not offering a
+ * candidate that's guaranteed to be rejected — not the sole enforcement
+ * point.
  *
  * Also excludes `database-ref`'s own hidden `EdgelessOnly` host notes
  * (created by `ensurePromoted`/`moveIntoHiddenNote` purely to give a
@@ -70,19 +77,42 @@ export const noteRefSlashMenuConfig: SlashMenuConfig = {
 
     const sameDocItems = noteBlocks
       .filter(block => {
-        const noteModel = block.model as NoteBlockModel;
         if (block.id === ownContainingNoteId) return false;
-        if (noteModel.isPageBlock()) return false;
         if (databaseHiddenHostNoteIds.has(block.id)) return false;
+        if (
+          ownContainingNoteId &&
+          wouldCreateReferenceCycle(
+            std,
+            { docId: store.id, blockId: ownContainingNoteId },
+            { docId: store.id, blockId: block.id }
+          )
+        ) {
+          return false;
+        }
         return true;
       })
       .map<SlashMenuActionItem>(block => {
         const noteModel = block.model as NoteBlockModel;
+        // Mirrors `reader.ts`'s identical fallback for the cross-doc
+        // picker: the page/root note has no independent "name" of its own
+        // anywhere in the UI — its identity already IS the page — so it
+        // uses the doc's own title here too, instead of a child-text
+        // snippet. Without this, the page note showed as "Note: <first
+        // line of its own content>" instead of the page's actual title,
+        // making it effectively unfindable by searching for the page name.
+        const docTitle = noteModel.isPageBlock()
+          ? (
+              store.root as { props?: { title?: { toString(): string } } }
+            )?.props?.title?.toString()
+          : undefined;
         const snippet = block.model.children
           .map(child => child.text?.toString() ?? '')
           .find(text => text.trim().length > 0);
         const label =
-          noteModel.props.name || snippet?.slice(0, 40) || '(empty note)';
+          noteModel.props.name ||
+          docTitle ||
+          snippet?.slice(0, 40) ||
+          '(empty note)';
         return {
           name: 'Note: ' + label,
           icon: PageIcon(),

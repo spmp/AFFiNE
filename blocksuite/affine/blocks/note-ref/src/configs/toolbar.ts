@@ -1,14 +1,21 @@
 import { EditorChevronDown } from '@blocksuite/affine-components/toolbar';
+import { toast } from '@blocksuite/affine-components/toast';
 import { NoteRefBlockModel } from '@blocksuite/affine-model';
 import {
   ActionPlacement,
+  NoteMoveProvider,
   type ToolbarAction,
   type ToolbarActionGroup,
   type ToolbarModuleConfig,
   ToolbarModuleExtension,
 } from '@blocksuite/affine-shared/services';
 import { stopPropagation } from '@blocksuite/affine-shared/utils';
-import { CaptionIcon, DeleteIcon, PaletteIcon } from '@blocksuite/icons/lit';
+import {
+  DeleteIcon,
+  EditIcon,
+  MoveToIcon,
+  PaletteIcon,
+} from '@blocksuite/icons/lit';
 import { BlockFlavourIdentifier } from '@blocksuite/std';
 import type { ExtensionType } from '@blocksuite/store';
 import { cssVarV2 } from '@toeverything/theme/v2';
@@ -61,6 +68,11 @@ function BorderToggleIcon() {
 // its popper to its own trigger button (the icon actually clicked), the
 // same mechanism every other working toolbar dropdown in this codebase
 // already relies on.
+//
+// Icon: `EditIcon`, not the previous `CaptionIcon` — matches Frame's own
+// rename action (`frame-toolbar.ts`'s `c.rename`, the closest existing
+// precedent for "rename an edgeless-adjacent element"), which already uses
+// `EditIcon`. `CaptionIcon` reads as "caption/subtitle", not "rename".
 const renameAction = {
   id: 'a.rename',
   run() {
@@ -84,7 +96,7 @@ const renameAction = {
         .contentPadding=${'8px'}
         .button=${html`
           <editor-icon-button aria-label="rename" .tooltip=${'Name this note'}>
-            ${CaptionIcon()}
+            ${EditIcon()}
           </editor-icon-button>
         `}
       >
@@ -173,16 +185,55 @@ const backgroundColorAction = {
   },
 } satisfies ToolbarAction;
 
+// Story 0.5: lets the user relocate the *canonical* note this reference
+// points at — not the reference itself — into a different, already-existing
+// doc. Mirrors `blocks/note/src/configs/toolbar.ts`'s own "Move to another
+// page" action exactly (same `NoteMoveProvider` bridge, same underlying
+// `DocsService.relocateNoteToAnotherDoc`), operating on `refBlockId`/
+// `refDocId` instead of the reference's own model id — moving a note you're
+// currently viewing/editing via a reference shouldn't require first
+// navigating to wherever the canonical happens to live.
+const moveToAction = {
+  id: 'd.move-to',
+  placement: ActionPlacement.More,
+  label: 'Move to page...',
+  tooltip: 'Move to another page',
+  icon: MoveToIcon(),
+  when(ctx) {
+    return !!ctx.std.getOptional(NoteMoveProvider);
+  },
+  run(ctx) {
+    const model = ctx.getCurrentModelByType(NoteRefBlockModel);
+    if (!model) return;
+
+    const noteMove = ctx.std.getOptional(NoteMoveProvider);
+    if (!noteMove) return;
+
+    noteMove
+      .moveNoteToAnotherDoc(
+        model.props.refBlockId,
+        model.props.refDocId || ctx.store.id
+      )
+      .catch(e => {
+        console.error('[note-ref] failed to move referenced note', e);
+        toast(ctx.host, 'Could not move this note.');
+      });
+  },
+} satisfies ToolbarAction;
+
 const builtinToolbarConfig = {
   actions: [
-    {
-      id: 'rename',
-      actions: [renameAction],
-    } satisfies ToolbarActionGroup<ToolbarAction>,
+    // Rename, border, and background all live in one group (not three)
+    // so they render as one adjacent cluster with no divider between
+    // them — an earlier version split rename into its own group, which
+    // added a visible gap/separator between it and the border/background
+    // icons for no real reason (all three are equally "quick style
+    // settings" for this reference, not conceptually distinct groups).
     {
       id: 'style',
-      actions: [showBorderAction, backgroundColorAction],
+      actions: [renameAction, showBorderAction, backgroundColorAction],
     } satisfies ToolbarActionGroup<ToolbarAction>,
+    moveToAction,
     {
       placement: ActionPlacement.More,
       id: 'z.delete',

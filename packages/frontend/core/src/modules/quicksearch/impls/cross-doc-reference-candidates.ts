@@ -1,4 +1,4 @@
-import { FrameIcon, TableIcon } from '@blocksuite/icons/rc';
+import { FrameIcon, PageIcon, TableIcon } from '@blocksuite/icons/rc';
 import { effect, Entity, LiveData } from '@toeverything/infra';
 import { catchError, EMPTY, map, of, switchMap, throttleTime } from 'rxjs';
 
@@ -11,19 +11,20 @@ import type { QuickSearchItem } from '../types/item';
 export interface CrossDocReferenceCandidatePayload {
   docId: string;
   blockIds: [string];
-  flavour: 'affine:frame' | 'affine:database';
+  flavour: 'affine:frame' | 'affine:database' | 'affine:note';
 }
 
 /**
- * Surfaces every Frame/Database block in the workspace, except the ones
- * living in `excludeDocId` (the doc currently being edited) — powers Story
- * 0.3's cross-doc reference picker. Reuses the existing QuickSearch dialog
- * infrastructure (see `QuickSearchProvider`) rather than a bespoke UI.
+ * Surfaces every Frame/Database/Note block in the workspace, except the
+ * ones living in `excludeDocId` (the doc currently being edited) — powers
+ * Story 0.3's cross-doc reference picker (Frame/Database), extended for
+ * Note by Story 0.5. Reuses the existing QuickSearch dialog infrastructure
+ * (see `QuickSearchProvider`) rather than a bespoke UI.
  */
 export class CrossDocReferenceQuickSearchSession
   extends Entity<{
     excludeDocId: string;
-    allowedFlavours?: ('affine:frame' | 'affine:database')[];
+    allowedFlavours?: ('affine:frame' | 'affine:database' | 'affine:note')[];
   }>
   implements
     QuickSearchSession<'cross-doc-reference', CrossDocReferenceCandidatePayload>
@@ -69,7 +70,9 @@ export class CrossDocReferenceQuickSearchSession
                   candidate.label ||
                   (candidate.flavour === 'affine:frame'
                     ? 'Untitled Frame'
-                    : 'Untitled Database');
+                    : candidate.flavour === 'affine:database'
+                      ? 'Untitled Database'
+                      : 'Untitled Note');
 
                 return { candidate, pageTitle, blockTitle };
               })
@@ -116,7 +119,11 @@ export class CrossDocReferenceQuickSearchSession
                   subTitle: pageTitle,
                 },
                 icon:
-                  candidate.flavour === 'affine:frame' ? FrameIcon : TableIcon,
+                  candidate.flavour === 'affine:frame'
+                    ? FrameIcon
+                    : candidate.flavour === 'affine:database'
+                      ? TableIcon
+                      : PageIcon,
                 payload: {
                   docId: candidate.docId,
                   blockIds: [candidate.blockId] as [string],
