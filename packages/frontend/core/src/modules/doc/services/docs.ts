@@ -556,67 +556,106 @@ export class DocsService extends Service {
       }
       if (!destinationDocId) continue;
 
-      const destinationBsDoc = collection
-        .getDoc(destinationDocId)
-        ?.getStore({ id: destinationDocId });
-      if (!destinationBsDoc) continue;
+      await this.relocateNoteToAnotherDoc(
+        docId,
+        noteModel.id,
+        destinationDocId
+      );
+    }
+  }
 
-      try {
-        const transformer = new Transformer({
-          schema: getAFFiNEWorkspaceSchema(),
-          blobCRUD: collection.blobSync,
-          docCRUD: {
-            create: (id: string) => {
-              this.createDoc({ id });
-              const store = collection.getDoc(id)?.getStore({ id });
-              if (!store) {
-                throw new Error('Failed to create doc');
-              }
-              return store;
-            },
-            get: (id: string) =>
-              collection.getDoc(id)?.getStore({ id }) ?? null,
-            delete: (id: string) => collection.removeDoc(id),
-          },
-          // Deliberately no `replaceIdMiddleware` — every existing
-          // `note-ref`'s `refBlockId` must keep resolving after the move.
-          middlewares: [],
-        });
+  /**
+   * Moves a single `affine:note` block from `sourceDocId` into
+   * `destinationDocId`'s root, repointing every existing `affine:note-ref`
+   * (in any doc) that points at it to the new location. Shared by
+   * `rescueReferencedNotesBeforeDelete` (automatic, on permanent delete —
+   * Story 0.6) and the user-triggered "Move to another page" toolbar action
+   * (Story 0.5) — both are the exact same underlying operation, one
+   * automatic and one explicit, so this extracts the single implementation
+   * rather than duplicating the `Transformer`/`Slice` setup a second time.
+   *
+   * Deliberately no `replaceIdMiddleware` in the `Transformer` config: every
+   * existing `note-ref`'s `refBlockId` must keep resolving after the move,
+   * so the note's own id (and its children's ids) must survive unchanged.
+   */
+  async relocateNoteToAnotherDoc(
+    sourceDocId: string,
+    noteId: string,
+    destinationDocId: string
+  ): Promise<boolean> {
+    const collection = this.store.getBlocksuiteCollection();
 
-        const slice = Slice.fromModels(sourceBsDoc, [noteModel]);
-        const snapshot = transformer.sliceToSnapshot(slice);
-        if (!snapshot) {
-          throw new Error('Failed to snapshot canonical note for rescue');
-        }
+    const sourceBsDoc = this.store.getBlockSuiteDoc(sourceDocId);
+    if (!sourceBsDoc) return false;
 
-        await transformer.snapshotToSlice(
-          snapshot,
-          destinationBsDoc,
-          destinationBsDoc.root?.id
-        );
+    const noteModel = sourceBsDoc.getBlock(noteId)?.model as
+      | NoteBlockModel
+      | undefined;
+    if (!noteModel) return false;
 
-        for (const [otherDocId, otherDoc] of collection.docs) {
-          ensureDocLoaded(otherDoc);
-          const otherStore = otherDoc.getStore({ id: otherDocId });
-          for (const ref of otherStore.getBlocksByFlavour('affine:note-ref')) {
-            const refModel = ref.model as NoteRefBlockModel;
-            if (
-              refModel.props.refBlockId === noteModel.id &&
-              refModel.props.refDocId === docId
-            ) {
-              otherStore.updateBlock(refModel, {
-                refDocId: destinationDocId,
-              });
+    const destinationBsDoc = collection
+      .getDoc(destinationDocId)
+      ?.getStore({ id: destinationDocId });
+    if (!destinationBsDoc) return false;
+
+    try {
+      const transformer = new Transformer({
+        schema: getAFFiNEWorkspaceSchema(),
+        blobCRUD: collection.blobSync,
+        docCRUD: {
+          create: (id: string) => {
+            this.createDoc({ id });
+            const store = collection.getDoc(id)?.getStore({ id });
+            if (!store) {
+              throw new Error('Failed to create doc');
             }
+            return store;
+          },
+          get: (id: string) => collection.getDoc(id)?.getStore({ id }) ?? null,
+          delete: (id: string) => collection.removeDoc(id),
+        },
+        middlewares: [],
+      });
+
+      const slice = Slice.fromModels(sourceBsDoc, [noteModel]);
+      const snapshot = transformer.sliceToSnapshot(slice);
+      if (!snapshot) {
+        throw new Error('Failed to snapshot note for relocation');
+      }
+
+      await transformer.snapshotToSlice(
+        snapshot,
+        destinationBsDoc,
+        destinationBsDoc.root?.id
+      );
+
+      for (const [otherDocId, otherDoc] of collection.docs) {
+        ensureDocLoaded(otherDoc);
+        const otherStore = otherDoc.getStore({ id: otherDocId });
+        for (const ref of otherStore.getBlocksByFlavour('affine:note-ref')) {
+          const refModel = ref.model as NoteRefBlockModel;
+          if (
+            refModel.props.refBlockId === noteId &&
+            refModel.props.refDocId === sourceDocId
+          ) {
+            otherStore.updateBlock(refModel, {
+              refDocId: destinationDocId,
+            });
           }
         }
-      } catch (e) {
-        logger.error('Failed to rescue reusable note before permanent delete', {
-          docId,
-          noteId: noteModel.id,
-          error: e,
-        });
       }
+
+      sourceBsDoc.deleteBlock(noteModel);
+
+      return true;
+    } catch (e) {
+      logger.error('Failed to relocate note to another doc', {
+        sourceDocId,
+        noteId,
+        destinationDocId,
+        error: e,
+      });
+      return false;
     }
   }
 

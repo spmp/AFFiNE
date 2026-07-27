@@ -1067,4 +1067,56 @@ describe('database (Table) referenced across pages (cross-doc)', () => {
     const refs = doc.getBlocksByFlavour('affine:surface-ref');
     expect(refs.length).toBe(1);
   });
+
+  // Story 0.5: the same unified "Reference" slash-menu item, extended to a
+  // third candidate flavour (Note) — mirrors the two tests above exactly.
+  test('the unified "Reference" slash-menu action inserts a note-ref via a stubbed picker', async () => {
+    const secondDoc = createSecondDoc();
+    const secondNoteId = addNote(secondDoc);
+    const secondNoteParagraph =
+      secondDoc.getModelById(secondNoteId)!.children[0]!;
+    secondDoc.updateBlock(secondNoteParagraph, {
+      text: new Text('Stubbed Note'),
+    });
+
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+
+    const stubStd = new Proxy(editor.std, {
+      get(target, prop, receiver) {
+        if (prop === 'getOptional') {
+          return (identifier: unknown) =>
+            identifier === CrossDocReferenceProvider
+              ? {
+                  openCrossDocReferencePicker: async () => ({
+                    docId: secondDoc.id,
+                    blockId: secondNoteId,
+                    flavour: 'affine:note' as const,
+                  }),
+                }
+              : undefined;
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    const items = databaseRefSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stubStd, model }) : items;
+    const referenceItem = resolvedItems.find(item => item.name === 'Reference');
+
+    await (
+      referenceItem as unknown as { action: () => Promise<void> }
+    ).action();
+    await wait();
+
+    const refs = doc.getBlocksByFlavour('affine:note-ref');
+    expect(refs.length).toBe(1);
+    const refModel = refs[0]!.model as unknown as {
+      props: { refBlockId: string; refDocId: string };
+    };
+    expect(refModel.props.refBlockId).toBe(secondNoteId);
+    expect(refModel.props.refDocId).toBe(secondDoc.id);
+  });
 });

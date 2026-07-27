@@ -438,14 +438,16 @@ export class DocsSearchService extends Service {
   watchCrossDocReferenceCandidates(
     excludeDocId: string,
     query?: string,
-    allowedFlavours: ('affine:frame' | 'affine:database')[] = [
+    allowedFlavours: ('affine:frame' | 'affine:database' | 'affine:note')[] = [
       'affine:frame',
       'affine:database',
+      'affine:note',
     ]
   ) {
     const DatabaseAdditionalSchema = z.object({
       databaseName: z.string().optional(),
       frameTitle: z.string().optional(),
+      noteTitle: z.string().optional(),
     });
 
     const flavourQuery: Query<'block'> = {
@@ -560,13 +562,18 @@ export class DocsSearchService extends Service {
             const label =
               flavour === 'affine:database'
                 ? parsed?.databaseName
-                : parsed?.frameTitle;
+                : flavour === 'affine:frame'
+                  ? parsed?.frameTitle
+                  : parsed?.noteTitle;
 
             return {
               docId,
               docTitle: doc.title$.value,
               blockId,
-              flavour: flavour as 'affine:frame' | 'affine:database',
+              flavour: flavour as
+                | 'affine:frame'
+                | 'affine:database'
+                | 'affine:note',
               label: label || undefined,
             };
           })

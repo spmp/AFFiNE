@@ -1,4 +1,5 @@
 import { insertSurfaceRefBlockCommand } from '@blocksuite/affine-block-surface-ref';
+import { insertNoteRefBlockCommand } from '@blocksuite/affine-block-note-ref';
 import type { DatabaseBlockModel } from '@blocksuite/affine-model';
 import { DatabaseBlockSchema } from '@blocksuite/affine-model';
 import { toast } from '@blocksuite/affine-components/toast';
@@ -60,14 +61,14 @@ export const databaseRefSlashMenuConfig: SlashMenuConfig = {
       });
 
     // Single seam point for "reference a block from another doc," covering
-    // every cross-doc-referenceable flavour at once (currently Frame and
-    // Database). Deliberately NOT split into a per-flavour item — the
-    // picker itself already returns candidates of any supported flavour, so
-    // adding a new referenceable block type (0.4/0.5) only needs a new
+    // every cross-doc-referenceable flavour at once (Frame, Database, and
+    // — as of Story 0.5 — Note). Deliberately NOT split into a per-flavour
+    // item — the picker itself already returns candidates of any supported
+    // flavour, so adding a new referenceable block type only needs a new
     // branch below, not a new slash-menu item for the user to discover.
     const crossDocItem: SlashMenuItem = {
       name: 'Reference',
-      description: 'Reference a frame or table from a different doc',
+      description: 'Reference a frame, table, or note from a different doc',
       icon: LinkIcon(),
       group: `5_Edgeless Element@${index++}`,
       action: async () => {
@@ -104,6 +105,15 @@ export const databaseRefSlashMenuConfig: SlashMenuConfig = {
             selectedModels: [model],
           });
           insertedBlockId = result.insertedSurfaceRefBlockId;
+        } else if (candidate.flavour === 'affine:note') {
+          const [_, result] = std.command.exec(insertNoteRefBlockCommand, {
+            refBlockId: candidate.blockId,
+            refDocId: candidate.docId,
+            place: 'after',
+            removeEmptyLine: true,
+            selectedModels: [model],
+          });
+          insertedBlockId = result.insertedNoteRefBlockId;
         }
         if (!insertedBlockId) {
           toast(std.host, 'Could not insert that reference.');
