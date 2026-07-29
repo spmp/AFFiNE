@@ -17,6 +17,7 @@ import { z } from 'zod';
 
 import { patchForAudioEmbedView } from './audio/audio-view';
 import { patchCrossDocReferenceService } from './cross-doc-reference-service';
+import { patchDatabaseMoveService } from './database-move-service';
 import { buildDocDisplayMetaExtension } from './display-meta';
 import { patchDocModeService } from './doc-mode-service';
 import { patchDocUrlExtensions } from './doc-url';
@@ -114,7 +115,8 @@ export class AffineEditorViewExtension extends ViewExtensionProvider<AffineEdito
       .register(patchDocUrlExtensions(framework))
       .register(patchQuickSearchService(framework))
       .register(patchCrossDocReferenceService(framework))
-      .register(patchNoteMoveService(framework));
+      .register(patchNoteMoveService(framework))
+      .register(patchDatabaseMoveService(framework));
 
     if (scope === 'doc') {
       const docService = framework.get(DocService);

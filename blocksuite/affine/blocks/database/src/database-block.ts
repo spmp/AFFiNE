@@ -12,6 +12,7 @@ import { EDGELESS_TOP_CONTENTEDITABLE_SELECTOR } from '@blocksuite/affine-shared
 import {
   BlockElementCommentManager,
   CommentProviderIdentifier,
+  DatabaseMoveProvider,
   DocModeProvider,
   FeatureFlagService,
   NotificationProvider,
@@ -47,6 +48,7 @@ import {
   CopyIcon,
   DeleteIcon,
   MoreHorizontalIcon,
+  MoveToIcon,
   SettingsIcon,
 } from '@blocksuite/icons/lit';
 import { type BlockComponent, BlockSelection } from '@blocksuite/std';
@@ -198,6 +200,35 @@ export class DatabaseBlockComponent extends CaptionedBlockComponent<DatabaseBloc
                 ],
               },
             });
+          },
+        }),
+        menu.action({
+          prefix: MoveToIcon(),
+          name: 'Move to page...',
+          // Only offered on the database's own real, primary render
+          // location — never when rendered nested inside a `database-ref`/
+          // `database-view-ref` preview scope (moving the canonical out
+          // from under a reference actively rendering it is not a
+          // supported interaction surface here). Mirrors the exact same
+          // two-flavour `closest()` gate `dataSource`'s own lazy getter
+          // above already uses for the same reasoning.
+          hide: () =>
+            !this.std.getOptional(DatabaseMoveProvider) ||
+            !!this.closest('affine-database-ref') ||
+            !!this.closest('affine-database-view-ref'),
+          select: () => {
+            const databaseMove = this.std.getOptional(DatabaseMoveProvider);
+            if (!databaseMove) return;
+
+            databaseMove
+              .moveDatabaseToAnotherDoc(this.model.id, this.store.id)
+              .catch(e => {
+                console.error(
+                  '[database] failed to move database to another doc',
+                  e
+                );
+                toast(this.host, 'Could not move this database.');
+              });
           },
         }),
         menu.group({

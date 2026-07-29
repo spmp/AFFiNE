@@ -3,6 +3,7 @@ export * from './block-meta-service';
 export * from './citation-service';
 export * from './comment-service';
 export * from './cross-doc-reference-service';
+export * from './database-move-service';
 export * from './doc-display-meta-service';
 export * from './doc-mode-service';
 export * from './drag-handle-config';
