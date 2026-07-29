@@ -163,15 +163,25 @@ export function updateCell(
       console.error('Invalid columnId');
       return;
     }
-    if (!model.props.cells[rowId]) {
-      model.props.cells[rowId] = Object.create(null);
-    }
-    if (model.props.cells[rowId]) {
-      model.props.cells[rowId][columnId] = {
-        columnId: columnId,
-        value: cell.value,
-      };
-    }
+    // Reassign the whole `cells` prop rather than mutating a nested
+    // `cells[rowId][columnId]` in place. `cells` is one plain-object model
+    // prop (`SerializedCells`), and its reactive `cells$` signal (read by
+    // `getCell`, and transitively by every cell-rendering Lit component via
+    // `SignalWatcher`) is only invalidated by a top-level reassignment —
+    // an in-place nested bracket write physically persists (confirmed via
+    // direct read-back) but never notifies anything watching `cells$`, so
+    // a just-written cell (e.g. a task checkbox toggle) silently fails to
+    // re-render until something unrelated forces a fresh render pass.
+    model.props.cells = {
+      ...model.props.cells,
+      [rowId]: {
+        ...model.props.cells[rowId],
+        [columnId]: {
+          columnId,
+          value: cell.value,
+        },
+      },
+    };
   });
 }
 
@@ -181,6 +191,7 @@ export function updateCells(
   cells: Record<string, unknown>
 ) {
   model.store.transact(() => {
+    const nextCells = { ...model.props.cells };
     Object.entries(cells).forEach(([rowId, value]) => {
       if (
         rowId === '__proto__' ||
@@ -189,16 +200,18 @@ export function updateCells(
       ) {
         throw new Error('Invalid rowId');
       }
-      if (!model.props.cells[rowId]) {
-        model.props.cells[rowId] = Object.create(null);
-      }
-      if (model.props.cells[rowId]) {
-        model.props.cells[rowId][columnId] = {
+      nextCells[rowId] = {
+        ...nextCells[rowId],
+        [columnId]: {
           columnId,
           value,
-        };
-      }
+        },
+      };
     });
+    // Same reasoning as `updateCell` — reassign the top-level `cells` prop
+    // once, rather than nested in-place bracket writes per row, so the
+    // `cells$` signal actually invalidates.
+    model.props.cells = nextCells;
   });
 }
 

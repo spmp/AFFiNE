@@ -53,7 +53,20 @@ export class ListViewUILogic extends DataViewUILogicBase<ListSingleView> {
     const dataSource = this.view.manager?.dataSource as
       | TodoListRowDataSource
       | undefined;
-    return rowIds.some(rowId => dataSource?.ensureRowAsTodoList?.(rowId));
+    // `.some()` short-circuits on the first row that returns `true` — and
+    // `ensureRowAsTodoList` returns `true` both for a row it just converted
+    // *and* for a row that's already todo-type (a no-op check) — so with
+    // even one pre-existing todo row in the list, every other row (any
+    // plain paragraph still needing conversion) was silently skipped every
+    // single call. Must process every row, not stop at the first truthy
+    // one.
+    let changed = false;
+    for (const rowId of rowIds) {
+      if (dataSource?.ensureRowAsTodoList?.(rowId)) {
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   addRow = (position: InsertToPosition) => {

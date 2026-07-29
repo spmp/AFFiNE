@@ -44,7 +44,7 @@ export const insertDatabaseBlockCommand: Command<
   initDatabaseBlock(std.store, targetModel, string, viewType, false, {
     taskWorkflowDefaults: TaskWorkflowDefaultsSchema.parse(
       std.getOptional(EditorSettingProvider)?.setting$.peek()
-        .taskWorkflowDefaults
+        .taskWorkflowDefaults ?? {}
     ),
   });
 

@@ -246,17 +246,24 @@ export class KanbanCard extends SignalWatcher(
     if (columns.length === 0) {
       return '';
     }
-    const hasParentContext = !!this.getParentContext();
     return html` <div class="card-body">
       ${repeat(
         columns,
         v => v.id,
         column => {
+          // These 3 system columns are pure internal bookkeeping (see
+          // `ensureTaskHierarchyColumns` — they're forced-hidden from every
+          // *view's* own column list too) and must never show on a card,
+          // regardless of whether this specific card happens to have a
+          // parent (`getKanbanParentContext` only returns a context for
+          // non-root cards — a root-level card, with no parent, has no
+          // parent context, so gating this filter on `hasParentContext`
+          // left them fully visible on every root-level card while
+          // correctly hiding them everywhere else).
           if (
-            hasParentContext &&
-            (column.name$.value === TASK_PARENT_IDENTIFIER_COLUMN_NAME ||
-              column.name$.value === TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME ||
-              column.name$.value === TASK_HIERARCHY_LEVEL_COLUMN_NAME)
+            column.name$.value === TASK_PARENT_IDENTIFIER_COLUMN_NAME ||
+            column.name$.value === TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME ||
+            column.name$.value === TASK_HIERARCHY_LEVEL_COLUMN_NAME
           ) {
             return '';
           }

@@ -648,7 +648,17 @@ describe('DatabaseManager', () => {
     expect(row?.props.checked).toBe(false);
   });
 
-  test('does not create task status column for list-view row creation unless configured', () => {
+  test('creates a task status "Status" column eagerly for list-view row creation, not only once a view configures it', () => {
+    // Status is meant to be the single, always-present source of truth for
+    // a todo row's state (this is what auto-promotion/cascade is built
+    // around) — it must exist the moment the first todo row does, exactly
+    // like the hierarchy columns already do, rather than only appearing as
+    // a side effect of `databaseViewInitTemplate`'s kanban/list branch or
+    // Kanban's own groupBy fallback. Relying on those meant a database
+    // whose only view was ever "table" could have live todo rows with no
+    // Status column at all, silently falling back to `affine:list`'s own
+    // plain `checked` boolean — a separate, non-cascading storage mechanism
+    // this behavior no longer exercises.
     const dataSource = new DatabaseBlockDataSource(db);
 
     const rowId = dataSource.rowAddAsTodoList('end');
@@ -656,23 +666,60 @@ describe('DatabaseManager', () => {
       column => column.name === TASK_HIERARCHY_LEVEL_COLUMN_NAME
     );
 
-    expect(dataSource.getTaskStatusColumn()).toBeUndefined();
-    expect(db.props.columns.map(column => column.name)).not.toContain('Status');
+    expect(dataSource.getTaskStatusColumn()).toBeTruthy();
+    expect(db.props.columns.map(column => column.name)).toContain('Status');
     expect(levelColumn).toBeTruthy();
     expect(getCell(db, rowId, levelColumn!.id)?.value).toBe(0);
+    // A fresh todo row starts with no Status value at all (a genuine
+    // "no status yet" state) — not pre-assigned to the "todo" option,
+    // which is a real, selectable value someone can set later.
+    expect(
+      dataSource.getTaskStatusInfo(rowId)?.selectedOptionId
+    ).toBeUndefined();
+    expect(dataSource.getTaskStatusInfo(rowId)?.checked).toBe(false);
   });
 
-  test('todo list rows expose checkbox state without task status column', () => {
+  test('the Status column is visible by default in table view but hidden in list/kanban (toggleable via the properties panel), both for views that existed when it was created and views added afterwards', () => {
+    const dataSource = new DatabaseBlockDataSource(db);
+
+    // A table view already exists *before* any todo row/Status column
+    // does — exercises `hidePropertyInViews`'s own "existing views at
+    // creation time" path.
+    const tableViewId = dataSource.viewManager.viewAdd('table');
+    dataSource.rowAddAsTodoList('end');
+
+    // A list view added *afterwards*, once the Status column already
+    // exists — exercises `hideDefaultHiddenColumnsForNewView`, called from
+    // `viewDataAdd`/`viewDataAddWithoutCapture` for exactly this case.
+    const listViewId = dataSource.viewManager.viewAdd('list');
+
+    const statusColumn = dataSource.getTaskStatusColumn()!;
+    expect(statusColumn).toBeTruthy();
+
+    const findHide = (viewId: string) => {
+      const view = db.props.views.find(v => v.id === viewId) as
+        | { columns?: { id: string; hide?: boolean }[] }
+        | undefined;
+      return view?.columns?.find(c => c.id === statusColumn.id)?.hide;
+    };
+    // Table view: Status is a real, directly useful property — stays
+    // visible (either absent from the hide-list, or explicitly `false`).
+    expect(findHide(tableViewId)).not.toBe(true);
+    // List view: redundant with the checkbox — hidden by default.
+    expect(findHide(listViewId)).toBe(true);
+  });
+
+  test('todo list rows track checkbox state through the task status column, not the plain affine:list.checked boolean', () => {
     const dataSource = new DatabaseBlockDataSource(db);
     const rowId = dataSource.rowAddAsTodoList('end');
 
-    expect(dataSource.getTaskStatusColumn()).toBeUndefined();
-    expect(dataSource.getTodoListRowChecked(rowId)).toBe(false);
+    expect(dataSource.getTaskStatusColumn()).toBeTruthy();
+    expect(dataSource.getTaskStatusInfo(rowId)?.checked).toBe(false);
 
-    dataSource.setTodoListRowChecked(rowId, true);
+    dataSource.setTaskStatusChecked(rowId, true);
 
-    expect(dataSource.getTodoListRowChecked(rowId)).toBe(true);
-    expect(dataSource.getTaskStatusColumn()).toBeUndefined();
+    expect(dataSource.getTaskStatusInfo(rowId)?.checked).toBe(true);
+    expect(dataSource.getTaskStatusColumn()).toBeTruthy();
   });
 
   test('converts an empty paragraph row to todo list in place', () => {
@@ -805,8 +852,8 @@ describe('DatabaseManager', () => {
     const row = doc.getModelById(emptyRowId);
     expect(row?.flavour).toBe('affine:list');
     expect(row?.props.type).toBe('todo');
-    expect(dataSource.getTaskStatusColumn()).toBeUndefined();
-    expect(db.props.columns.map(column => column.name)).not.toContain('Status');
+    expect(dataSource.getTaskStatusColumn()).toBeTruthy();
+    expect(db.props.columns.map(column => column.name)).toContain('Status');
     expect(db.props.columns.map(column => column.name)).toContain(
       TASK_HIERARCHY_LEVEL_COLUMN_NAME
     );
@@ -2166,5 +2213,45 @@ describe('DatabaseManager', () => {
     expect(getCell(db, c, statusColumnId)?.value).toEqual(selection[0]?.id);
     expect(getCell(db, b, statusColumnId)?.value).toEqual(selection[0]?.id);
     expect(getCell(db, a, statusColumnId)?.value).toEqual(selection[2]?.id);
+  });
+
+  test('converting a table view to Kanban when no groupable column exists yet auto-creates one instead of throwing', async () => {
+    // Regression (reported live, 2026-07-27): `viewChangeType` runs inside
+    // `updateView`'s own `model.store.transact(...)`. Kanban's `defaultData`
+    // (`kanban/define.ts`) auto-creates a fallback "Status" column via
+    // `propertyAdd` when no groupable column exists yet — but `propertyAdd`
+    // does its *own*, nested `store.transact(...)`, and immediately reading
+    // that fresh column back (`propertyTypeGet`, to build the `groupBy`)
+    // went through `getNormalPropertyAndIndex`'s `this._model.props
+    // .columns$.value` — a signal that doesn't refresh until the
+    // *outermost* transaction closes, so it couldn't see a column written
+    // inside a still-open nested one. `defaultData` threw "no groupable
+    // column found" mid-transaction, corrupting the view conversion. This
+    // reproduces with a plain, never-referenced database — nothing to do
+    // with `database-ref`, despite surfacing there too (any code path that
+    // calls `viewGet`/re-renders a Kanban view hits it).
+    const { viewPresets } = await import('@blocksuite/data-view/view-presets');
+    const datasource = new DatabaseBlockDataSource(db);
+    databaseViewInitTemplate(datasource, 'table');
+
+    const currentViewId = datasource.viewManager.currentViewId$.value;
+    expect(currentViewId).toBeTruthy();
+
+    expect(() =>
+      datasource.viewManager.viewChangeType(
+        currentViewId!,
+        viewPresets.kanbanViewMeta.type
+      )
+    ).not.toThrow();
+
+    const view = datasource.viewManager.viewDataGet(currentViewId!);
+    expect(view?.mode).toBe(viewPresets.kanbanViewMeta.type);
+
+    // A fallback "Status" select column must actually have been created
+    // and be resolvable immediately (not just physically present in the
+    // Yjs doc but invisible to the reactive layer).
+    const statusColumn = db.props.columns.find(c => c.name === 'Status');
+    expect(statusColumn).toBeTruthy();
+    expect(datasource.propertyTypeGet(statusColumn!.id)).toBe('select');
   });
 });
