@@ -1,6 +1,7 @@
 export * from './adapters';
 export * from './commands';
 export * from './config';
+export * from './configs/slash-menu.js';
 export * from './context';
 export * from './data-source';
 export * from './database-block';

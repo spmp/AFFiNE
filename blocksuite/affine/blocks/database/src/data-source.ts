@@ -43,6 +43,7 @@ import { isValid } from 'date-fns/isValid';
 import { parse } from 'date-fns/parse';
 
 import { getIcon } from './block-icons.js';
+import { DatabaseViewLocalOverrideProvider } from './context/view-local-override-context.js';
 import {
   databaseBlockProperties,
   databasePropertyConverts,
@@ -483,7 +484,16 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     if (model?.flavour !== 'affine:list' || model.props.type !== 'todo') {
       return undefined;
     }
-    return Boolean(model.props.checked);
+    // `.checked$.value` (not the plain `.checked`) — this is read from a
+    // Lit `render()` tracked by `SignalWatcher` (`HeaderAreaTextCell`'s
+    // `renderTaskStatusCheckbox`), and only a `$`-suffixed signal read
+    // registers as a tracked dependency; a plain prop read is invisible to
+    // that tracking, so a `setTodoListRowChecked` write elsewhere never
+    // triggered a re-render — the checkbox only ever reflected whatever
+    // value happened to be current the last time something else forced a
+    // render pass (e.g. navigating away and back). `list-block.ts` already
+    // uses `.checked$.value` for this exact reason in its own render path.
+    return Boolean(model.props.checked$.value);
   }
 
   setTodoListRowChecked(rowId: string, checked: boolean) {
@@ -495,33 +505,68 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     this.doc.updateBlock(model as ListBlockModel, { checked });
   }
 
-  private hidePropertyInViews(columnId: string) {
-    for (const view of this._model.props.views) {
-      if (view.mode === 'table') {
-        updateView(this._model, view.id, data => {
-          const columns = (data.columns ?? []) as Array<{
-            id: string;
-            width: number;
-            hide?: boolean;
-          }>;
-          const idx = columns.findIndex(column => column.id === columnId);
-          if (idx >= 0) {
-            const current = columns[idx];
-            if (!current) return {};
-            const next = [...columns];
-            next[idx] = { ...current, hide: true };
-            return { columns: next };
-          }
-          return {
-            columns: [...columns, { id: columnId, width: 180, hide: true }],
-          };
-        });
-        continue;
-      }
+  /**
+   * Hides Hierarchy Level/Parent Identifier/Ancestor Identifiers (always)
+   * and Status (everywhere *except* table view — Status is a real,
+   * directly-useful property there, unlike in list/kanban where the
+   * checkbox/card-column position already represents it) — whichever of
+   * these already exist as real columns — in one specific, just-created
+   * view. `hidePropertyInViews` (below) only ever hides a column in the
+   * views that already existed *at the moment that column was created* —
+   * a view added afterwards (e.g. a List view added to a database that
+   * already has todo rows and therefore an existing Status column) starts
+   * with its own fresh `columns` snapshot with no `hide` entries at all,
+   * so these would show up as ordinary, visible properties in that new
+   * view by default. Called once, right after a new view is actually
+   * added (`viewDataAdd`/`viewDataAddWithoutCapture`).
+   */
+  private hideDefaultHiddenColumnsForNewView(viewId: string) {
+    const view = this._model.props.views.find(v => v.id === viewId);
+    if (!view) {
+      return;
+    }
+    const alwaysHiddenNames = [
+      TASK_HIERARCHY_LEVEL_COLUMN_NAME,
+      TASK_PARENT_IDENTIFIER_COLUMN_NAME,
+      TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME,
+    ];
+    const namesToHide =
+      view.mode === 'table'
+        ? alwaysHiddenNames
+        : [...alwaysHiddenNames, this.getTaskStatusColumn()?.name].filter(
+            (name): name is string => !!name
+          );
+    const columnIds = this._model.props.columns
+      .filter(column => namesToHide.includes(column.name))
+      .map(column => column.id);
+    if (columnIds.length === 0) {
+      return;
+    }
+    this.hidePropertyInViews(columnIds, [viewId]);
+  }
 
-      updateView(this._model, view.id, data => {
+  private hidePropertyInViews(columnId: string | string[], viewIds?: string[]) {
+    const columnIds = Array.isArray(columnId) ? columnId : [columnId];
+    const views = viewIds
+      ? this._model.props.views.filter(view => viewIds.includes(view.id))
+      : this._model.props.views;
+    for (const view of views) {
+      for (const id of columnIds) {
+        this.hidePropertyInOneView(view.id, view.mode, id);
+      }
+    }
+  }
+
+  private hidePropertyInOneView(
+    viewId: string,
+    viewMode: string,
+    columnId: string
+  ) {
+    if (viewMode === 'table') {
+      updateView(this._model, viewId, data => {
         const columns = (data.columns ?? []) as Array<{
           id: string;
+          width: number;
           hide?: boolean;
         }>;
         const idx = columns.findIndex(column => column.id === columnId);
@@ -532,9 +577,28 @@ export class DatabaseBlockDataSource extends DataSourceBase {
           next[idx] = { ...current, hide: true };
           return { columns: next };
         }
-        return { columns: [...columns, { id: columnId, hide: true }] };
+        return {
+          columns: [...columns, { id: columnId, width: 180, hide: true }],
+        };
       });
+      return;
     }
+
+    updateView(this._model, viewId, data => {
+      const columns = (data.columns ?? []) as Array<{
+        id: string;
+        hide?: boolean;
+      }>;
+      const idx = columns.findIndex(column => column.id === columnId);
+      if (idx >= 0) {
+        const current = columns[idx];
+        if (!current) return {};
+        const next = [...columns];
+        next[idx] = { ...current, hide: true };
+        return { columns: next };
+      }
+      return { columns: [...columns, { id: columnId, hide: true }] };
+    });
   }
 
   ensureTaskHierarchyColumns() {
@@ -569,6 +633,62 @@ export class DatabaseBlockDataSource extends DataSourceBase {
         )
       ),
     };
+  }
+
+  /**
+   * Ensures a task-status "Status" select column exists — Status is meant
+   * to be the single, always-present source of truth for a todo row's
+   * done/in-progress/todo state (this is what `getTaskStatusInfo`/
+   * `setTaskStatusChecked`/`recomputeParentStatusesFromChildren`'s whole
+   * cascade/auto-promotion system is built around). Previously this column
+   * only ever got created as a side effect of `databaseViewInitTemplate`'s
+   * kanban/list branch, or Kanban's own `ensureKanbanGroupColumn` fallback
+   * — meaning a database whose only view was ever "table", or whose rows
+   * were added via `rowAddAsTodoList`/`ensureRowAsTodoList` directly, could
+   * have live todo rows with no Status column at all, silently falling
+   * back to `affine:list`'s own plain `checked` boolean
+   * (`getTodoListRowChecked`/`setTodoListRowChecked`) — a completely
+   * separate, non-cascading, non-Kanban-groupable storage mechanism that
+   * never seemed intentional; the two-mechanism split is what produced the
+   * inconsistent behavior (auto-promotion working only once a Status
+   * column happened to exist, checked-state tracked differently
+   * depending on which mechanism was live). Called the same way
+   * `ensureTaskHierarchyColumns` already is — eagerly, the moment a todo
+   * row is created — so a Status column exists from the very first todo
+   * row, exactly like the hierarchy columns do.
+   */
+  ensureTaskStatusColumn(): string | undefined {
+    const existing = this.getTaskStatusColumn();
+    if (existing) {
+      return existing.id;
+    }
+    const taskWorkflowDefaults = DEFAULT_TASK_WORKFLOW_DEFAULTS;
+    const statusColumnId = this.propertyAdd('end', {
+      type: 'select',
+      name:
+        taskWorkflowDefaults.list.statusMapping.statusColumnName || 'Status',
+    });
+    if (statusColumnId) {
+      this.propertyDataSet(statusColumnId, {
+        options: createTaskWorkflowStatusOptions(
+          taskWorkflowDefaults,
+          taskWorkflowDefaults.list.statusMapping.doneTagLabel
+        ),
+      });
+      // Hidden by default in every *non-table* view that already exists
+      // (toggleable back on via the properties panel) — Status backs the
+      // task-workflow cascade/Kanban groupBy and is redundant there (the
+      // checkbox/card-column position already shows it), but in table
+      // view it's a real, directly useful property and should stay
+      // visible.
+      const nonTableViewIds = this._model.props.views
+        .filter(view => view.mode !== 'table')
+        .map(view => view.id);
+      if (nonTableViewIds.length > 0) {
+        this.hidePropertyInViews(statusColumnId, nonTableViewIds);
+      }
+    }
+    return statusColumnId;
   }
 
   private normalizeStatusLabel(value: string) {
@@ -1236,6 +1356,8 @@ export class DatabaseBlockDataSource extends DataSourceBase {
   viewConverts = databaseBlockViewConverts;
 
   viewDataList$: ReadonlySignal<DataViewDataType[]> = computed(() => {
+    const override = this.serviceGet(DatabaseViewLocalOverrideProvider);
+    if (override) return override.viewDataList$.value;
     return this._model.props.views$.value as DataViewDataType[];
   });
 
@@ -1450,11 +1572,22 @@ export class DatabaseBlockDataSource extends DataSourceBase {
         index: number;
       }
     | undefined {
-    const index = this._model.props.columns$.value.findIndex(
-      v => v.id === propertyId
-    );
+    // Reads the raw `.columns` prop, not the `.columns$` signal — every
+    // other column lookup in this file already does this (see
+    // `ensureTaskHierarchyColumns`'s `getOrAdd`, `rowMove`, etc.), for a
+    // real reason: a column can be created and immediately read back
+    // *within the same nested `store.transact()` call* (e.g. Kanban's
+    // `defaultData` auto-creating a fallback "Status" column via
+    // `propertyAdd`, then reading it straight back via `propertyTypeGet`
+    // to build its `groupBy`, all while still inside `viewChangeType`'s
+    // own outer `updateView` transaction). `columns$` only refreshes once
+    // the *outermost* transaction closes, so it can't see a column
+    // written inside a still-open nested one — the raw prop reflects the
+    // proxied array immediately, regardless of transaction nesting.
+    const columns = this._model.props.columns;
+    const index = columns.findIndex(v => v.id === propertyId);
     if (index >= 0) {
-      const column = this._model.props.columns$.value[index];
+      const column = columns[index];
       if (!column) {
         return;
       }
@@ -1687,6 +1820,13 @@ export class DatabaseBlockDataSource extends DataSourceBase {
 
   rowAddAsTodoList(insertPosition: InsertToPosition | number): string {
     const { levelColumnId } = this.ensureTaskHierarchyColumns();
+    // Ensures the Status column exists so it's ready the moment the user
+    // interacts with this row, but deliberately leaves the new row's own
+    // Status cell unset — a fresh todo starts in a genuine "no status yet"
+    // state, not pre-assigned to the "todo" option (that's a real,
+    // selectable value someone can set later, not a default/placeholder
+    // one).
+    this.ensureTaskStatusColumn();
     this.doc.captureSync();
     const index =
       typeof insertPosition === 'number'
@@ -1720,6 +1860,9 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       return false;
     }
     const { levelColumnId } = this.ensureTaskHierarchyColumns();
+    // See `rowAddAsTodoList` — ensures the Status column exists, but leaves
+    // this row's own Status cell unset (a genuine "no status yet" state).
+    this.ensureTaskStatusColumn();
     const index = this._model.children.findIndex(child => child.id === rowId);
     if (index < 0) {
       return false;
@@ -1932,26 +2075,39 @@ export class DatabaseBlockDataSource extends DataSourceBase {
   }
 
   viewDataAdd(viewData: DataViewDataType): string {
+    const override = this.serviceGet(DatabaseViewLocalOverrideProvider);
+    if (override) return override.viewDataAdd(viewData);
     this._model.store.captureSync();
     this._model.store.transact(() => {
       this._model.props.views = [...this._model.props.views, viewData];
     });
+    this.hideDefaultHiddenColumnsForNewView(viewData.id);
     return viewData.id;
   }
 
   viewDataAddWithoutCapture(viewData: DataViewDataType): string {
+    const override = this.serviceGet(DatabaseViewLocalOverrideProvider);
+    if (override) return override.viewDataAdd(viewData);
     this._model.store.transact(() => {
       this._model.props.views = [...this._model.props.views, viewData];
     });
+    this.hideDefaultHiddenColumnsForNewView(viewData.id);
     return viewData.id;
   }
 
   viewDataDelete(viewId: string): void {
+    const override = this.serviceGet(DatabaseViewLocalOverrideProvider);
+    if (override) {
+      override.viewDataDelete(viewId);
+      return;
+    }
     this._model.store.captureSync();
     deleteView(this._model, viewId);
   }
 
   viewDataDuplicate(id: string): string {
+    const override = this.serviceGet(DatabaseViewLocalOverrideProvider);
+    if (override) return override.viewDataDuplicate(id);
     return duplicateView(this._model, id);
   }
 
@@ -1960,6 +2116,11 @@ export class DatabaseBlockDataSource extends DataSourceBase {
   }
 
   viewDataMoveTo(id: string, position: InsertToPosition): void {
+    const override = this.serviceGet(DatabaseViewLocalOverrideProvider);
+    if (override) {
+      override.viewDataMoveTo(id, position);
+      return;
+    }
     moveViewTo(this._model, id, position);
   }
 
@@ -1967,6 +2128,11 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     id: string,
     updater: (data: ViewData) => Partial<ViewData>
   ): void {
+    const override = this.serviceGet(DatabaseViewLocalOverrideProvider);
+    if (override) {
+      override.viewDataUpdate(id, updater);
+      return;
+    }
     updateView(this._model, id, updater);
   }
 

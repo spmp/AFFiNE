@@ -261,6 +261,23 @@ export class ListViewRenderer extends SignalWatcher(
         this.logic.indentRow(rowId);
       }
       this.requestUpdate();
+      return;
+    }
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      const rowIds = this.view.rows$.value.map(row => row.rowId);
+      const index = rowIds.indexOf(rowId);
+      if (index < 0) {
+        return;
+      }
+      const targetIndex = event.key === 'ArrowUp' ? index - 1 : index + 1;
+      const targetRowId = rowIds[targetIndex];
+      if (!targetRowId) {
+        return;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+      this.focusRowTitle(targetRowId);
     }
   }
 
@@ -273,11 +290,37 @@ export class ListViewRenderer extends SignalWatcher(
       property => property.id !== titleColumn
     );
     const fieldLayout = this.view.fieldLayout$.value;
-    if (
-      this.logic.ensureTodoListRows(this.view.rows$.value.map(row => row.rowId))
-    ) {
-      this.requestUpdate();
-    }
+    // Deferred to a microtask rather than run synchronously inline here:
+    // `ensureTodoListRows` -> `ensureRowAsTodoList` can `deleteBlock` then
+    // `addBlock` a row (converting a plain paragraph to a todo `affine:list`
+    // with the same id) as two separate, non-transactional ops — mutating
+    // the doc *while this very render() call is still executing* raced the
+    // `repeat()` directive below (which reads `this.view.rows$.value`
+    // again, moments later, in the same call) against whatever the
+    // block-tree's own reactive rendering was doing in response to that
+    // same delete+recreate, and could leave the list showing no rows at
+    // all until something else forced a further render. Matches
+    // `TableSingleView`'s/`KanbanSingleView`'s own established
+    // `queueMicrotask` pattern for this exact class of "mutate once the
+    // current render settles" need.
+    //
+    // Deliberately never calls `requestUpdate()` off the back of this:
+    // `ensureRowAsTodoList`'s return value means "is this row todo-type"
+    // (true for a row that *was already* todo, per its own tested
+    // contract — see `database.unit.spec.ts`), not "did a conversion just
+    // happen" — so using it to decide whether to force a re-render means
+    // any list view with even one pre-existing todo row returns `true`
+    // forever, on every single render, forcing another `requestUpdate()`
+    // every time: a genuine infinite render loop (confirmed live — it
+    // froze the page). The one case that actually needs a re-render (a
+    // paragraph really converted to `affine:list`) already changes
+    // `model.children`, which `SignalWatcher` already re-renders for via
+    // the normal `rows$` reactivity — no manual trigger needed.
+    queueMicrotask(() => {
+      this.logic.ensureTodoListRows(
+        this.view.rows$.value.map(row => row.rowId)
+      );
+    });
     return html`${this.logic.headerWidget
         ? renderUniLit(this.logic.headerWidget, { dataViewLogic: this.logic })
         : nothing}
