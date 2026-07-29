@@ -2,6 +2,7 @@ import { DebugLogger } from '@affine/debug';
 import { Unreachable } from '@affine/env/constant';
 import type {
   DatabaseRefBlockModel,
+  DatabaseViewRefBlockModel,
   NoteBlockModel,
   NoteRefBlockModel,
 } from '@blocksuite/affine/model';
@@ -389,13 +390,21 @@ export class DocsService extends Service {
       for (const [otherDocId, otherDoc] of collection.docs) {
         if (otherDocId === docId) continue;
         const otherStore = otherDoc.getStore({ id: otherDocId });
-        const hasRef = otherStore
-          .getBlocksByFlavour('affine:database-ref')
-          .some(
-            b =>
-              (b.model as DatabaseRefBlockModel).props.refBlockId ===
-              databaseModel.id
-          );
+        const hasRef =
+          otherStore
+            .getBlocksByFlavour('affine:database-ref')
+            .some(
+              b =>
+                (b.model as DatabaseRefBlockModel).props.refBlockId ===
+                databaseModel.id
+            ) ||
+          otherStore
+            .getBlocksByFlavour('affine:database-view-ref')
+            .some(
+              b =>
+                (b.model as DatabaseViewRefBlockModel).props.refBlockId ===
+                databaseModel.id
+            );
         if (hasRef) {
           destinationDocId = otherDocId;
           break;
@@ -475,6 +484,19 @@ export class DocsService extends Service {
             'affine:database-ref'
           )) {
             const refModel = ref.model as DatabaseRefBlockModel;
+            if (
+              refModel.props.refBlockId === databaseModel.id &&
+              refModel.props.refDocId === docId
+            ) {
+              otherStore.updateBlock(refModel, {
+                refDocId: destinationDocId,
+              });
+            }
+          }
+          for (const ref of otherStore.getBlocksByFlavour(
+            'affine:database-view-ref'
+          )) {
+            const refModel = ref.model as DatabaseViewRefBlockModel;
             if (
               refModel.props.refBlockId === databaseModel.id &&
               refModel.props.refDocId === docId

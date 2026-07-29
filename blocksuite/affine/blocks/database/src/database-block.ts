@@ -61,6 +61,8 @@ import { styleMap } from 'lit/directives/style-map.js';
 import { popSideDetail } from './components/layout.js';
 import { DatabaseConfigExtension } from './config.js';
 import { EditorHostKey } from './context/host-context.js';
+import type { DatabaseViewLocalOverride } from './context/view-local-override-context.js';
+import { DatabaseViewLocalOverrideProvider } from './context/view-local-override-context.js';
 import { DatabaseBlockDataSource } from './data-source.js';
 import {
   databaseBlockStyles,
@@ -242,6 +244,26 @@ export class DatabaseBlockComponent extends CaptionedBlockComponent<DatabaseBloc
             source
           );
         });
+      // `affine:database-view-ref` (a reference block needing its own
+      // independent view/filter configuration, separate from the canonical
+      // table's shared `views`) exposes a ready-made `viewLocalOverride` on
+      // its own custom element for exactly this seam — duck-typed, not a
+      // real import, so this foundational package never depends on that
+      // block's package (mirrors the existing, already-accepted duck-typing
+      // `database-ref-block.ts` itself does in the other direction, reaching
+      // into this component's own `virtualPadding$`/`dataSource`). Must be
+      // set inside this `init` callback (before the constructed instance is
+      // ever used), not after — `viewDataList$`/etc. are read the moment
+      // anything renders, and there's no reactive re-check afterward.
+      const overrideHost = this.closest('affine-database-view-ref') as
+        | (Element & { viewLocalOverride?: DatabaseViewLocalOverride })
+        | null;
+      if (overrideHost?.viewLocalOverride) {
+        dataSource.serviceSet(
+          DatabaseViewLocalOverrideProvider,
+          overrideHost.viewLocalOverride
+        );
+      }
     });
     // Skip when rendered nested inside a `database-ref` wrapper: `this.model`
     // there is the *shared* canonical table, the same object for every
@@ -253,8 +275,15 @@ export class DatabaseBlockComponent extends CaptionedBlockComponent<DatabaseBloc
     // apply was picking up whatever view another reference's tab click had
     // last written into this exact shared prop). `database-ref-block.ts`'s
     // own `_syncCurrentView` is the sole source of truth for the nested
-    // case, persisting to each reference's own model instead.
-    if (!this.closest('affine-database-ref')) {
+    // case, persisting to each reference's own model instead. Same
+    // reasoning applies to `affine-database-view-ref` — its own local
+    // `views`/`currentViewId` are unrelated to the canonical's, so applying
+    // the canonical's `currentViewId` here would resolve against the wrong
+    // view list entirely (its own component owns that instead).
+    if (
+      !this.closest('affine-database-ref') &&
+      !this.closest('affine-database-view-ref')
+    ) {
       const id = this.model.props.currentViewId;
       if (id && dataSource.viewManager.viewGet(id)) {
         dataSource.viewManager.setCurrentView(id);
@@ -654,9 +683,11 @@ export class DatabaseBlockComponent extends CaptionedBlockComponent<DatabaseBloc
       ([_, widget]) => widget
     )}`;
 
+    const dataViewContent = this.dataViewRootLogic.value.render();
+
     return html`
       <div contenteditable="false" class="${databaseContentStyles}">
-        ${this.dataViewRootLogic.value.render()} ${widgets}
+        ${dataViewContent} ${widgets}
       </div>
     `;
   }
