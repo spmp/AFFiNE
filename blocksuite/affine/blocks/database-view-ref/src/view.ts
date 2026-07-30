@@ -6,6 +6,7 @@ import { DatabaseViewRefBlockSchema } from '@blocksuite/affine-model';
 import { BlockViewExtension, FlavourExtension } from '@blocksuite/std';
 import { literal } from 'lit/static-html.js';
 
+import { JournalTodoDatabaseSlashMenuConfigExtension } from './configs/slash-menu.js';
 import { effects } from './effects.js';
 
 const flavour = DatabaseViewRefBlockSchema.model.flavour;
@@ -22,6 +23,7 @@ export class DatabaseViewRefViewExtension extends ViewExtensionProvider {
     super.setup(context);
     context.register([
       FlavourExtension(flavour),
+      JournalTodoDatabaseSlashMenuConfigExtension,
       BlockViewExtension(flavour, literal`affine-database-view-ref`),
     ]);
   }

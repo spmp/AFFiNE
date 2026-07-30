@@ -69,10 +69,12 @@ import {
 } from './views/index.js';
 
 const TASK_INTEROP_COLUMN_ID = '__affine_task_interop_link';
+const TASK_DONE_DATE_COLUMN_NAME = 'Done date';
 const READONLY_SYSTEM_COLUMN_NAMES = new Set([
   TASK_HIERARCHY_LEVEL_COLUMN_NAME,
   TASK_PARENT_IDENTIFIER_COLUMN_NAME,
   TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME,
+  TASK_DONE_DATE_COLUMN_NAME,
 ]);
 
 const DEFAULT_TASK_STATUS_INHERITANCE = {
@@ -477,6 +479,13 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       return;
     }
     this.cellValueChange(rowId, column.id, target.id);
+    const doneDateColumnId = this.ensureDoneDateColumn();
+    if (doneDateColumnId) {
+      updateCell(this._model, rowId, {
+        columnId: doneDateColumnId,
+        value: checked ? Date.now() : null,
+      });
+    }
   }
 
   getTodoListRowChecked(rowId: string): boolean | undefined {
@@ -507,21 +516,27 @@ export class DatabaseBlockDataSource extends DataSourceBase {
 
   /**
    * Hides Hierarchy Level/Parent Identifier/Ancestor Identifiers (always)
-   * and Status (everywhere *except* table view — Status is a real,
-   * directly-useful property there, unlike in list/kanban where the
-   * checkbox/card-column position already represents it) — whichever of
-   * these already exist as real columns — in one specific, just-created
-   * view. `hidePropertyInViews` (below) only ever hides a column in the
-   * views that already existed *at the moment that column was created* —
-   * a view added afterwards (e.g. a List view added to a database that
-   * already has todo rows and therefore an existing Status column) starts
-   * with its own fresh `columns` snapshot with no `hide` entries at all,
-   * so these would show up as ordinary, visible properties in that new
-   * view by default. Called once, right after a new view is actually
-   * added (`viewDataAdd`/`viewDataAddWithoutCapture`).
+   * and Status/Done date (everywhere *except* table view — both are real,
+   * directly-useful properties there, unlike in list/kanban where the
+   * checkbox/card-column position already represents done-ness) —
+   * whichever of these already exist as real columns — in one specific,
+   * just-created view. `hidePropertyInViews` (below) only ever hides a
+   * column in the views that already existed *at the moment that column
+   * was created* — a view added afterwards (e.g. a List view added to a
+   * database that already has todo rows and therefore an existing Status
+   * column) starts with its own fresh `columns` snapshot with no `hide`
+   * entries at all, so these would show up as ordinary, visible
+   * properties in that new view by default. Called for every new view —
+   * both the canonical database's own (`viewDataAdd`/
+   * `viewDataAddWithoutCapture`'s non-override branch) and a
+   * `database-view-ref` instance's own per-instance view (same two
+   * methods' override branch) — since `hidePropertyInViews`/
+   * `hidePropertyInOneView` route through the override-aware
+   * `viewDataList$`/`viewDataUpdate` rather than reading/writing
+   * `this._model.props.views` directly.
    */
   private hideDefaultHiddenColumnsForNewView(viewId: string) {
-    const view = this._model.props.views.find(v => v.id === viewId);
+    const view = this.viewDataList$.value.find(v => v.id === viewId);
     if (!view) {
       return;
     }
@@ -533,9 +548,11 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     const namesToHide =
       view.mode === 'table'
         ? alwaysHiddenNames
-        : [...alwaysHiddenNames, this.getTaskStatusColumn()?.name].filter(
-            (name): name is string => !!name
-          );
+        : [
+            ...alwaysHiddenNames,
+            this.getTaskStatusColumn()?.name,
+            this.getDoneDateColumn()?.name,
+          ].filter((name): name is string => !!name);
     const columnIds = this._model.props.columns
       .filter(column => namesToHide.includes(column.name))
       .map(column => column.id);
@@ -548,8 +565,8 @@ export class DatabaseBlockDataSource extends DataSourceBase {
   private hidePropertyInViews(columnId: string | string[], viewIds?: string[]) {
     const columnIds = Array.isArray(columnId) ? columnId : [columnId];
     const views = viewIds
-      ? this._model.props.views.filter(view => viewIds.includes(view.id))
-      : this._model.props.views;
+      ? this.viewDataList$.value.filter(view => viewIds.includes(view.id))
+      : this.viewDataList$.value;
     for (const view of views) {
       for (const id of columnIds) {
         this.hidePropertyInOneView(view.id, view.mode, id);
@@ -563,8 +580,9 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     columnId: string
   ) {
     if (viewMode === 'table') {
-      updateView(this._model, viewId, data => {
-        const columns = (data.columns ?? []) as Array<{
+      this.viewDataUpdate(viewId, data => {
+        const columns = ((data as { columns?: unknown[] }).columns ??
+          []) as Array<{
           id: string;
           width: number;
           hide?: boolean;
@@ -584,8 +602,9 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       return;
     }
 
-    updateView(this._model, viewId, data => {
-      const columns = (data.columns ?? []) as Array<{
+    this.viewDataUpdate(viewId, data => {
+      const columns = ((data as { columns?: unknown[] }).columns ??
+        []) as Array<{
         id: string;
         hide?: boolean;
       }>;
@@ -681,7 +700,7 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       // checkbox/card-column position already shows it), but in table
       // view it's a real, directly useful property and should stay
       // visible.
-      const nonTableViewIds = this._model.props.views
+      const nonTableViewIds = this.viewDataList$.value
         .filter(view => view.mode !== 'table')
         .map(view => view.id);
       if (nonTableViewIds.length > 0) {
@@ -689,6 +708,42 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       }
     }
     return statusColumnId;
+  }
+
+  getDoneDateColumn(): ColumnDataType | undefined {
+    return this._model.props.columns.find(
+      column => column.name === TASK_DONE_DATE_COLUMN_NAME
+    );
+  }
+
+  /**
+   * Ensures a "Done date" Date column exists — records the timestamp a row
+   * was last marked done (cleared back to `null` if un-done), auto-managed
+   * exclusively by `setTaskStatusChecked` (never directly editable, see
+   * `READONLY_SYSTEM_COLUMN_NAMES`). Visibility follows the exact same
+   * policy as the Status column: hidden by default in every *non-table*
+   * view (redundant there, filter-construction-only metadata), but visible
+   * in table view where it's a real, directly-useful property.
+   */
+  ensureDoneDateColumn(): string | undefined {
+    const existing = this.getDoneDateColumn();
+    if (existing) {
+      return existing.id;
+    }
+    const columnId = addProperty(
+      this._model,
+      'end',
+      databaseBlockProperties.dateColumnConfig.create(
+        TASK_DONE_DATE_COLUMN_NAME
+      )
+    );
+    const nonTableViewIds = this.viewDataList$.value
+      .filter(view => view.mode !== 'table')
+      .map(view => view.id);
+    if (nonTableViewIds.length > 0) {
+      this.hidePropertyInViews(columnId, nonTableViewIds);
+    }
+    return columnId;
   }
 
   private normalizeStatusLabel(value: string) {
@@ -2076,7 +2131,11 @@ export class DatabaseBlockDataSource extends DataSourceBase {
 
   viewDataAdd(viewData: DataViewDataType): string {
     const override = this.serviceGet(DatabaseViewLocalOverrideProvider);
-    if (override) return override.viewDataAdd(viewData);
+    if (override) {
+      const id = override.viewDataAdd(viewData);
+      this.hideDefaultHiddenColumnsForNewView(id);
+      return id;
+    }
     this._model.store.captureSync();
     this._model.store.transact(() => {
       this._model.props.views = [...this._model.props.views, viewData];
@@ -2087,7 +2146,11 @@ export class DatabaseBlockDataSource extends DataSourceBase {
 
   viewDataAddWithoutCapture(viewData: DataViewDataType): string {
     const override = this.serviceGet(DatabaseViewLocalOverrideProvider);
-    if (override) return override.viewDataAdd(viewData);
+    if (override) {
+      const id = override.viewDataAdd(viewData);
+      this.hideDefaultHiddenColumnsForNewView(id);
+      return id;
+    }
     this._model.store.transact(() => {
       this._model.props.views = [...this._model.props.views, viewData];
     });

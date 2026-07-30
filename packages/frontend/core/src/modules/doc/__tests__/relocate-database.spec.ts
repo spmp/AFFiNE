@@ -31,9 +31,8 @@ import { DocsService } from '../services/docs';
 // use, e.g. `database.unit.spec.ts`) with the real, fully-registered block
 // schema (`getInternalStoreExtensions()`, the same set the real app
 // registers), plus a `DocsService` instance built via
-// `Object.create(DocsService.prototype)` (mirroring
-// `journal-carry-forward.spec.ts`'s own established mocking pattern for
-// this package) with only `store` stubbed to delegate to the real
+// `Object.create(DocsService.prototype)` (an established mocking pattern
+// for this package) with only `store` stubbed to delegate to the real
 // `TestWorkspace` — everything else (`Transformer`, `Slice`, the actual
 // relocation/repoint logic) runs for real, unmocked.
 function createTestCollection() {

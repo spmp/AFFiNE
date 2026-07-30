@@ -89,6 +89,37 @@ describe('database-view-ref: per-instance view/filter override', () => {
     ).toBe(canonicalViewsCountBefore);
   });
 
+  test('insertDatabaseViewRefBlockCommand called with no `initialView` still seeds a bare table view (default-args regression, Story 2.4)', async () => {
+    // Story 2.4 extended `seedInitialView`'s signature with an optional
+    // `initialView: { viewType?, initialFilter? }` — every existing caller
+    // (including this file's own calls above, and the plain database-ref
+    // slash-menu command) omits it entirely and must be unaffected.
+    const { databaseId } = createOrdinaryDatabase();
+    await wait();
+
+    const noteId = addNote(doc);
+    const anchor = doc.getBlock(noteId)!.model.children[0]!;
+    const [, result] = editor.std.command.exec(
+      insertDatabaseViewRefBlockCommand,
+      { refBlockId: databaseId, place: 'after', selectedModels: [anchor] }
+    );
+    await wait();
+
+    const refModel = doc.getBlock(result.insertedDatabaseViewRefBlockId!)!
+      .model as DatabaseViewRefBlockModel;
+    expect(refModel.props.views.length).toBe(1);
+    const seededView = refModel.props.views[0] as unknown as {
+      mode: string;
+      filter?: { conditions: unknown[] };
+    };
+    expect(seededView.mode).toBe('table');
+    // The view's own default (empty) filter, untouched — proves
+    // `seedInitialView`'s optional `initialFilter` was never applied when
+    // omitted, rather than asserting a specific raw shape that's really
+    // owned by the view preset's own `defaultData`, not this command.
+    expect(seededView.filter?.conditions ?? []).toEqual([]);
+  });
+
   test("changing one reference's view does not mutate the canonical's views, the other reference, or a plain database-ref", async () => {
     const { databaseId } = createOrdinaryDatabase();
     await wait();
