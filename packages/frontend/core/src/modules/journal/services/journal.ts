@@ -4,7 +4,6 @@ import dayjs from 'dayjs';
 import type { DocsService } from '../../doc';
 import type { TemplateDocService } from '../../template-doc';
 import type { JournalStore } from '../store/journal';
-import type { JournalCarryForwardService } from './journal-carry-forward';
 
 export type MaybeDate = Date | string | number;
 
@@ -14,8 +13,7 @@ export class JournalService extends Service {
   constructor(
     private readonly store: JournalStore,
     private readonly docsService: DocsService,
-    private readonly templateDocService: TemplateDocService,
-    private readonly carryForwardService?: JournalCarryForwardService
+    private readonly templateDocService: TemplateDocService
   ) {
     super();
   }
@@ -33,17 +31,8 @@ export class JournalService extends Service {
     });
   }
 
-  setJournalDate(
-    docId: string,
-    date: string,
-    options?: { skipCarryForward?: boolean }
-  ) {
+  setJournalDate(docId: string, date: string) {
     this.store.setDocJournalDate(docId, date);
-    if (!options?.skipCarryForward) {
-      Promise.resolve(
-        this.carryForwardService?.applyCarryForward(docId, date)
-      ).catch(console.error);
-    }
   }
 
   removeJournalDate(docId: string) {
@@ -91,13 +80,8 @@ export class JournalService extends Service {
         docRecord.id
       );
     }
-    this.setJournalDate(docRecord.id, title, { skipCarryForward: true });
-    templatePromise
-      .catch(console.error)
-      .then(() =>
-        this.carryForwardService?.applyCarryForward(docRecord.id, title)
-      )
-      .catch(console.error);
+    this.setJournalDate(docRecord.id, title);
+    templatePromise.catch(console.error);
     return docRecord;
   }
 

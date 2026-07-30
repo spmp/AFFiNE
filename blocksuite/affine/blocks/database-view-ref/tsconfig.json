@@ -14,6 +14,7 @@
     { "path": "../../ext-loader" },
     { "path": "../../model" },
     { "path": "../../shared" },
+    { "path": "../../widgets/slash-menu" },
     { "path": "../../../framework/global" },
     { "path": "../../../framework/std" },
     { "path": "../../../framework/store" }
