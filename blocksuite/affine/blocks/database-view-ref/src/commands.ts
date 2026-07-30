@@ -15,28 +15,48 @@ import {
 } from '@blocksuite/affine-shared/utils';
 import type { Command } from '@blocksuite/std';
 import type { BlockModel } from '@blocksuite/store';
+import type { BasicViewDataType, FilterGroup } from '@blocksuite/data-view';
 
 import { createLocalViewOverride } from './view-override.js';
 
+export interface SeedInitialViewOptions {
+  /** Defaults to `'table'`, matching this function's pre-existing behavior. */
+  viewType?: string;
+  /** Merged into the newly-created view's `filter` field, if provided. */
+  initialFilter?: FilterGroup;
+}
+
 /**
- * Seeds a freshly created `affine:database-view-ref` with one default
- * ('table') view of its own — mirrors how a freshly created `affine:database`
- * itself always starts with one view, but writes into this reference's own
- * local `views` (via `DatabaseViewLocalOverrideProvider`) instead of the
+ * Seeds a freshly created `affine:database-view-ref` with one default view
+ * of its own — mirrors how a freshly created `affine:database` itself
+ * always starts with one view, but writes into this reference's own local
+ * `views` (via `DatabaseViewLocalOverrideProvider`) instead of the
  * canonical's. Deliberately does *not* reuse `databaseViewInitTemplate`
  * (`blocks/database/src/data-source.ts`) — that also adds rows/properties/
  * task-workflow columns, which only makes sense for a brand-new, empty
  * database, not a reference to an already-populated canonical.
+ *
+ * `options` defaults to today's exact pre-existing behavior (`'table'`, no
+ * filter) — additive only, so every existing caller (this file's own
+ * `insertDatabaseViewRefBlockCommand`, called with no extra args) is
+ * unaffected. Story 2.4's own Journal Todo command is the first caller to
+ * pass `{ viewType: 'list', initialFilter }`.
  */
 function seedInitialView(
   refModel: DatabaseViewRefBlockModel,
-  canonicalModel: DatabaseBlockModel
+  canonicalModel: DatabaseBlockModel,
+  options?: SeedInitialViewOptions
 ) {
   const override = createLocalViewOverride(refModel);
   const dataSource = new DatabaseBlockDataSource(canonicalModel, ds => {
     ds.serviceSet(DatabaseViewLocalOverrideProvider, override);
   });
-  dataSource.viewManager.viewAdd('table');
+  const id = dataSource.viewManager.viewAdd(options?.viewType ?? 'table');
+  if (options?.initialFilter) {
+    dataSource.viewDataUpdate<
+      BasicViewDataType<string, { filter: FilterGroup }>
+    >(id, () => ({ filter: options.initialFilter as FilterGroup }));
+  }
 }
 
 export const insertDatabaseViewRefBlockCommand: Command<
@@ -49,13 +69,24 @@ export const insertDatabaseViewRefBlockCommand: Command<
     // its own doc, so no promotion/move is needed. Unset defaults to the
     // current doc — mirrors `insertDatabaseRefBlockCommand` exactly.
     refDocId?: string;
+    // Threaded straight through to `seedInitialView` — see
+    // `SeedInitialViewOptions`. Omitted entirely by every caller except
+    // Story 2.4's own Journal Todo command.
+    initialView?: SeedInitialViewOptions;
   },
   {
     insertedDatabaseViewRefBlockId: string;
   }
 > = (ctx, next) => {
-  const { selectedModels, refBlockId, place, removeEmptyLine, refDocId, std } =
-    ctx;
+  const {
+    selectedModels,
+    refBlockId,
+    place,
+    removeEmptyLine,
+    refDocId,
+    initialView,
+    std,
+  } = ctx;
   if (!selectedModels?.length) return;
 
   const targetModel =
@@ -119,7 +150,7 @@ export const insertDatabaseViewRefBlockCommand: Command<
       | DatabaseBlockModel
       | undefined;
     if (refModel && canonicalModel) {
-      seedInitialView(refModel, canonicalModel);
+      seedInitialView(refModel, canonicalModel, initialView);
     }
   }
 
@@ -149,7 +180,7 @@ export const insertDatabaseViewRefBlockCommand: Command<
             | DatabaseViewRefBlockModel
             | undefined;
           if (refModel) {
-            seedInitialView(refModel, canonicalModel);
+            seedInitialView(refModel, canonicalModel, initialView);
           }
         })
         .catch(() => {

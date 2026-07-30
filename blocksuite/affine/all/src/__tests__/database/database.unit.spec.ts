@@ -617,6 +617,34 @@ describe('DatabaseManager', () => {
     expect(dataSource.getTaskStatusInfo(child)?.checked).toBe(false);
   });
 
+  test('setTaskStatusChecked auto-stamps and clears a hidden "Done date" column', () => {
+    const options = [
+      { id: 'not_done', value: 'Open', color: 'var(--affine-tag-yellow)' },
+      { id: 'done', value: 'Finished', color: 'var(--affine-tag-green)' },
+    ];
+    addProperty(
+      db,
+      'end',
+      propertyModelPresets.selectPropertyModelConfig.create('Status', {
+        options,
+      })
+    );
+
+    const dataSource = new DatabaseBlockDataSource(db);
+    const doneDateColumnId = dataSource.ensureDoneDateColumn();
+    expect(doneDateColumnId).toBeTruthy();
+    expect(getCell(db, p1, doneDateColumnId!)?.value ?? null).toBeNull();
+
+    const before = Date.now();
+    dataSource.setTaskStatusChecked(p1, true);
+    const stamped = getCell(db, p1, doneDateColumnId!)?.value;
+    expect(typeof stamped).toBe('number');
+    expect(stamped as number).toBeGreaterThanOrEqual(before);
+
+    dataSource.setTaskStatusChecked(p1, false);
+    expect(getCell(db, p1, doneDateColumnId!)?.value ?? null).toBeNull();
+  });
+
   test('creates list database view through generic view initialization without converting initial rows', () => {
     const listDatabaseId = doc.addBlock(
       'affine:database',
@@ -706,6 +734,27 @@ describe('DatabaseManager', () => {
     // visible (either absent from the hide-list, or explicitly `false`).
     expect(findHide(tableViewId)).not.toBe(true);
     // List view: redundant with the checkbox — hidden by default.
+    expect(findHide(listViewId)).toBe(true);
+  });
+
+  test('the "Done date" column follows the same visible-in-table/hidden-elsewhere policy as Status', () => {
+    const dataSource = new DatabaseBlockDataSource(db);
+
+    const tableViewId = dataSource.viewManager.viewAdd('table');
+    const rowId = dataSource.rowAddAsTodoList('end');
+    dataSource.setTaskStatusChecked(rowId, true); // creates the Done date column
+    const listViewId = dataSource.viewManager.viewAdd('list');
+
+    const doneDateColumn = dataSource.getDoneDateColumn()!;
+    expect(doneDateColumn).toBeTruthy();
+
+    const findHide = (viewId: string) => {
+      const view = db.props.views.find(v => v.id === viewId) as
+        | { columns?: { id: string; hide?: boolean }[] }
+        | undefined;
+      return view?.columns?.find(c => c.id === doneDateColumn.id)?.hide;
+    };
+    expect(findHide(tableViewId)).not.toBe(true);
     expect(findHide(listViewId)).toBe(true);
   });
 

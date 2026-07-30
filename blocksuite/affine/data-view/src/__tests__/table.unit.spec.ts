@@ -194,6 +194,71 @@ describe('table filtering', () => {
   });
 });
 
+describe('journal todo "done date" filter semantics', () => {
+  // Mirrors the OR(isNotOneOf(done), after(referenceCreatedAt-1)) filter
+  // built by `journalTodoDatabaseSlashMenuConfig` (Story 2.4/Done-date
+  // follow-up) — a task done *after this specific reference was inserted*
+  // stays visible in it; a task done before the reference existed is
+  // filtered out. Deliberately based on real wall-clock reference-creation
+  // time, not the journal's own (possibly future- or past-dated) date —
+  // see the slash-menu config's own comment for why.
+  const referenceCreatedAt = new Date('2026-07-29T00:00:00').getTime();
+
+  function makeFilter(): FilterGroup {
+    return {
+      type: 'group',
+      op: 'or',
+      conditions: [
+        {
+          type: 'filter',
+          left: { type: 'ref', name: 'status' },
+          function: 'isNotOneOf',
+          args: [{ type: 'literal', value: ['done'] }],
+        },
+        {
+          type: 'filter',
+          left: { type: 'ref', name: 'doneDate' },
+          function: 'after',
+          args: [{ type: 'literal', value: referenceCreatedAt - 1 }],
+        },
+      ],
+    };
+  }
+
+  function makeView(statusValue: unknown, doneDateValue: unknown) {
+    const statusProperty = {
+      id: 'status',
+      cellGetOrCreate: () => ({ jsonValue$: { value: statusValue } }),
+    };
+    const doneDateProperty = {
+      id: 'doneDate',
+      cellGetOrCreate: () => ({ jsonValue$: { value: doneDateValue } }),
+    };
+    return {
+      filter$: { value: makeFilter() },
+      properties$: { value: [statusProperty, doneDateProperty] },
+      propertiesRaw$: { value: [statusProperty, doneDateProperty] },
+    } as unknown as TableSingleView;
+  }
+
+  test('a not-done row stays visible regardless of Done date', () => {
+    const view = makeView('not_done', null);
+    expect(TableSingleView.prototype.isShow.call(view, 'row-1')).toBe(true);
+  });
+
+  test('a row done after this reference was created stays visible', () => {
+    const doneAfter = referenceCreatedAt + 60 * 60 * 1000;
+    const view = makeView('done', doneAfter);
+    expect(TableSingleView.prototype.isShow.call(view, 'row-1')).toBe(true);
+  });
+
+  test('a row done before this reference was created is filtered out', () => {
+    const doneBefore = referenceCreatedAt - 60 * 60 * 1000;
+    const view = makeView('done', doneBefore);
+    expect(TableSingleView.prototype.isShow.call(view, 'row-1')).toBe(false);
+  });
+});
+
 describe('number formatter', () => {
   test('number format menu should expose all schema formats', () => {
     const menuFormats = numberFormats.map(format => format.type);
