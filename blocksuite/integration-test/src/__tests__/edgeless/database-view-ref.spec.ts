@@ -1,4 +1,7 @@
-import { insertDatabaseViewRefBlockCommand } from '@blocksuite/affine/blocks/database-view-ref';
+import {
+  genericDatabaseViewRefSlashMenuConfig,
+  insertDatabaseViewRefBlockCommand,
+} from '@blocksuite/affine/blocks/database-view-ref';
 import type { DatabaseViewRefBlockComponent } from '@blocksuite/affine/blocks/database-view-ref';
 import {
   insertDatabaseRefBlockCommand,
@@ -10,6 +13,7 @@ import type {
   NoteBlockModel,
 } from '@blocksuite/affine/model';
 import { NoteDisplayMode } from '@blocksuite/affine/model';
+import { CrossDocReferenceProvider } from '@blocksuite/affine/shared/services';
 import { Store, Text } from '@blocksuite/store';
 import { beforeEach, describe, expect, test } from 'vitest';
 
@@ -526,3 +530,214 @@ describe('database-view-ref referenced across pages (cross-doc)', () => {
 // modeled after, not by an automated test here. The same-doc, in-editor
 // cascade-delete-if-last-reference behavior (`delete-guard.ts`) — which
 // *is* reachable from this package — is fully covered by the tests above.
+
+// Story 2.5: the generic, non-journal-specific slash-menu items that let a
+// user reference *any* database (same-doc or cross-doc) as a
+// `database-view-ref` with its own independent, unfiltered default view —
+// purely additive alongside `database-ref.spec.ts`'s own existing "Table:"/
+// "Reference" item tests, which remain unchanged and are re-run as part of
+// the full regression sweep, not duplicated here.
+describe('database-view-ref: generic reference slash-menu items (Story 2.5)', () => {
+  beforeEach(async () => {
+    const cleanup = await setupEditor('page');
+    return cleanup;
+  });
+
+  function createSecondDoc() {
+    const secondDoc = collection
+      .createDoc(`doc:second-${Math.random().toString(16).slice(2, 8)}`)
+      .getStore();
+    secondDoc.load(() => {
+      const rootId = secondDoc.addBlock('affine:page', { title: new Text() });
+      secondDoc.addBlock('affine:surface', {}, rootId);
+    });
+    return secondDoc;
+  }
+
+  test('offers a same-doc "Table (own view)" item per existing database, and it inserts a database-view-ref with a plain default view', async () => {
+    const noteId = addNote(doc);
+    const databaseId = doc.addBlock(
+      'affine:database',
+      { title: new Text('My Table') },
+      noteId
+    );
+    await wait();
+
+    const anchorNoteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, anchorNoteId);
+    const model = doc.getModelById(paragraphId)!;
+
+    const items = genericDatabaseViewRefSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: editor.std, model }) : items;
+    const sameDocItem = resolvedItems.find(
+      item => item.name === 'Table (own view): My Table'
+    );
+    expect(sameDocItem).toBeTruthy();
+
+    await (sameDocItem as unknown as { action: () => Promise<void> }).action();
+    await wait();
+
+    const refs = doc.getBlocksByFlavour('affine:database-view-ref');
+    expect(refs.length).toBe(1);
+    const refModel = refs[0]!.model as DatabaseViewRefBlockModel;
+    expect(refModel.props.refBlockId).toBe(databaseId);
+    expect(refModel.props.refDocId).toBe(doc.id);
+
+    const seededView = refModel.props.views[0] as unknown as {
+      mode: string;
+      filter?: { conditions: unknown[] };
+    };
+    expect(seededView.mode).toBe('table');
+    expect(seededView.filter?.conditions ?? []).toEqual([]);
+  });
+
+  test('offers no same-doc items when the workspace has no databases, but the cross-doc "Reference (own view)" item is still offered', async () => {
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+
+    const items = genericDatabaseViewRefSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: editor.std, model }) : items;
+
+    expect(
+      resolvedItems.filter(item => item.name.startsWith('Table (own view)'))
+        .length
+    ).toBe(0);
+    expect(
+      resolvedItems.find(item => item.name === 'Reference (own view)')
+    ).toBeTruthy();
+  });
+
+  test('the cross-doc "Reference (own view)" item restricts the picker to database candidates and inserts a cross-doc database-view-ref', async () => {
+    const secondDoc = createSecondDoc();
+    const secondNoteId = addNote(secondDoc);
+    const databaseId = secondDoc.addBlock(
+      'affine:database',
+      { title: new Text() },
+      secondNoteId
+    );
+
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+
+    let capturedAllowedFlavours: readonly string[] | undefined;
+    const stubStd = new Proxy(editor.std, {
+      get(target, prop, receiver) {
+        if (prop === 'getOptional') {
+          return (identifier: unknown) =>
+            identifier === CrossDocReferenceProvider
+              ? {
+                  openCrossDocReferencePicker: async (
+                    _excludeDocId: string,
+                    allowedFlavours?: readonly string[]
+                  ) => {
+                    capturedAllowedFlavours = allowedFlavours;
+                    return {
+                      docId: secondDoc.id,
+                      blockId: databaseId,
+                      flavour: 'affine:database' as const,
+                    };
+                  },
+                }
+              : undefined;
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    const items = genericDatabaseViewRefSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stubStd, model }) : items;
+    const referenceItem = resolvedItems.find(
+      item => item.name === 'Reference (own view)'
+    );
+    expect(referenceItem).toBeTruthy();
+
+    await (
+      referenceItem as unknown as { action: () => Promise<void> }
+    ).action();
+    await wait();
+
+    expect(capturedAllowedFlavours).toEqual(['affine:database']);
+
+    const refs = doc.getBlocksByFlavour('affine:database-view-ref');
+    expect(refs.length).toBe(1);
+    const refModel = refs[0]!.model as DatabaseViewRefBlockModel;
+    expect(refModel.props.refBlockId).toBe(databaseId);
+    expect(refModel.props.refDocId).toBe(secondDoc.id);
+  });
+
+  test('two references inserted via these new slash-menu items each keep their own independent view (no leakage)', async () => {
+    const noteId = addNote(doc);
+    const databaseId = doc.addBlock(
+      'affine:database',
+      { title: new Text('Shared Table') },
+      noteId
+    );
+    await wait();
+
+    const firstAnchorNoteId = addNote(doc);
+    const firstParagraphId = doc.addBlock(
+      'affine:paragraph',
+      {},
+      firstAnchorNoteId
+    );
+    const firstModel = doc.getModelById(firstParagraphId)!;
+    const items = genericDatabaseViewRefSlashMenuConfig.items;
+    const firstResolved =
+      typeof items === 'function'
+        ? items({ std: editor.std, model: firstModel })
+        : items;
+    await (
+      firstResolved.find(
+        item => item.name === 'Table (own view): Shared Table'
+      ) as unknown as { action: () => Promise<void> }
+    ).action();
+    await wait();
+
+    const secondAnchorNoteId = addNote(doc);
+    const secondParagraphId = doc.addBlock(
+      'affine:paragraph',
+      {},
+      secondAnchorNoteId
+    );
+    const secondModel = doc.getModelById(secondParagraphId)!;
+    const secondResolved =
+      typeof items === 'function'
+        ? items({ std: editor.std, model: secondModel })
+        : items;
+    await (
+      secondResolved.find(
+        item => item.name === 'Table (own view): Shared Table'
+      ) as unknown as { action: () => Promise<void> }
+    ).action();
+    await wait();
+
+    const refBlocks = doc.getBlocksByFlavour('affine:database-view-ref');
+    expect(refBlocks.length).toBe(2);
+    const ref0 = refBlocks[0]!.model as DatabaseViewRefBlockModel;
+    const ref1 = refBlocks[1]!.model as DatabaseViewRefBlockModel;
+    expect(ref0.props.views[0]!.id).not.toBe(ref1.props.views[0]!.id);
+
+    // Renaming one reference's own view must not affect the other, or the
+    // canonical's own shared `views` (Story 2.2's own no-leakage guarantee,
+    // re-confirmed here specifically through this story's new insertion
+    // path rather than only through direct command calls).
+    doc.updateBlock(ref0, {
+      views: ref0.props.views.map(v => ({ ...v, name: 'Renamed' })),
+    });
+    await wait();
+
+    expect(ref0.props.views[0]!.name).toBe('Renamed');
+    expect(ref1.props.views[0]!.name).not.toBe('Renamed');
+    const canonicalModel = doc.getModelById(databaseId) as unknown as {
+      props: { views: { name?: string }[] };
+    };
+    expect(canonicalModel.props.views.some(v => v.name === 'Renamed')).toBe(
+      false
+    );
+  });
+});
