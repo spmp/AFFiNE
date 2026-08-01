@@ -486,11 +486,18 @@ export class DocsSearchService extends Service {
               occur: 'should',
               queries: [
                 { type: 'match', field: 'content', match: query },
+                // Boosted well above a loose content-token match: living
+                // in a doc whose own *title* matched the query is a much
+                // stronger signal than a block merely containing one of
+                // the query's words somewhere in its content — without
+                // this, a block in a doc titled exactly "2026-07-30" (a
+                // journal) ranked no higher than any other block that
+                // happened to share a single word with the query.
                 ...matchingDocIds.map(
                   (docId): Query<'block'> => ({
-                    type: 'match',
-                    field: 'docId',
-                    match: docId,
+                    type: 'boost',
+                    boost: 3,
+                    query: { type: 'match', field: 'docId', match: docId },
                   })
                 ),
               ],
@@ -575,6 +582,11 @@ export class DocsSearchService extends Service {
                 | 'affine:database'
                 | 'affine:note',
               label: label || undefined,
+              // The indexer's own relevance score (BM25-based, boosted
+              // above for exact containing-doc-title matches) — consumers
+              // should sort by this instead of alphabetically, so an exact
+              // or near-exact match actually ranks first.
+              score: node.score,
             };
           })
           .filter((item): item is NonNullable<typeof item> => item !== null);

@@ -47,12 +47,20 @@ export class CrossDocReferenceQuickSearchSession
   query = effect(
     throttleTime<string>(300, undefined, { leading: false, trailing: true }),
     switchMap(query => {
-      if (!query) return of([]);
-
+      // An empty query is a deliberate "browse all" request, not "search
+      // for nothing" — `watchCrossDocReferenceCandidates` already supports
+      // this (an empty/`undefined` `query` skips its own text-match clause
+      // entirely and returns every candidate of the allowed flavour(s), up
+      // to its own pagination limit). Previously this short-circuited to
+      // an empty result unconditionally, which meant there was no way to
+      // list all candidates (e.g. every blank-titled table, or every table
+      // living in a journal doc) without already knowing search text that
+      // happens to match one — a real discoverability gap, not a deliberate
+      // "type something first" UX choice.
       return this.docsSearchService
         .watchCrossDocReferenceCandidates(
           this.props.excludeDocId,
-          query,
+          query || undefined,
           this.props.allowedFlavours
         )
         .pipe(
@@ -78,42 +86,52 @@ export class CrossDocReferenceQuickSearchSession
               })
               .filter((r): r is NonNullable<typeof r> => !!r);
 
-            // Grouped by page first, then by the block's own name within
-            // each page — `container.tsx` sorts groups/items by descending
-            // numeric score, so a locale-aware sort here is translated into
-            // per-group and per-item scores below (highest score = shown
-            // first) rather than relying on any natural array order.
-            resolved.sort(
-              (a, b) =>
-                a.pageTitle.localeCompare(b.pageTitle) ||
-                a.blockTitle.localeCompare(b.blockTitle)
-            );
+            // With an actual search query, the indexer's own relevance
+            // score (BM25-based, boosted for exact containing-doc-title
+            // matches — see `watchCrossDocReferenceCandidates`) is what
+            // should decide ranking — an exact/near-exact match must
+            // outrank a document that merely shares one loose word with
+            // the query. Previously this sorted purely alphabetically and
+            // discarded the indexer's score entirely, which is exactly why
+            // typing an exact page or table name didn't surface it first.
+            //
+            // With an empty query (browse-all mode, no query text to score
+            // relevance against), every candidate scores identically, so
+            // alphabetical-by-page-then-by-block remains the sensible
+            // default for simply browsing everything.
+            if (query) {
+              resolved.sort((a, b) => b.candidate.score - a.candidate.score);
+            } else {
+              resolved.sort(
+                (a, b) =>
+                  a.pageTitle.localeCompare(b.pageTitle) ||
+                  a.blockTitle.localeCompare(b.blockTitle)
+              );
+            }
 
-            const pageOrder: string[] = [];
+            // `container.tsx` sorts groups/items by descending numeric
+            // score. Each page's own group score is the best (highest) of
+            // its items' scores, so a page containing a strong match still
+            // surfaces above a page whose only match is weak — even if
+            // that weaker-matching page happens to contain more items.
+            const pageBestScore = new Map<string, number>();
             for (const { candidate } of resolved) {
-              if (!pageOrder.includes(candidate.docId)) {
-                pageOrder.push(candidate.docId);
+              const prev = pageBestScore.get(candidate.docId) ?? -Infinity;
+              if (candidate.score > prev) {
+                pageBestScore.set(candidate.docId, candidate.score);
               }
             }
-            const pageScore = (docId: string) =>
-              pageOrder.length - pageOrder.indexOf(docId);
-
-            const itemIndexWithinPage = new Map<string, number>();
 
             return resolved.map(({ candidate, pageTitle, blockTitle }) => {
-              const indexWithinPage =
-                itemIndexWithinPage.get(candidate.docId) ?? 0;
-              itemIndexWithinPage.set(candidate.docId, indexWithinPage + 1);
-
               return {
                 id: `cross-doc-reference:${candidate.docId}:${candidate.blockId}`,
                 source: 'cross-doc-reference',
                 group: {
                   id: candidate.docId,
                   label: pageTitle,
-                  score: pageScore(candidate.docId),
+                  score: pageBestScore.get(candidate.docId) ?? 0,
                 },
-                score: -indexWithinPage,
+                score: candidate.score,
                 label: {
                   title: blockTitle,
                   subTitle: pageTitle,
