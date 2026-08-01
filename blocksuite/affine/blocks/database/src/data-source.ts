@@ -405,10 +405,14 @@ export class DatabaseBlockDataSource extends DataSourceBase {
         current.cascadeManualDoneToDescendants,
     };
     this.doc.captureSync();
+    let doneStamps: Record<string, boolean> = {};
     this._model.store.transact(() => {
       this._model.props.taskStatusInheritance = resolved;
-      this.recomputeAllParentStatusesFromChildren();
+      doneStamps = this.recomputeAllParentStatusesFromChildren();
     });
+    for (const [rowId, isDone] of Object.entries(doneStamps)) {
+      this.stampDoneDateForRow(rowId, isDone);
+    }
   }
 
   getTaskStatusColumn() {
@@ -479,13 +483,35 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       return;
     }
     this.cellValueChange(rowId, column.id, target.id);
+  }
+
+  /**
+   * Stamps (or clears) the hidden "Done date" column for a single row —
+   * the one, centralized place every task-status-changing code path in
+   * this file routes through, so a row's Done date always reflects its
+   * true current done/not-done state, however that state was reached.
+   * Previously this only ran inside `setTaskStatusChecked` itself, which
+   * missed every other way a row's status can change: a parent
+   * auto-promoted/demoted by `recomputeParentStatusesFromChildren`, a
+   * descendant auto-cascaded by `cascadeStatusToDescendants`, or a plain
+   * cell edit through the generic property editor (`cellValueChange` is
+   * also called directly by `core/view-manager/cell.ts`, not only via
+   * `setTaskStatusChecked`) — in each of those cases the row's Status
+   * cell changed but its Done date silently never did, so a task that
+   * became done via cascade or direct edit could immediately fail the
+   * Journal Todo view's `OR(isNotOneOf(done), after(doneDate, ...))`
+   * filter on both branches and vanish, even though it was never
+   * explicitly checked off by the user in that view.
+   */
+  private stampDoneDateForRow(rowId: string, isDone: boolean) {
     const doneDateColumnId = this.ensureDoneDateColumn();
-    if (doneDateColumnId) {
-      updateCell(this._model, rowId, {
-        columnId: doneDateColumnId,
-        value: checked ? Date.now() : null,
-      });
+    if (!doneDateColumnId) {
+      return;
     }
+    updateCell(this._model, rowId, {
+      columnId: doneDateColumnId,
+      value: isDone ? Date.now() : null,
+    });
   }
 
   getTodoListRowChecked(rowId: string): boolean | undefined {
@@ -851,12 +877,17 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     );
   }
 
-  private recomputeAllParentStatusesFromChildren() {
+  private recomputeAllParentStatusesFromChildren(): Record<string, boolean> {
+    const doneFlags: Record<string, boolean> = {};
     for (const column of this.getTaskStatusColumns()) {
       for (const row of this._model.children) {
-        this.recomputeParentStatusesFromChildren(row.id, column.id, 'auto');
+        Object.assign(
+          doneFlags,
+          this.recomputeParentStatusesFromChildren(row.id, column.id, 'auto')
+        );
       }
     }
+    return doneFlags;
   }
 
   private getChildrenByParentRowId() {
@@ -905,16 +936,27 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     return childrenByParent;
   }
 
+  /**
+   * Returns `{rowId: isDone}` for every row this cascade actually updated,
+   * rather than stamping the Done date column itself — see
+   * `stampDoneDateForRow`'s own comment for why: doing so here, mid-cascade,
+   * can insert a brand-new Done date column (first time only) via
+   * `addProperty`'s array splice, which corrupts the very hierarchy walk
+   * (`getChildrenByParentRowId`/`this._model.children`) this function and
+   * `recomputeParentStatusesFromChildren` both depend on. Callers collect
+   * these results and stamp only after their own outermost `store.transact`
+   * has fully committed.
+   */
   private cascadeStatusToDescendants(
     rowId: string,
     propertyId: string,
     targetOption: StatusOption,
     provenance: StatusProvenance,
     manualLock: ManualLock
-  ) {
+  ): Record<string, boolean> {
     const childrenByParent = this.getChildrenByParentRowId();
     if (!childrenByParent) {
-      return;
+      return {};
     }
 
     const descendants: string[] = [];
@@ -964,11 +1006,23 @@ export class DatabaseBlockDataSource extends DataSourceBase {
         manualLock,
       });
     }
-    if (Object.keys(cascadeUpdates).length > 0) {
-      updateCells(this._model, propertyId, cascadeUpdates);
+    if (Object.keys(cascadeUpdates).length === 0) {
+      return {};
     }
+    updateCells(this._model, propertyId, cascadeUpdates);
+    const cascadedIsDone = targetStage === 'done';
+    const doneStamps: Record<string, boolean> = {};
+    for (const descendantId of Object.keys(cascadeUpdates)) {
+      doneStamps[descendantId] = cascadedIsDone;
+    }
+    return doneStamps;
   }
 
+  /**
+   * Returns `{rowId: isDone}` for every ancestor this recompute actually
+   * updated — see `cascadeStatusToDescendants`'s own comment for why this
+   * doesn't stamp the Done date column itself.
+   */
   private recomputeParentStatusesFromChildren(
     changedRowId: string,
     propertyId: string,
@@ -976,15 +1030,15 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     context?: {
       descendantDemotedFromDone?: boolean;
     }
-  ) {
+  ): Record<string, boolean> {
     const statusColumn = this._model.props.columns.find(
       column => column.id === propertyId && column.type === 'select'
     );
     if (!statusColumn) {
-      return;
+      return {};
     }
     if (!this.isTaskStatusColumn(statusColumn)) {
-      return;
+      return {};
     }
     const options = ((
       statusColumn.data as { options?: Array<{ id: string; value: string }> }
@@ -1002,14 +1056,14 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       }
     }
     if (stageToOption.size === 0) {
-      return;
+      return {};
     }
 
     const parentColumn = this._model.props.columns.find(
       column => column.name === TASK_PARENT_IDENTIFIER_COLUMN_NAME
     );
     if (!parentColumn) {
-      return;
+      return {};
     }
 
     const rowIds = this._model.children.map(child => child.id);
@@ -1059,9 +1113,14 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       inheritance.done === 'disabled' &&
       inheritance.inProgress === 'disabled'
     ) {
-      return;
+      return {};
     }
     const updates: Record<string, unknown> = {};
+    // Tracked alongside `updates` since a different ancestor further up
+    // the same chain can resolve to a different target stage than the
+    // one just below it — each row's own Done date must reflect its own
+    // resolved stage, not whatever the changed row's own stage was.
+    const doneFlags: Record<string, boolean> = {};
 
     const getRowStage = (rowId: string): WorkflowStage => {
       const pending = updates[rowId];
@@ -1170,6 +1229,8 @@ export class DatabaseBlockDataSource extends DataSourceBase {
           const demotionOption = option ?? stageToOption.get('in_progress');
           if (demotionOption && currentId !== demotionOption.id) {
             updates[currentParentRowId] = demotionOption.id;
+            doneFlags[currentParentRowId] =
+              this.resolveWorkflowStageFromOption(demotionOption) === 'done';
             this.setRowStatusState(currentParentRowId, {
               provenance: 'auto',
               manualLock: 'none',
@@ -1177,6 +1238,7 @@ export class DatabaseBlockDataSource extends DataSourceBase {
           }
         } else if (!blockAutoDemotionFromDone && currentId !== option.id) {
           updates[currentParentRowId] = option.id;
+          doneFlags[currentParentRowId] = targetStage === 'done';
           this.setRowStatusState(currentParentRowId, {
             provenance: 'auto',
             manualLock: 'none',
@@ -1210,9 +1272,11 @@ export class DatabaseBlockDataSource extends DataSourceBase {
         : undefined;
     }
 
-    if (Object.keys(updates).length > 0) {
-      updateCells(this._model, propertyId, updates);
+    if (Object.keys(updates).length === 0) {
+      return {};
     }
+    updateCells(this._model, propertyId, updates);
+    return doneFlags;
   }
 
   private isReadonlySystemColumn(propertyId: string) {
@@ -1506,6 +1570,17 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       },
     });
 
+    // All Done-date stamping is collected into `doneStamps` and applied
+    // only after the whole transact below fully commits — see the comment
+    // on `stampDoneDateForRow`/`cascadeStatusToDescendants` for why:
+    // stamping inline, mid-cascade, can insert a brand-new Done date
+    // column (first time only) via `addProperty`'s array splice, which
+    // corrupted the hierarchy walk `cascadeStatusToDescendants`/
+    // `recomputeParentStatusesFromChildren` both depend on (confirmed by
+    // regression: 12 pre-existing cascade tests failed until every stamp
+    // was deferred to run strictly after all cascade mutations settle).
+    const doneStamps: Record<string, boolean> = {};
+
     this._model.store.transact(() => {
       let descendantDemotedFromDone = false;
 
@@ -1534,18 +1609,22 @@ export class DatabaseBlockDataSource extends DataSourceBase {
           provenance: 'manual',
           manualLock,
         });
+        doneStamps[rowId] = isDone;
 
         if (nextStage === 'todo') {
           const todoOption = options.find(
             option => this.resolveWorkflowStageFromOption(option) === 'todo'
           );
           if (todoOption) {
-            this.cascadeStatusToDescendants(
-              rowId,
-              propertyId,
-              todoOption,
-              'auto',
-              'none'
+            Object.assign(
+              doneStamps,
+              this.cascadeStatusToDescendants(
+                rowId,
+                propertyId,
+                todoOption,
+                'auto',
+                'none'
+              )
             );
           }
         } else if (
@@ -1553,23 +1632,36 @@ export class DatabaseBlockDataSource extends DataSourceBase {
           nextOption &&
           this.getTaskStatusInheritance().cascadeManualDoneToDescendants
         ) {
-          this.cascadeStatusToDescendants(
-            rowId,
-            propertyId,
-            nextOption,
-            'auto',
-            'done_locked'
+          Object.assign(
+            doneStamps,
+            this.cascadeStatusToDescendants(
+              rowId,
+              propertyId,
+              nextOption,
+              'auto',
+              'done_locked'
+            )
           );
         }
       }
 
-      this.recomputeParentStatusesFromChildren(rowId, propertyId, 'auto', {
-        descendantDemotedFromDone,
-      });
+      Object.assign(
+        doneStamps,
+        this.recomputeParentStatusesFromChildren(rowId, propertyId, 'auto', {
+          descendantDemotedFromDone,
+        })
+      );
       if (descendantDemotedFromDone) {
-        this.recomputeAllParentStatusesFromChildren();
+        Object.assign(
+          doneStamps,
+          this.recomputeAllParentStatusesFromChildren()
+        );
       }
     });
+
+    for (const [stampRowId, isDone] of Object.entries(doneStamps)) {
+      this.stampDoneDateForRow(stampRowId, isDone);
+    }
   }
 
   cellValueGet(rowId: string, propertyId: string): unknown {

@@ -1531,6 +1531,65 @@ describe('DatabaseManager', () => {
     );
   });
 
+  test('a parent auto-promoted to done via cascade gets its own "Done date" stamped too (not just the manually-checked child)', () => {
+    const statusColumnId = addProperty(
+      db,
+      'end',
+      propertyModelPresets.selectPropertyModelConfig.create('Status', {
+        options: selection,
+      })
+    );
+    const parentIdentityColumnId = addProperty(
+      db,
+      'end',
+      databaseBlockProperties.richTextColumnConfig.create(
+        TASK_PARENT_IDENTIFIER_COLUMN_NAME
+      )
+    );
+
+    const parentRow = doc.addBlock(
+      'affine:paragraph',
+      { text: new Text('parent') },
+      databaseBlockId
+    );
+    const child = doc.addBlock(
+      'affine:paragraph',
+      { text: new Text('child') },
+      databaseBlockId
+    );
+    updateCell(db, child, {
+      columnId: parentIdentityColumnId,
+      value: new Text(
+        createTaskIdentity({ docId: doc.id, blockId: parentRow })
+      ),
+    });
+
+    const dataSource = new DatabaseBlockDataSource(db);
+    dataSource.cellValueChange(child, statusColumnId, selection[0]?.id); // "Done"
+    expect(getCell(db, parentRow, statusColumnId)?.value).toEqual(
+      selection[0]?.id
+    );
+
+    // The parent was never directly checked by a caller — its own Status
+    // cell was flipped entirely by the cascade in `recomputeParentStatusesFromChildren`
+    // (a different write path than `setTaskStatusChecked`/the primary
+    // row's own stamp in `cellValueChange`) — its Done date must still be
+    // stamped, or it would immediately fail a live filter like the
+    // Journal Todo view's own `OR(isNotOneOf(done), after(doneDate, ...))`
+    // and vanish, despite never having been explicitly marked done in
+    // that view.
+    const doneDateColumnId = dataSource.ensureDoneDateColumn()!;
+    expect(typeof getCell(db, parentRow, doneDateColumnId)?.value).toBe(
+      'number'
+    );
+
+    dataSource.cellValueChange(child, statusColumnId, selection[1]?.id); // back to "TODO"
+    expect(getCell(db, parentRow, statusColumnId)?.value).toEqual(
+      selection[1]?.id
+    );
+    expect(getCell(db, parentRow, doneDateColumnId)?.value ?? null).toBeNull();
+  });
+
   test('recomputes parent status for custom status column name and done label', () => {
     const customOptions = [
       { id: 'todo', value: 'Open', color: 'var(--affine-tag-yellow)' },

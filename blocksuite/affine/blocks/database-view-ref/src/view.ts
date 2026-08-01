@@ -9,6 +9,7 @@ import { literal } from 'lit/static-html.js';
 import {
   GenericDatabaseViewRefSlashMenuConfigExtension,
   JournalTodoDatabaseSlashMenuConfigExtension,
+  JournalTodoSourceSlashMenuConfigExtension,
 } from './configs/slash-menu.js';
 import { effects } from './effects.js';
 
@@ -28,6 +29,7 @@ export class DatabaseViewRefViewExtension extends ViewExtensionProvider {
       FlavourExtension(flavour),
       JournalTodoDatabaseSlashMenuConfigExtension,
       GenericDatabaseViewRefSlashMenuConfigExtension,
+      JournalTodoSourceSlashMenuConfigExtension,
       BlockViewExtension(flavour, literal`affine-database-view-ref`),
     ]);
   }

@@ -7,9 +7,13 @@ import type { DatabaseBlockModel } from '@blocksuite/affine/model';
 import {
   createLocalViewOverride,
   journalTodoDatabaseSlashMenuConfig,
+  journalTodoSourceSlashMenuConfig,
 } from '@blocksuite/affine/blocks/database-view-ref';
 import type { DatabaseViewRefBlockComponent } from '@blocksuite/affine/blocks/database-view-ref';
-import { JournalTodoDatabaseProvider } from '@blocksuite/affine/shared/services';
+import {
+  CrossDocReferenceProvider,
+  JournalTodoDatabaseProvider,
+} from '@blocksuite/affine/shared/services';
 import { Text } from '@blocksuite/store';
 import { beforeEach, describe, expect, test } from 'vitest';
 
@@ -367,5 +371,374 @@ describe('journal todo database slash-menu command', () => {
     expect(seededView.mode).toBe('list');
     expect(seededView.filter?.op).toBe('or');
     expect(seededView.filter?.conditions.length).toBe(2);
+  });
+});
+
+// Story 2.5.5: lets the user explicitly set (or create) "the current
+// journal todo database" pointer themselves, instead of only ever getting
+// whatever `journalTodoDatabaseSlashMenuConfig`'s own first-ever-use
+// auto-create silently produced. These items only ever mutate the
+// pointer — they never insert a filtered reference themselves (that
+// remains exclusively `journalTodoDatabaseSlashMenuConfig`'s own job).
+describe('journal todo source selection (Story 2.5.5)', () => {
+  beforeEach(async () => {
+    const cleanup = await setupEditor('page');
+    return cleanup;
+  });
+
+  function createStubStd(options: {
+    initialRef?: { refDocId: string; refBlockId: string };
+  }) {
+    let ref = options.initialRef;
+    const stub = new Proxy(editor.std, {
+      get(target, prop, receiver) {
+        if (prop === 'getOptional') {
+          return (identifier: unknown) =>
+            identifier === JournalTodoDatabaseProvider
+              ? {
+                  getJournalDate: () => undefined,
+                  getJournalTodoDatabaseRef: () => ref,
+                  setJournalTodoDatabaseRef: (newRef: typeof ref) => {
+                    ref = newRef;
+                  },
+                }
+              : undefined;
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    return { stub, getRef: () => ref };
+  }
+
+  function createCrossDocStub(
+    resolveTo: {
+      docId: string;
+      blockId: string;
+      flavour: 'affine:database';
+    } | null,
+    onOpen?: (
+      excludeDocId: string | null,
+      allowedFlavours?: readonly string[]
+    ) => void
+  ) {
+    return {
+      openCrossDocReferencePicker: async (
+        excludeDocId: string | null,
+        allowedFlavours?: readonly string[]
+      ) => {
+        onOpen?.(excludeDocId, allowedFlavours);
+        return resolveTo;
+      },
+    };
+  }
+
+  test('offers "Set Journal Todo Table" and "New Journal Todo Table" items even outside a journal doc (no journal-date gate)', () => {
+    const anchorNoteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, anchorNoteId);
+    const model = doc.getModelById(paragraphId)!;
+    const { stub } = createStubStd({});
+
+    const items = journalTodoSourceSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stub, model }) : items;
+    expect(
+      resolvedItems.find(item => item.name === 'Set Journal Todo Table')
+    ).toBeTruthy();
+    expect(
+      resolvedItems.find(item => item.name === 'New Journal Todo Table')
+    ).toBeTruthy();
+  });
+
+  test('"Set Journal Todo Table" opens one picker excluding nothing (same-doc tables included), sets the pointer to a same-doc pick without inserting any block', async () => {
+    const noteId = addNote(doc);
+    const databaseId = doc.addBlock(
+      'affine:database',
+      { title: new Text('My Table') },
+      noteId
+    );
+    const anchorNoteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, anchorNoteId);
+    const model = doc.getModelById(paragraphId)!;
+    const { stub, getRef } = createStubStd({});
+
+    let capturedExcludeDocId: string | null | undefined;
+    const stubStd = new Proxy(stub, {
+      get(target, prop, receiver) {
+        if (prop === 'getOptional') {
+          return (identifier: unknown) => {
+            if (identifier === CrossDocReferenceProvider) {
+              return createCrossDocStub(
+                {
+                  docId: doc.id,
+                  blockId: databaseId,
+                  flavour: 'affine:database',
+                },
+                excludeDocId => {
+                  capturedExcludeDocId = excludeDocId;
+                }
+              );
+            }
+            return Reflect.get(target, 'getOptional', receiver)(identifier);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    const items = journalTodoSourceSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stubStd, model }) : items;
+    const item = resolvedItems.find(
+      i => i.name === 'Set Journal Todo Table'
+    ) as unknown as { action: () => Promise<void> };
+
+    const refCountBefore = doc.getBlocksByFlavour(
+      'affine:database-view-ref'
+    ).length;
+    await item.action();
+    await wait();
+
+    // `null` means "exclude nothing" — same-doc candidates are included in
+    // the same picker as cross-doc ones, per the consolidated single-item
+    // design.
+    expect(capturedExcludeDocId).toBeNull();
+    expect(getRef()).toEqual({ refDocId: doc.id, refBlockId: databaseId });
+    expect(doc.getBlocksByFlavour('affine:database-view-ref').length).toBe(
+      refCountBefore
+    );
+  });
+
+  test('"Set Journal Todo Table" restricts the picker to databases and sets the pointer to a cross-doc pick without inserting any block', async () => {
+    const secondDoc = collection
+      .createDoc(`doc:second-${Math.random().toString(16).slice(2, 8)}`)
+      .getStore();
+    secondDoc.load(() => {
+      const rootId = secondDoc.addBlock('affine:page', { title: new Text() });
+      secondDoc.addBlock('affine:surface', {}, rootId);
+    });
+    const secondNoteId = addNote(secondDoc);
+    const databaseId = secondDoc.addBlock(
+      'affine:database',
+      { title: new Text() },
+      secondNoteId
+    );
+
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+
+    let capturedAllowedFlavours: readonly string[] | undefined;
+    const stubStd = new Proxy(editor.std, {
+      get(target, prop, receiver) {
+        if (prop === 'getOptional') {
+          return (identifier: unknown) => {
+            if (identifier === JournalTodoDatabaseProvider) {
+              return {
+                getJournalDate: () => undefined,
+                getJournalTodoDatabaseRef: () => undefined,
+                setJournalTodoDatabaseRef: () => {},
+              };
+            }
+            if (identifier === CrossDocReferenceProvider) {
+              return createCrossDocStub(
+                {
+                  docId: secondDoc.id,
+                  blockId: databaseId,
+                  flavour: 'affine:database',
+                },
+                (_excludeDocId, allowedFlavours) => {
+                  capturedAllowedFlavours = allowedFlavours;
+                }
+              );
+            }
+            return undefined;
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    const items = journalTodoSourceSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stubStd, model }) : items;
+    const item = resolvedItems.find(
+      i => i.name === 'Set Journal Todo Table'
+    ) as unknown as { action: () => Promise<void> };
+
+    const refCountBefore = doc.getBlocksByFlavour(
+      'affine:database-view-ref'
+    ).length;
+    await item.action();
+    await wait();
+
+    expect(capturedAllowedFlavours).toEqual(['affine:database']);
+    expect(doc.getBlocksByFlavour('affine:database-view-ref').length).toBe(
+      refCountBefore
+    );
+  });
+
+  test('"New Journal Todo Table" creates a visible table and sets the pointer, replacing a prior value', async () => {
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+    const { stub, getRef } = createStubStd({
+      initialRef: { refDocId: 'doc:old', refBlockId: 'old-database' },
+    });
+
+    const items = journalTodoSourceSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stub, model }) : items;
+    const item = resolvedItems.find(
+      i => i.name === 'New Journal Todo Table'
+    ) as unknown as { action: () => void };
+
+    item.action();
+    await wait();
+
+    const newRef = getRef()!;
+    expect(newRef.refBlockId).not.toBe('old-database');
+    expect(newRef.refDocId).toBe(doc.id);
+    // Visible (not wrapped in a hidden EdgelessOnly note) — a deliberate,
+    // visible user action, unlike the silent first-use auto-create.
+    const newTableModel = doc.getBlock(newRef.refBlockId)!.model;
+    expect(newTableModel.flavour).toBe('affine:database');
+    const parentNote = doc.getParent(newTableModel) as unknown as {
+      props: { displayMode?: string };
+    };
+    expect(parentNote.props.displayMode).not.toBe('edgeless');
+  });
+
+  test('carryover: setting the pointer via a new-source action makes the very next "Journal Todo" invocation resolve to it (simulating the next day)', async () => {
+    // First, set a source via this story's own "New Journal Todo Table".
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+    const { stub, getRef } = createStubStd({});
+
+    const sourceItems = journalTodoSourceSlashMenuConfig.items;
+    const resolvedSourceItems =
+      typeof sourceItems === 'function'
+        ? sourceItems({ std: stub, model })
+        : sourceItems;
+    const newSourceItem = resolvedSourceItems.find(
+      i => i.name === 'New Journal Todo Table'
+    ) as unknown as { action: () => void };
+    newSourceItem.action();
+    await wait();
+    const chosenRef = getRef()!;
+
+    // Now simulate "the next day's journal" — a different journal doc,
+    // invoking `/Journal Todo` fresh, reusing the same pointer store (the
+    // stub's own closed-over `ref` variable is the pointer here).
+    const laterNoteId = addNote(doc);
+    const laterParagraphId = doc.addBlock('affine:paragraph', {}, laterNoteId);
+    const laterModel = doc.getModelById(laterParagraphId)!;
+    const laterStub = new Proxy(editor.std, {
+      get(target, prop, receiver) {
+        if (prop === 'getOptional') {
+          return (identifier: unknown) =>
+            identifier === JournalTodoDatabaseProvider
+              ? {
+                  getJournalDate: () => '2026-07-31',
+                  getJournalTodoDatabaseRef: () => chosenRef,
+                  setJournalTodoDatabaseRef: () => {
+                    throw new Error(
+                      'should not create a new pointer — the chosen source should carry over'
+                    );
+                  },
+                }
+              : undefined;
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    const todoItems = journalTodoDatabaseSlashMenuConfig.items;
+    const resolvedTodoItems =
+      typeof todoItems === 'function'
+        ? todoItems({ std: laterStub, model: laterModel })
+        : todoItems;
+    await (
+      resolvedTodoItems.find(i => i.name === 'Journal Todo') as unknown as {
+        action: () => Promise<void>;
+      }
+    ).action();
+    await wait();
+
+    const refEls = document.querySelectorAll('affine-database-view-ref');
+    const insertedRef = Array.from(refEls)
+      .map(el => (el as DatabaseViewRefBlockComponent).model)
+      .find(m => m.props.refBlockId === chosenRef.refBlockId);
+    expect(insertedRef).toBeTruthy();
+  });
+
+  test('switching the source does not retroactively repoint an already-inserted database-view-ref', async () => {
+    let ref: { refDocId: string; refBlockId: string } | undefined;
+    const stub = new Proxy(editor.std, {
+      get(target, prop, receiver) {
+        if (prop === 'getOptional') {
+          return (identifier: unknown) =>
+            identifier === JournalTodoDatabaseProvider
+              ? {
+                  getJournalDate: () => '2026-07-30',
+                  getJournalTodoDatabaseRef: () => ref,
+                  setJournalTodoDatabaseRef: (newRef: typeof ref) => {
+                    ref = newRef;
+                  },
+                }
+              : undefined;
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    const firstNoteId = addNote(doc);
+    const firstParagraphId = doc.addBlock('affine:paragraph', {}, firstNoteId);
+    const firstModel = doc.getModelById(firstParagraphId)!;
+
+    const todoItems = journalTodoDatabaseSlashMenuConfig.items;
+    const resolvedTodoItems =
+      typeof todoItems === 'function'
+        ? todoItems({ std: stub, model: firstModel })
+        : todoItems;
+    await (
+      resolvedTodoItems.find(i => i.name === 'Journal Todo') as unknown as {
+        action: () => Promise<void>;
+      }
+    ).action();
+    await wait();
+    const tableARef = ref!;
+    const refEl = document.querySelector(
+      'affine-database-view-ref'
+    ) as DatabaseViewRefBlockComponent;
+    const insertedRefId = refEl.model.id;
+    expect(refEl.model.props.refBlockId).toBe(tableARef.refBlockId);
+
+    // Now switch the source to a brand-new table B.
+    const secondNoteId = addNote(doc);
+    const secondParagraphId = doc.addBlock(
+      'affine:paragraph',
+      {},
+      secondNoteId
+    );
+    const secondModel = doc.getModelById(secondParagraphId)!;
+    const sourceItems = journalTodoSourceSlashMenuConfig.items;
+    const resolvedSourceItems =
+      typeof sourceItems === 'function'
+        ? sourceItems({ std: stub, model: secondModel })
+        : sourceItems;
+    const newSourceItem = resolvedSourceItems.find(
+      i => i.name === 'New Journal Todo Table'
+    ) as unknown as { action: () => void };
+    newSourceItem.action();
+    await wait();
+    const tableBRef = ref!;
+    expect(tableBRef.refBlockId).not.toBe(tableARef.refBlockId);
+
+    // The already-inserted reference block still points at table A.
+    const stillA = doc.getBlock(insertedRefId)!.model as unknown as {
+      props: { refBlockId: string };
+    };
+    expect(stillA.props.refBlockId).toBe(tableARef.refBlockId);
   });
 });
