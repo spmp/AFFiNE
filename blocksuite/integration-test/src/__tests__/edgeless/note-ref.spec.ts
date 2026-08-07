@@ -9,6 +9,7 @@ import { EditPropsStore } from '@blocksuite/affine/shared/services';
 import { TextSelection } from '@blocksuite/std';
 import type { BlockModel } from '@blocksuite/store';
 import { Store, Text } from '@blocksuite/store';
+import { userEvent } from '@vitest/browser/context';
 import { beforeEach, describe, expect, test } from 'vitest';
 
 import { wait } from '../utils/common.js';
@@ -510,6 +511,52 @@ describe('note referenced more than once on a page', () => {
     expect(children[1]!.text?.length).toBe(0);
   });
 
+  test('two SIMULTANEOUS references to the same canonical each racing to add a trailing paragraph do not duplicate it', async () => {
+    // Reported symptom (live, on the committed pr/18 branch, not any
+    // uncommitted experiment): reloading a page with a note referenced
+    // more than once sometimes appends *multiple* extra empty paragraphs
+    // to the canonical, proportional to how many references exist, but
+    // stabilizes after the first reload (doesn't keep growing on
+    // subsequent reloads). `_ensureTrailingParagraph` guards against
+    // re-adding once *a* trailing paragraph already exists (`lastChild
+    // ?.text !== undefined`) — but every mounted reference's own
+    // `updated()` calls it independently, with no cross-instance
+    // coordination. If two references both observe "no trailing
+    // paragraph yet" before either one's `addBlock` lands, both add one.
+    const reusableNoteId = createReusableNote();
+    for (const child of [...doc.getBlock(reusableNoteId)!.model.children]) {
+      doc.deleteBlock(child);
+    }
+    doc.addBlock('affine:latex', { latex: 'E=mc^2' }, reusableNoteId);
+    await wait();
+
+    const anchorNoteId1 = addNote(doc);
+    const anchorModel1 = doc.getBlock(anchorNoteId1)!.model.children[0]!;
+    editor.std.command.exec(insertNoteRefBlockCommand, {
+      refBlockId: reusableNoteId,
+      place: 'after',
+      selectedModels: [anchorModel1],
+    });
+
+    const anchorNoteId2 = addNote(doc);
+    const anchorModel2 = doc.getBlock(anchorNoteId2)!.model.children[0]!;
+    editor.std.command.exec(insertNoteRefBlockCommand, {
+      refBlockId: reusableNoteId,
+      place: 'after',
+      selectedModels: [anchorModel2],
+    });
+    await wait(200);
+
+    const children = doc.getBlock(reusableNoteId)!.model.children;
+    const trailingParagraphs = children.filter(
+      (child, index) =>
+        index > 0 && child.flavour === 'affine:paragraph' && !child.text?.length
+    );
+    expect(children[0]!.flavour).toBe('affine:latex');
+    expect(trailingParagraphs.length).toBe(1);
+    expect(children.length).toBe(2);
+  });
+
   test('toggling a plain edgeless note to "Display in Page" does not silently grow its content', async () => {
     // Per direct user feedback, a persisted trailing-paragraph guarantee
     // added directly by `changeNoteDisplayMode` (an earlier version of
@@ -803,6 +850,407 @@ describe('note referenced across pages (cross-doc)', () => {
     );
   });
 
+  // Regression test for a real live bug: the nested scope's own
+  // `_previewStore` is built from a fixed *snapshot* `Query`
+  // (`mode: 'include', match: [...]`) of block ids collected once by
+  // `_maybeRefreshPreview` — a query-filtered `Store` never exposes a block
+  // whose id wasn't in that snapshot, no matter what happens to the real,
+  // unfiltered doc afterward. Splitting a paragraph (Enter) or converting one
+  // to a list (a markdown shortcut) both create a brand-new sibling block
+  // with a brand-new id under the canonical note — if the query doesn't get
+  // rebuilt to include it, the data write is completely correct (confirmed
+  // live) but the new block simply never renders through this reference: a
+  // structural change looked like nothing happened, or (worse, when the
+  // *old* block is also deleted as part of the same conversion) like the
+  // line's own text had vanished.
+  test('a new sibling block added to the canonical note (e.g. splitting a paragraph) renders through an already-mounted cross-doc reference', async () => {
+    const secondDoc = createSecondDoc();
+    const reusableNoteId = createReusableNoteOn(secondDoc);
+
+    const anchorNoteId = addNote(doc);
+    const anchorModel = doc.getBlock(anchorNoteId)!.model.children[0]!;
+    const [, result] = editor.std.command.exec(insertNoteRefBlockCommand, {
+      refBlockId: reusableNoteId,
+      refDocId: secondDoc.id,
+      place: 'after',
+      selectedModels: [anchorModel],
+    });
+    await wait();
+
+    const refEl = document.querySelector(
+      `affine-note-ref[data-block-id="${result.insertedNoteRefBlockId}"]`
+    ) as NoteRefBlockComponent;
+
+    const sourceParagraphId =
+      secondDoc.getModelById(reusableNoteId)!.children[0]!.id;
+    const renderedParagraphEl = refEl.querySelector(
+      `[data-block-id="${sourceParagraphId}"]`
+    ) as { model?: BlockModel } | null;
+    const renderedModel = renderedParagraphEl?.model;
+    expect(renderedModel).toBeTruthy();
+
+    // Add the new sibling through the nested scope's own rendered store —
+    // exactly what `splitParagraphCommand` (Enter) or the list markdown
+    // matcher's `store.addBlock` do — not through `secondDoc` directly, so
+    // this exercises the same query-filtered store the live bug hit.
+    const newBlockId = renderedModel!.store.addBlock(
+      'affine:paragraph',
+      { text: new Text('a brand-new sibling paragraph') },
+      reusableNoteId
+    );
+    // `_subscribeTargetDoc`'s own doc-update handler (the mechanism that
+    // rebuilds the query once a new sibling id shows up) debounces by
+    // 100ms — `wait()`'s zero-arg default resolves sooner than that.
+    await wait(200);
+
+    expect(secondDoc.getModelById(newBlockId)).toBeTruthy();
+    expect(refEl.querySelector(`[data-block-id="${newBlockId}"]`)).toBeTruthy();
+  });
+
+  // Regression test for the actual architectural root cause behind an
+  // entire session's worth of chased symptoms (focus loss after Enter, a
+  // markdown-shortcut block's own text disappearing, a slash-menu item's
+  // popup never showing, a visible scroll jump on every structural edit):
+  // `_maybeRefreshPreview` used to rebuild the entire nested `Query`/
+  // `Store`/`BlockStdScope` from scratch every time a *descendant* of the
+  // canonical note changed — since the query was a fixed snapshot of ids
+  // collected once — destroying and recreating all of the reference's own
+  // DOM even for an ordinary Enter press. Each individual symptom got its
+  // own targeted fix earlier, but this test asserts the deeper claim
+  // directly: with the `Query`'s new `ancestor`-based match kind (see
+  // `query.ts`), a structural edit inside an already-rendered reference
+  // must *not* replace the nested `BlockStdScope` instance, or tear down
+  // and recreate the DOM of blocks that didn't change, at all.
+  test('a new sibling block added to the canonical note does NOT rebuild the nested BlockStdScope or tear down existing, unrelated DOM', async () => {
+    const secondDoc = createSecondDoc();
+    const reusableNoteId = createReusableNoteOn(secondDoc);
+
+    const anchorNoteId = addNote(doc);
+    const anchorModel = doc.getBlock(anchorNoteId)!.model.children[0]!;
+    const [, result] = editor.std.command.exec(insertNoteRefBlockCommand, {
+      refBlockId: reusableNoteId,
+      refDocId: secondDoc.id,
+      place: 'after',
+      selectedModels: [anchorModel],
+    });
+    await wait();
+
+    const refEl = document.querySelector(
+      `affine-note-ref[data-block-id="${result.insertedNoteRefBlockId}"]`
+    ) as NoteRefBlockComponent;
+
+    const sourceParagraphId =
+      secondDoc.getModelById(reusableNoteId)!.children[0]!.id;
+    const existingParagraphElBefore = refEl.querySelector(
+      `[data-block-id="${sourceParagraphId}"]`
+    );
+    expect(existingParagraphElBefore).toBeTruthy();
+
+    const stdBefore = refEl._previewStd;
+    expect(stdBefore).toBeTruthy();
+
+    const newBlockId = (
+      existingParagraphElBefore as unknown as { model: BlockModel }
+    ).model.store.addBlock(
+      'affine:paragraph',
+      { text: new Text('a brand-new sibling paragraph') },
+      reusableNoteId
+    );
+    await wait(200);
+
+    // The nested std instance itself must be the exact same object —
+    // not just "an equivalent one" — proving no store/scope swap happened.
+    expect(refEl._previewStd).toBe(stdBefore);
+
+    // The pre-existing paragraph's own DOM element must be the exact same
+    // node, not a newly (re)created one with the same block id — proving
+    // Lit's own keyed `repeat()` reconciliation only appended the new
+    // sibling rather than re-rendering the whole children list from
+    // scratch.
+    const existingParagraphElAfter = refEl.querySelector(
+      `[data-block-id="${sourceParagraphId}"]`
+    );
+    expect(existingParagraphElAfter).toBe(existingParagraphElBefore);
+
+    expect(refEl.querySelector(`[data-block-id="${newBlockId}"]`)).toBeTruthy();
+  });
+
+  // Regression tests for a real live bug that no *synthetic*-event or
+  // direct-command test in this file could reproduce: a genuine, real
+  // Playwright-driven `userEvent` click + native keyboard `Enter` (not
+  // `dispatchEvent`, not calling `focusTextModel`/commands directly)
+  // reliably lost native focus after Enter, requiring the user to click
+  // back into the reference to keep typing. Root-caused across several
+  // rounds of live debugging to two compounding issues in
+  // `_reclaimFocusAfterSelectionChange` (see that method's own doc
+  // comment for the full mechanism): (1) a single `requestAnimationFrame`
+  // isn't reliably enough time for the newly (re)mounted block's own
+  // component to connect to the nested `ViewStore`, and (2) the very same
+  // structural edit that triggers a reclaim can *also* cause
+  // `_maybeRefreshPreview` to swap in an entirely new `BlockStdScope`
+  // (since the edit's own new block id wasn't in the previous `Query`
+  // snapshot), orphaning an in-flight reclaim that was tracking the old
+  // std by reference. Confirmed these tests genuinely exercise the real
+  // native focus/selection machinery (not just the data layer, which
+  // several other tests in this file already cover) by reproducing the
+  // failure directly in a live browser before landing the fix.
+  test('a real (Playwright userEvent) click + native Enter keypress keeps native focus in the reference, letting immediately-typed text land in the right place', async () => {
+    const secondDoc = createSecondDoc();
+    const reusableNoteId = createReusableNoteOn(secondDoc);
+
+    const anchorNoteId = addNote(doc);
+    const anchorModel = doc.getBlock(anchorNoteId)!.model.children[0]!;
+    const [, result] = editor.std.command.exec(insertNoteRefBlockCommand, {
+      refBlockId: reusableNoteId,
+      refDocId: secondDoc.id,
+      place: 'after',
+      selectedModels: [anchorModel],
+    });
+    await wait(200);
+
+    const refEl = document.querySelector(
+      `affine-note-ref[data-block-id="${result.insertedNoteRefBlockId}"]`
+    ) as NoteRefBlockComponent;
+    expect(refEl).toBeTruthy();
+
+    const sourceParagraphId =
+      secondDoc.getModelById(reusableNoteId)!.children[0]!.id;
+    const paragraphEl = refEl.querySelector(
+      `[data-block-id="${sourceParagraphId}"]`
+    ) as HTMLElement;
+    const textEl =
+      paragraphEl.querySelector('[data-v-text="true"]') ?? paragraphEl;
+
+    // "Hello from another page" — click lands the caret at index 12,
+    // right after "Hello from a" / before "nother page".
+    await userEvent.click(textEl);
+    await wait(50);
+
+    await userEvent.keyboard('{Enter}');
+    await wait(300);
+
+    expect(document.activeElement?.closest('affine-note-ref')).toBe(refEl);
+    expect(document.getSelection()?.rangeCount).toBe(1);
+
+    // Text typed immediately after Enter, with no re-click, has to land
+    // at the start of the newly-created second paragraph — not be lost
+    // entirely (the original failure mode: it landed nowhere at all,
+    // since native focus was stuck on `<body>`).
+    await userEvent.keyboard('hello');
+    await wait(300);
+
+    expect(
+      secondDoc
+        .getModelById(reusableNoteId)!
+        .children.map(c => c.text?.toString())
+    ).toEqual(['Hello from a', 'hellonother page']);
+
+    // A second, chained Enter (exercising a mid-edit `_previewStd` swap a
+    // single Enter might not trigger) has to keep working the same way.
+    await userEvent.keyboard('{Enter}');
+    await wait(300);
+    await userEvent.keyboard('world');
+    await wait(300);
+
+    expect(document.activeElement?.closest('affine-note-ref')).toBe(refEl);
+    expect(
+      secondDoc
+        .getModelById(reusableNoteId)!
+        .children.map(c => c.text?.toString())
+    ).toEqual(['Hello from a', 'hello', 'worldnother page']);
+  });
+
+  test('a real (Playwright userEvent) "* " markdown-shortcut bullet conversion keeps native focus, letting immediately-typed text land in the new list block', async () => {
+    const secondDoc = createSecondDoc();
+    const reusableNoteId = createReusableNoteOn(secondDoc);
+
+    const anchorNoteId = addNote(doc);
+    const anchorModel = doc.getBlock(anchorNoteId)!.model.children[0]!;
+    const [, result] = editor.std.command.exec(insertNoteRefBlockCommand, {
+      refBlockId: reusableNoteId,
+      refDocId: secondDoc.id,
+      place: 'after',
+      selectedModels: [anchorModel],
+    });
+    await wait(200);
+
+    const refEl = document.querySelector(
+      `affine-note-ref[data-block-id="${result.insertedNoteRefBlockId}"]`
+    ) as NoteRefBlockComponent;
+    expect(refEl).toBeTruthy();
+
+    const sourceParagraphId =
+      secondDoc.getModelById(reusableNoteId)!.children[0]!.id;
+    const paragraphEl = refEl.querySelector(
+      `[data-block-id="${sourceParagraphId}"]`
+    ) as HTMLElement;
+    const textEl =
+      paragraphEl.querySelector('[data-v-text="true"]') ?? paragraphEl;
+
+    await userEvent.click(textEl);
+    await wait(50);
+
+    // Real user flow: End of the existing line, Enter for a fresh empty
+    // line, then the markdown shortcut on that line — the markdown
+    // matcher's own conversion (delete old block, insert a brand-new
+    // `affine:list` block — see this file's own "a new sibling block..."
+    // test comment for that mechanism) is a *second*, independent
+    // structural change layered right on top of Enter's own reclaim.
+    await userEvent.keyboard('{End}{Enter}');
+    await wait(300);
+    await userEvent.keyboard('* ');
+    await wait(300);
+
+    expect(document.activeElement?.closest('affine-note-ref')).toBe(refEl);
+    expect(document.getSelection()?.rangeCount).toBe(1);
+
+    await userEvent.keyboard('bullet text');
+    await wait(300);
+
+    expect(
+      secondDoc
+        .getModelById(reusableNoteId)!
+        .children.map(c => [c.flavour, c.text?.toString()])
+    ).toEqual([
+      ['affine:paragraph', 'Hello from another page'],
+      ['affine:list', 'bullet text'],
+    ]);
+  });
+
+  // Regression test for a real live bug found the same way as the two
+  // above: real Playwright `userEvent` interaction (not direct command
+  // calls) reproduced "the slash menu opens in the reference, but
+  // clicking an item silently inserts nothing." Root-caused to
+  // `_observeForCrossDocRangeExclusion` (see that method's own doc
+  // comment for the full mechanism) permanently marking every descendant
+  // block with `RANGE_QUERY_EXCLUDE_ATTR`, intended to protect the
+  // *outer* std's own range-sweep queries from reaching into this
+  // reference's content — but `RangeManager.getSelectedBlockComponentsByRange`
+  // (which every selection-driven command, including every slash-menu
+  // item's own insert action via `getSelectedBlocksCommand`, routes
+  // through) queries `this.std.host.querySelectorAll(...)` scoped to
+  // whichever std is asking — for the *nested* std that's this same
+  // subtree, so the exclusion attribute (a single, shared, boolean DOM
+  // attribute with no concept of "which std is asking") silently blinded
+  // the nested std's own legitimate internal queries to its own content
+  // too. Fixed by making the exclusion conditional (mirroring the
+  // same-doc path's own `_updateRangeQueryExclusion`), applying it only
+  // when the *outer* std's current selection genuinely spans across this
+  // reference's boundary — the one case actually worth protecting against
+  // — rather than permanently.
+  test('a real (Playwright userEvent) slash-menu item click inside the reference actually inserts its block, not silently nothing', async () => {
+    const secondDoc = createSecondDoc();
+    const reusableNoteId = createReusableNoteOn(secondDoc);
+
+    const anchorNoteId = addNote(doc);
+    const anchorModel = doc.getBlock(anchorNoteId)!.model.children[0]!;
+    const [, result] = editor.std.command.exec(insertNoteRefBlockCommand, {
+      refBlockId: reusableNoteId,
+      refDocId: secondDoc.id,
+      place: 'after',
+      selectedModels: [anchorModel],
+    });
+    await wait(200);
+
+    const refEl = document.querySelector(
+      `affine-note-ref[data-block-id="${result.insertedNoteRefBlockId}"]`
+    ) as NoteRefBlockComponent;
+    expect(refEl).toBeTruthy();
+
+    const sourceParagraphId =
+      secondDoc.getModelById(reusableNoteId)!.children[0]!.id;
+    const paragraphEl = refEl.querySelector(
+      `[data-block-id="${sourceParagraphId}"]`
+    ) as HTMLElement;
+    const textEl =
+      paragraphEl.querySelector('[data-v-text="true"]') ?? paragraphEl;
+
+    await userEvent.click(textEl);
+    await wait(50);
+    await userEvent.keyboard('{End}{Enter}');
+    await wait(300);
+
+    await userEvent.keyboard('/equation');
+    await wait(300);
+
+    const slashMenu = document.querySelector('affine-slash-menu');
+    const innerSlashMenu =
+      slashMenu?.shadowRoot?.querySelector('inner-slash-menu');
+    const equationItem = innerSlashMenu?.shadowRoot?.querySelector(
+      '[data-testid="Equation"]'
+    ) as HTMLElement | null | undefined;
+    expect(equationItem).toBeTruthy();
+
+    await userEvent.click(equationItem!);
+    await wait(300);
+
+    expect(
+      secondDoc.getModelById(reusableNoteId)!.children.map(c => c.flavour)
+    ).toEqual(['affine:paragraph', 'affine:latex', 'affine:paragraph']);
+  });
+
+  // Regression test for a real live bug reported after the fixes above:
+  // undo (Mod-z) did nothing while editing inside a cross-doc reference.
+  // Root-caused directly from source, no live debugging needed once
+  // suspected: `NoteRefPreviewRootBlockComponent` (`preview-root.ts`) never
+  // constructed a `PageKeyboardManager` at all — a pre-existing gap since
+  // that file was first written, not something any of this story's other
+  // fixes introduced. The real `PageRootBlockComponent` wires one up in its
+  // own `connectedCallback`; this nested scope's own root component simply
+  // never did, so none of the keybindings it provides — most reported live,
+  // Mod-z/Shift-Mod-z (undo/redo) — were ever bound for cross-doc content.
+  test('a real (Playwright userEvent) Mod-z / Shift-Mod-z inside the reference undoes and redoes an edit made inside it', async () => {
+    const secondDoc = createSecondDoc();
+    const reusableNoteId = createReusableNoteOn(secondDoc);
+
+    const anchorNoteId = addNote(doc);
+    const anchorModel = doc.getBlock(anchorNoteId)!.model.children[0]!;
+    const [, result] = editor.std.command.exec(insertNoteRefBlockCommand, {
+      refBlockId: reusableNoteId,
+      refDocId: secondDoc.id,
+      place: 'after',
+      selectedModels: [anchorModel],
+    });
+    await wait(200);
+
+    const refEl = document.querySelector(
+      `affine-note-ref[data-block-id="${result.insertedNoteRefBlockId}"]`
+    ) as NoteRefBlockComponent;
+    expect(refEl).toBeTruthy();
+
+    const sourceParagraphId =
+      secondDoc.getModelById(reusableNoteId)!.children[0]!.id;
+    const paragraphEl = refEl.querySelector(
+      `[data-block-id="${sourceParagraphId}"]`
+    ) as HTMLElement;
+    const textEl =
+      paragraphEl.querySelector('[data-v-text="true"]') ?? paragraphEl;
+
+    await userEvent.click(textEl);
+    await wait(50);
+    await userEvent.keyboard('{End}');
+    await userEvent.keyboard(' typed text');
+    await wait(300);
+
+    expect(secondDoc.getModelById(sourceParagraphId)!.text?.toString()).toBe(
+      'Hello from another page typed text'
+    );
+
+    await userEvent.keyboard('{Control>}z{/Control}');
+    await wait(300);
+
+    expect(secondDoc.getModelById(sourceParagraphId)!.text?.toString()).toBe(
+      'Hello from another page'
+    );
+
+    await userEvent.keyboard('{Shift>}{Control>}Z{/Control}{/Shift}');
+    await wait(300);
+
+    expect(secondDoc.getModelById(sourceParagraphId)!.text?.toString()).toBe(
+      'Hello from another page typed text'
+    );
+  });
+
   test('a cross-doc reference survives the source note moving and the source doc being renamed', async () => {
     const secondDoc = createSecondDoc();
     const reusableNoteId = createReusableNoteOn(secondDoc);
@@ -841,6 +1289,119 @@ describe('note referenced across pages (cross-doc)', () => {
     ) as NoteRefBlockComponent;
     expect(refEl?.querySelector('affine-paragraph')).toBeTruthy();
     expect(refEl?.querySelector('.affine-note-ref-error')).toBeFalsy();
+  });
+
+  test('a click on cross-doc content explicitly activates the nested dispatcher, not just via listener-timing luck', async () => {
+    // Reported live symptom: "can sometimes not even get a cursor into the
+    // note, but after a page reload I can" / "no commands are recognised."
+    // `_stopDispatcherActivationBubbling`'s own stopPropagation only
+    // *prevents the outer dispatcher from reactivating* — it relies on the
+    // nested `BlockStdScope`'s own listener (bound further down, on the
+    // nested host) having *already* activated it during the same bubble
+    // phase. That listener only exists once `_previewStd` is actually
+    // constructed (the render where `guard()` runs) — a real window where
+    // neither dispatcher ends up active. The fix explicitly sets
+    // `_previewStd.event.active = true` in the stop handler itself,
+    // removing the dependency on that timing. This asserts the resulting
+    // dispatcher state directly, independent of whether the exact race
+    // window is reproducible in this synchronous test harness.
+    const secondDoc = createSecondDoc();
+    const reusableNoteId = createReusableNoteOn(secondDoc);
+
+    const anchorNoteId = addNote(doc);
+    const anchorModel = doc.getBlock(anchorNoteId)!.model.children[0]!;
+    const [, result] = editor.std.command.exec(insertNoteRefBlockCommand, {
+      refBlockId: reusableNoteId,
+      refDocId: secondDoc.id,
+      place: 'after',
+      selectedModels: [anchorModel],
+    });
+    await wait();
+
+    const refEl = document.querySelector(
+      `affine-note-ref[data-block-id="${result.insertedNoteRefBlockId}"]`
+    ) as NoteRefBlockComponent & {
+      _previewStd?: { event: { active: boolean } };
+    };
+    expect(refEl).toBeTruthy();
+
+    refEl.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, composed: true })
+    );
+    await wait();
+
+    expect(refEl._previewStd?.event.active).toBe(true);
+    expect(editor.std.event.active).toBe(false);
+  });
+
+  test('_ensureTrailingParagraph does not add a paragraph while the source doc is still loading, and catches up once it is', async () => {
+    // Reported live symptom: reloading a page with a cross-doc note-ref
+    // sometimes appends extra empty paragraph(s) to the referenced note.
+    // Root cause: `_getCanonical()`'s own `ensureDocLoaded(refDoc)` is
+    // fire-and-forget (`if (!doc.ready) doc.load()`, never awaited) — a
+    // still-loading doc's `children` can be empty/partial, indistinguishable
+    // from a genuinely empty note by `lastChild?.text !== undefined`, so a
+    // paragraph gets added to a note that never actually needed one. This
+    // simulates that exact window: a canonical whose last child is
+    // non-text (so the *real*, fully-loaded state genuinely needs a
+    // trailing paragraph), observed while its own doc's `ready` is
+    // (deliberately, for this test) still `false`.
+    const secondDoc = createSecondDoc();
+    const reusableNoteId = createReusableNoteOn(secondDoc);
+    for (const child of [...secondDoc.getModelById(reusableNoteId)!.children]) {
+      secondDoc.deleteBlock(child);
+    }
+    secondDoc.addBlock('affine:latex', { latex: 'E=mc^2' }, reusableNoteId);
+    await wait();
+
+    // Install the "still loading" stub *before* the reference ever mounts
+    // — the real race is the *first* render seeing an incomplete doc, not
+    // some later one.
+    const realDoc = editor.std.workspace.getDoc(secondDoc.id)!;
+    const notReadyStub = new Proxy(realDoc, {
+      get(target, prop, receiver) {
+        if (prop === 'ready') return false;
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const originalGetDoc = editor.std.workspace.getDoc.bind(
+      editor.std.workspace
+    );
+    editor.std.workspace.getDoc = ((id: string) =>
+      id === secondDoc.id
+        ? notReadyStub
+        : originalGetDoc(id)) as typeof originalGetDoc;
+
+    const anchorNoteId = addNote(doc);
+    const anchorModel = doc.getBlock(anchorNoteId)!.model.children[0]!;
+    let insertedNoteRefBlockId: string | undefined;
+    try {
+      const [, result] = editor.std.command.exec(insertNoteRefBlockCommand, {
+        refBlockId: reusableNoteId,
+        refDocId: secondDoc.id,
+        place: 'after',
+        selectedModels: [anchorModel],
+      });
+      insertedNoteRefBlockId = result.insertedNoteRefBlockId;
+      await wait();
+
+      expect(secondDoc.getModelById(reusableNoteId)!.children.length).toBe(1);
+    } finally {
+      editor.std.workspace.getDoc = originalGetDoc;
+    }
+
+    // Once the doc reports `ready` again (restored above), the very next
+    // update correctly adds the trailing paragraph the note genuinely needs.
+    const refEl = document.querySelector(
+      `affine-note-ref[data-block-id="${insertedNoteRefBlockId}"]`
+    ) as NoteRefBlockComponent & { requestUpdate(): void };
+    refEl.requestUpdate();
+    await refEl.updateComplete;
+    await wait();
+
+    const children = secondDoc.getModelById(reusableNoteId)!.children;
+    expect(children.length).toBe(2);
+    expect(children[1]!.flavour).toBe('affine:paragraph');
   });
 });
 
