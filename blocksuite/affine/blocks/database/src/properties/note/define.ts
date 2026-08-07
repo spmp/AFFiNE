@@ -31,7 +31,7 @@ export const notePropertyModelConfig = notePropertyType.modelConfig({
     // is the same fallback `link`'s own doc-reference case effectively
     // resolves to once it stops being a literal string.
     type: () => t.unknown.instance(),
-    isEmpty: ({ value }) => !value,
+    isEmpty: ({ value }) => !value?.refDocId || !value.refBlockId,
   },
   rawValue: {
     schema: noteRefValueSchema,

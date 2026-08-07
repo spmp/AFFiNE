@@ -161,6 +161,42 @@ describe('journal todo database slash-menu command', () => {
     await wait();
 
     expect(canonicalDataSource.getNoteColumn()).toBeTruthy();
+
+    // Regression: on an already-existing table (this scenario's whole
+    // point), the Note column must land right after Status in the
+    // canonical's own master column order — this is what table view's own
+    // `materializeColumns` (`table-view-manager.ts`, applied the moment the
+    // view is actually opened) uses to position any not-yet-explicitly-
+    // listed property, so master order is what actually determines Note's
+    // final on-screen position in table view (confirmed live: it was
+    // showing up as the very first column instead).
+    const noteColumnId = canonicalDataSource.getNoteColumn()!.id;
+    const statusColumnId = canonicalDataSource.getTaskStatusColumn()!.id;
+    const masterColumnIds = canonicalModel.props.columns.map(c => c.id);
+    expect(masterColumnIds.indexOf(noteColumnId)).toBe(
+      masterColumnIds.indexOf(statusColumnId) + 1
+    );
+
+    // And no stale, explicit hidden entry for Note is left sitting in a
+    // table view's own stored `columns` order (the exact mechanism that
+    // caused the original bug: an explicit `hide: true` entry, once
+    // written, permanently overrides `materializeColumns`'s own ordering
+    // fallback for that column). This raw `affine:database` block has no
+    // view at all yet (only ever populated via `rowAddAsTodoList`) —
+    // add one explicitly, mirroring how a user actually switches a
+    // Journal Todo table to table mode.
+    const tableViewId = canonicalDataSource.viewManager.viewAdd('table');
+    const tableView = canonicalDataSource.viewDataList$.value.find(
+      v => v.id === tableViewId
+    )!;
+    const tableColumns =
+      (
+        canonicalDataSource.viewDataGet(tableView.id) as unknown as {
+          columns?: { id: string; hide?: boolean }[];
+        }
+      ).columns ?? [];
+    const noteEntry = tableColumns.find(c => c.id === noteColumnId);
+    expect(noteEntry?.hide).toBeFalsy();
   });
 
   test('Story 2.6: a row-level "attach a note" hover button renders in the list view (not a visible column) — per direct user feedback that a Note column should never be user-visible', async () => {

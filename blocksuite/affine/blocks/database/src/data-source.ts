@@ -584,10 +584,11 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       TASK_HIERARCHY_LEVEL_COLUMN_NAME,
       TASK_PARENT_IDENTIFIER_COLUMN_NAME,
       TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME,
-      // `Note`/`Note color` are pure plumbing (Story 2.6) — hidden in
-      // every view including table. The user-facing affordance is a
-      // row-level hover button, not a column.
-      TASK_NOTE_COLUMN_NAME,
+      // `Note color` is pure plumbing (Story 2.6, resolved-color cache) —
+      // hidden in every view including table, no user-facing affordance at
+      // all. `Note` itself is NOT always-hidden (see below): table has no
+      // row-hover affordance, so the column is the only way to reach it
+      // there.
       TASK_NOTE_COLOR_COLUMN_NAME,
     ];
     const namesToHide =
@@ -595,6 +596,7 @@ export class DatabaseBlockDataSource extends DataSourceBase {
         ? alwaysHiddenNames
         : [
             ...alwaysHiddenNames,
+            TASK_NOTE_COLUMN_NAME,
             this.getTaskStatusColumn()?.name,
             this.getDoneDateColumn()?.name,
           ].filter((name): name is string => !!name);
@@ -798,26 +800,75 @@ export class DatabaseBlockDataSource extends DataSourceBase {
   }
 
   /**
-   * Ensures a `note` reference column exists — Story 2.6. Pure data
-   * storage, hidden in *every* view including table (same no-view-filter
-   * `hidePropertyInViews` call `Note color`/the hierarchy columns already
-   * use) — per direct user feedback, a user should never need to see this
-   * as a column at all; the actual create/reveal/attach affordance is a
-   * row-level hover button (`list/pc/renderer.ts`'s `renderNoteAction`,
-   * `table/pc/row/row.ts`'s own `.row-ops` extension), not a cell UI.
+   * Ensures a `note` reference column exists — Story 2.6. Visibility
+   * follows the exact same policy as Status/Done date (`ensureTaskStatus
+   * Column`/`ensureDoneDateColumn` above): hidden by default in every
+   * *non-table* view (redundant there — the row-hover button in
+   * `list/pc/renderer.ts`'s `renderNoteAction` is the real affordance), but
+   * visible in table view, where there is no row-hover affordance built and
+   * the column is the only way to reach the feature. Deliberately does
+   * *not* write any explicit per-view entry for table views (same as
+   * Status/Done date) — table's own `TableSingleView` materializes any
+   * not-yet-listed property into view automatically, in the data source's
+   * own column order, the moment the view is actually opened
+   * (`table-view-manager.ts`'s `materializeColumns`), so positioning Note
+   * right after Status in the *master* column order below (rather than
+   * 'end') is what actually determines where it lands — writing an
+   * explicit table-view entry ourselves would freeze Note at whatever
+   * incidental position it was written at instead, which is exactly the
+   * live bug this replaced (Note was previously always force-hidden via a
+   * no-view-filter `hidePropertyInViews` call, which — for table views
+   * lacking any other explicit entries yet — planted Note's own entry as
+   * the very first stored column).
+   *
+   * Also strips any stale explicit table-view entry left over by that old
+   * behavior on a document created before this fix, every time this runs
+   * (cheap no-op once cleaned), so an already-broken table self-heals the
+   * next time `/Journal Todo` resolves it rather than staying stuck.
    */
   ensureNoteColumn(): string | undefined {
-    const existing = this.getNoteColumn();
-    if (existing) {
-      return existing.id;
+    let columnId = this.getNoteColumn()?.id;
+    if (!columnId) {
+      const statusColumnId = this.getTaskStatusColumn()?.id;
+      columnId = addProperty(
+        this._model,
+        statusColumnId ? { id: statusColumnId, before: false } : 'end',
+        notePropertyModelConfig.create(TASK_NOTE_COLUMN_NAME)
+      );
+      const nonTableViewIds = this.viewDataList$.value
+        .filter(view => view.mode !== 'table')
+        .map(view => view.id);
+      if (nonTableViewIds.length > 0) {
+        this.hidePropertyInViews(columnId, nonTableViewIds);
+      }
     }
-    const columnId = addProperty(
-      this._model,
-      'end',
-      notePropertyModelConfig.create(TASK_NOTE_COLUMN_NAME)
-    );
-    this.hidePropertyInViews(columnId);
+    this.clearStaleTableColumnEntry(columnId);
     return columnId;
+  }
+
+  /**
+   * Removes a column's own explicit entry from every TABLE-mode view's
+   * `columns` order array, if one exists — used to undo a stale `hide:
+   * true`/mis-positioned entry left over from before a column's visibility
+   * policy changed (see `ensureNoteColumn` above), letting
+   * `materializeColumns`'s own not-yet-listed-property fallback re-place it
+   * correctly (by master column order) the next time the view is opened.
+   * No-ops (no Yjs write) if the view has no entry for this column already.
+   */
+  private clearStaleTableColumnEntry(columnId: string) {
+    for (const view of this.viewDataList$.value) {
+      if (view.mode !== 'table') continue;
+      const data = this.viewDataGet(view.id) as unknown as
+        | { columns?: { id: string }[] }
+        | undefined;
+      const columns = data?.columns ?? [];
+      if (!columns.some(c => c.id === columnId)) {
+        continue;
+      }
+      this.viewDataUpdate(view.id, () => ({
+        columns: columns.filter(c => c.id !== columnId),
+      }));
+    }
   }
 
   getNoteColorColumn(): ColumnDataType | undefined {
