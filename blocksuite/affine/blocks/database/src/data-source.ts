@@ -1,15 +1,18 @@
 import type {
+  Color,
   ColumnDataType,
   ColumnUpdater,
   DatabaseBlockModel,
   ListBlockModel,
   ParagraphBlockModel,
 } from '@blocksuite/affine-model';
+import { resolveColor } from '@blocksuite/affine-model';
 import { getSelectedModelsCommand } from '@blocksuite/affine-shared/commands';
 import {
   EditorSettingProvider,
   FeatureFlagService,
   TaskWorkflowDefaultsSchema,
+  ThemeProvider,
 } from '@blocksuite/affine-shared/services';
 import type { InsertToPosition } from '@blocksuite/affine-shared/utils';
 import {
@@ -35,7 +38,7 @@ import {
 import { propertyPresets } from '@blocksuite/data-view/property-presets';
 import { IS_MOBILE } from '@blocksuite/global/env';
 import { BlockSuiteError, ErrorCode } from '@blocksuite/global/exceptions';
-import type { EditorHost } from '@blocksuite/std';
+import type { BlockStdScope, EditorHost } from '@blocksuite/std';
 import { type BlockModel, nanoid, Text } from '@blocksuite/store';
 import { computed, type ReadonlySignal, signal } from '@preact/signals-core';
 import { format } from 'date-fns/format';
@@ -48,6 +51,13 @@ import {
   databaseBlockProperties,
   databasePropertyConverts,
 } from './properties/index.js';
+import {
+  attachExistingNoteForRow,
+  createNoteForRow,
+  revealOrInsertNoteForRow,
+} from './properties/note/actions.js';
+import type { NoteRefValue } from './properties/note/define.js';
+import { notePropertyModelConfig } from './properties/note/define.js';
 import {
   addProperty,
   copyCellsByProperty,
@@ -70,11 +80,15 @@ import {
 
 const TASK_INTEROP_COLUMN_ID = '__affine_task_interop_link';
 const TASK_DONE_DATE_COLUMN_NAME = 'Done date';
+const TASK_NOTE_COLUMN_NAME = 'Note';
+const TASK_NOTE_COLOR_COLUMN_NAME = 'Note color';
 const READONLY_SYSTEM_COLUMN_NAMES = new Set([
   TASK_HIERARCHY_LEVEL_COLUMN_NAME,
   TASK_PARENT_IDENTIFIER_COLUMN_NAME,
   TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME,
   TASK_DONE_DATE_COLUMN_NAME,
+  TASK_NOTE_COLUMN_NAME,
+  TASK_NOTE_COLOR_COLUMN_NAME,
 ]);
 
 const DEFAULT_TASK_STATUS_INHERITANCE = {
@@ -570,6 +584,11 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       TASK_HIERARCHY_LEVEL_COLUMN_NAME,
       TASK_PARENT_IDENTIFIER_COLUMN_NAME,
       TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME,
+      // `Note`/`Note color` are pure plumbing (Story 2.6) — hidden in
+      // every view including table. The user-facing affordance is a
+      // row-level hover button, not a column.
+      TASK_NOTE_COLUMN_NAME,
+      TASK_NOTE_COLOR_COLUMN_NAME,
     ];
     const namesToHide =
       view.mode === 'table'
@@ -770,6 +789,174 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       this.hidePropertyInViews(columnId, nonTableViewIds);
     }
     return columnId;
+  }
+
+  getNoteColumn(): ColumnDataType | undefined {
+    return this._model.props.columns.find(
+      column => column.name === TASK_NOTE_COLUMN_NAME
+    );
+  }
+
+  /**
+   * Ensures a `note` reference column exists — Story 2.6. Pure data
+   * storage, hidden in *every* view including table (same no-view-filter
+   * `hidePropertyInViews` call `Note color`/the hierarchy columns already
+   * use) — per direct user feedback, a user should never need to see this
+   * as a column at all; the actual create/reveal/attach affordance is a
+   * row-level hover button (`list/pc/renderer.ts`'s `renderNoteAction`,
+   * `table/pc/row/row.ts`'s own `.row-ops` extension), not a cell UI.
+   */
+  ensureNoteColumn(): string | undefined {
+    const existing = this.getNoteColumn();
+    if (existing) {
+      return existing.id;
+    }
+    const columnId = addProperty(
+      this._model,
+      'end',
+      notePropertyModelConfig.create(TASK_NOTE_COLUMN_NAME)
+    );
+    this.hidePropertyInViews(columnId);
+    return columnId;
+  }
+
+  getNoteColorColumn(): ColumnDataType | undefined {
+    return this._model.props.columns.find(
+      column => column.name === TASK_NOTE_COLOR_COLUMN_NAME
+    );
+  }
+
+  /**
+   * Ensures a hidden "Note color" column exists — pure implementation
+   * plumbing (the resolved color a row's attached note was seeded with;
+   * independent of the note's own `pageBackgroundOverride` after creation,
+   * see `pickNoteColor`'s own doc comment), never meant to be a
+   * user-visible column. Hidden in *every* view including table (the
+   * no-`viewIds`-filter form of `hidePropertyInViews`, the same call
+   * `ensureTaskHierarchyColumns`'s own `getOrAdd` already uses to hide a
+   * column everywhere) — unlike Done date, which stays visible in table.
+   */
+  ensureNoteColorColumn(): string | undefined {
+    const existing = this.getNoteColorColumn();
+    if (existing) {
+      return existing.id;
+    }
+    const columnId = addProperty(
+      this._model,
+      'end',
+      databaseBlockProperties.richTextColumnConfig.create(
+        TASK_NOTE_COLOR_COLUMN_NAME
+      )
+    );
+    this.hidePropertyInViews(columnId);
+    return columnId;
+  }
+
+  getNoteRef(rowId: string): NoteRefValue | undefined {
+    const columnId = this.getNoteColumn()?.id;
+    if (!columnId) return undefined;
+    return getCell(this._model, rowId, columnId)?.value as
+      | NoteRefValue
+      | undefined;
+  }
+
+  setNoteRef(rowId: string, value: NoteRefValue): void {
+    const columnId = this.ensureNoteColumn();
+    if (!columnId) return;
+    updateCell(this._model, rowId, { columnId, value });
+  }
+
+  /**
+   * `Note color` stores a JSON-serialized theme `Color` token (e.g.
+   * `{dark, light}`), never a resolved CSS string — the same reasoning as
+   * `NoteRefProps.backgroundOverride` (see `properties/note/actions.ts`'s
+   * `pickNoteColor`): resolving eagerly would bake in whichever scheme was
+   * active at pick time, leaving the row's own background stuck on the
+   * wrong scheme after a theme switch. The underlying cell is still a
+   * plain rich-text column (`Text`) — only the string it holds changed
+   * from a bare hex value to a JSON blob.
+   */
+  getNoteColor(rowId: string): Color | undefined {
+    const columnId = this.getNoteColorColumn()?.id;
+    if (!columnId) return undefined;
+    const value = getCell(this._model, rowId, columnId)?.value as
+      | { toString(): string }
+      | undefined;
+    const raw = value?.toString();
+    if (!raw) return undefined;
+    try {
+      return JSON.parse(raw) as Color;
+    } catch {
+      return undefined;
+    }
+  }
+
+  setNoteColor(rowId: string, color: Color): void {
+    const columnId = this.ensureNoteColorColumn();
+    if (!columnId) return;
+    updateCell(this._model, rowId, {
+      columnId,
+      value: new Text(JSON.stringify(color)),
+    });
+  }
+
+  /**
+   * Every currently-assigned Note color in this table, used by
+   * `pickNoteColor` to avoid handing out a color already in use by another
+   * row on this same page — Story 2.6's Resolved Design Decision 7.
+   */
+  getAllNoteColors(): Color[] {
+    const columnId = this.getNoteColorColumn()?.id;
+    if (!columnId) return [];
+    return this._model.children
+      .map(row => {
+        const value = getCell(this._model, row.id, columnId)?.value;
+        const raw = value?.toString();
+        if (!raw) return undefined;
+        try {
+          return JSON.parse(raw) as Color;
+        } catch {
+          return undefined;
+        }
+      })
+      .filter((color): color is Color => !!color);
+  }
+
+  /**
+   * Thin delegates to `properties/note/actions.js`'s own free functions,
+   * exposed as methods on the data source itself so `data-view`'s own
+   * (flavour-agnostic, cannot import from this package) view-preset
+   * renderers can reach them via a duck-typed structural cast — e.g.
+   * `list/pc/renderer.ts`'s row-level note-action button — without a
+   * backwards package dependency from `data-view` onto
+   * `@blocksuite/affine-block-database`/`@blocksuite/affine-block-note-ref`.
+   */
+  createNoteForRow(std: BlockStdScope, rowId: string): void {
+    createNoteForRow(std, this, rowId);
+  }
+
+  revealOrInsertNoteForRow(std: BlockStdScope, rowId: string): void {
+    revealOrInsertNoteForRow(std, this, rowId);
+  }
+
+  attachExistingNoteForRow(std: BlockStdScope, rowId: string): Promise<void> {
+    return attachExistingNoteForRow(std, this, rowId);
+  }
+
+  /**
+   * Resolves the row's stored `Color` token to an actual CSS value using
+   * the *current* theme — `getNoteColor` deliberately returns the raw,
+   * unresolved token (see its own doc comment), so any renderer wanting an
+   * actual paintable color calls this instead. Lives here (not in
+   * `data-view`) because resolving needs `resolveColor`/`ThemeProvider`
+   * from `@blocksuite/affine-model`/`@blocksuite/affine-shared`, which
+   * `data-view` deliberately doesn't depend on — same duck-typed-delegate
+   * reasoning as `createNoteForRow` and friends above.
+   */
+  getResolvedNoteColor(std: BlockStdScope, rowId: string): string | undefined {
+    const color = this.getNoteColor(rowId);
+    if (!color) return undefined;
+    return resolveColor(color, std.get(ThemeProvider).appTheme);
   }
 
   private normalizeStatusLabel(value: string) {
@@ -2449,9 +2636,12 @@ export const convertToDatabase = (host: EditorHost, viewType: string) => {
 
     const datasource = new DatabaseBlockDataSource(databaseModel);
 
+    // See `list-block.ts`'s own identical fallback: `EditorSettingProvider`
+    // isn't registered on a nested (e.g. cross-doc reference) preview scope,
+    // so this must not pass a bare `undefined` to `.parse()`.
     const taskWorkflowDefaults = TaskWorkflowDefaultsSchema.parse(
       host.std.getOptional(EditorSettingProvider)?.setting$.peek()
-        .taskWorkflowDefaults
+        .taskWorkflowDefaults ?? {}
     );
     const isTodoSelection = orderedSelectedModels.every(
       model => model.flavour === 'affine:list' && model.props.type === 'todo'

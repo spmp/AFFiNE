@@ -1,14 +1,57 @@
+import {
+  menu,
+  popMenu,
+  popupTargetFromElement,
+} from '@blocksuite/affine-components/context-menu';
 import { SignalWatcher, WithDisposable } from '@blocksuite/global/lit';
+import { PageIcon, PlusIcon } from '@blocksuite/icons/lit';
+import type { BlockStdScope } from '@blocksuite/std';
 import { ShadowlessElement } from '@blocksuite/std';
 import { signal } from '@preact/signals-core';
 import { css, html, nothing } from 'lit';
 import { customElement, eventOptions, property } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 
+import { EditorHostKey } from '../../../core/context/host-context.js';
 import { renderUniLit } from '../../../core/utils/uni-component/index.js';
 import type { ListViewUILogic } from './list-view-ui-logic.js';
 
 const HIERARCHY_LEVEL_COLUMN_NAME = 'Hierarchy Level';
+
+/**
+ * Structural (duck-typed) view of `DatabaseBlockDataSource`'s own Story
+ * 2.6 methods — `data-view` is a lower-level, flavour-agnostic package and
+ * cannot import types from `@blocksuite/affine-block-database` (which
+ * itself depends on `data-view`), so this row-level "attach a note" button
+ * is gated on structural capability instead: only a data source that
+ * actually has task-status/Note-linking methods (i.e. a todo-capable
+ * table, per direct user request — not every generic database) renders
+ * the button at all.
+ */
+interface NoteCapableDataSource {
+  getTaskStatusColumn?: () => unknown;
+  getNoteRef?: (
+    rowId: string
+  ) => { refDocId: string; refBlockId: string } | undefined;
+  // Returns an already-resolved, paintable CSS color for the *current*
+  // theme — the row's stored value is a theme `Color` token (e.g.
+  // `{dark, light}`), which `data-view` has no way to resolve itself
+  // (that needs `resolveColor`/`ThemeProvider` from
+  // `@blocksuite/affine-model`/`@blocksuite/affine-shared`, deliberately
+  // not a `data-view` dependency) — so resolution happens on the data
+  // source's own side (`DatabaseBlockDataSource.getResolvedNoteColor`),
+  // called fresh on every render so a theme switch is reflected live.
+  getResolvedNoteColor?: (
+    std: BlockStdScope,
+    rowId: string
+  ) => string | undefined;
+  createNoteForRow?: (std: BlockStdScope, rowId: string) => void;
+  revealOrInsertNoteForRow?: (std: BlockStdScope, rowId: string) => void;
+  attachExistingNoteForRow?: (
+    std: BlockStdScope,
+    rowId: string
+  ) => Promise<void>;
+}
 
 @customElement('affine-data-view-list')
 export class ListViewRenderer extends SignalWatcher(
@@ -135,6 +178,29 @@ export class ListViewRenderer extends SignalWatcher(
       background: var(--affine-hover-color);
       border-radius: 6px;
     }
+
+    .affine-data-view-list-note-action {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      margin-left: 4px;
+      border-radius: 4px;
+      cursor: pointer;
+      color: var(--affine-icon-color);
+      visibility: hidden;
+      opacity: 0;
+    }
+
+    .affine-data-view-list-row:hover .affine-data-view-list-note-action {
+      visibility: visible;
+      opacity: 1;
+    }
+
+    .affine-data-view-list-note-action:hover {
+      background: var(--affine-hover-color);
+    }
   `;
 
   @property({ attribute: false })
@@ -142,6 +208,107 @@ export class ListViewRenderer extends SignalWatcher(
 
   private get view() {
     return this.logic.view;
+  }
+
+  private get noteCapableDataSource(): NoteCapableDataSource {
+    return this.view.manager.dataSource as unknown as NoteCapableDataSource;
+  }
+
+  private get std(): BlockStdScope | undefined {
+    return this.view.serviceGet(EditorHostKey)?.std;
+  }
+
+  /**
+   * The row's own persistent highlight — independent of whether a
+   * `note-ref` currently exists on *this* page (a carried-over task's Note
+   * reference can be set from an earlier day, long before this exact page
+   * ever reveals/inserts it) — per direct user request: the row itself
+   * should always show its assigned color the moment the row is rendered
+   * on any page, since that's the visual cue "this task is in-progress /
+   * has a note", not just a hover affordance.
+   */
+  private getRowNoteColor(rowId: string): string | undefined {
+    const dataSource = this.noteCapableDataSource;
+    if (typeof dataSource.getResolvedNoteColor !== 'function') {
+      return undefined;
+    }
+    const std = this.std;
+    if (!std) return undefined;
+    return dataSource.getResolvedNoteColor(std, rowId);
+  }
+
+  /**
+   * Row-level "attach a note" button (Story 2.6) — gated on the data
+   * source actually being todo-capable (`getTaskStatusColumn` present and
+   * resolving), per direct user request: a plain generic database/reference
+   * table should never grow this button, only a Journal Todo-style table.
+   * CSS-`:hover`-revealed, mirroring `table/pc/row/row.ts`'s own
+   * `.show-on-hover-row` pattern (list rows are plain, non-virtualized DOM,
+   * so CSS `:hover` scopes correctly here, unlike the virtualized table
+   * variant).
+   */
+  private renderNoteAction(rowId: string) {
+    const dataSource = this.noteCapableDataSource;
+    if (typeof dataSource.getTaskStatusColumn !== 'function') {
+      return nothing;
+    }
+    if (!dataSource.getTaskStatusColumn()) {
+      return nothing;
+    }
+    const std = this.std;
+    if (!std) {
+      return nothing;
+    }
+
+    const ref = dataSource.getNoteRef?.(rowId);
+    if (!ref) {
+      const onClick = (e: MouseEvent) => {
+        e.stopPropagation();
+        popMenu(popupTargetFromElement(e.currentTarget as HTMLElement), {
+          options: {
+            items: [
+              menu.action({
+                name: 'New note',
+                prefix: PageIcon(),
+                select: () => {
+                  dataSource.createNoteForRow?.(std, rowId);
+                },
+              }),
+              menu.action({
+                name: 'Link existing note',
+                prefix: PageIcon(),
+                select: () => {
+                  dataSource
+                    .attachExistingNoteForRow?.(std, rowId)
+                    .catch(console.error);
+                },
+              }),
+            ],
+          },
+        });
+      };
+      return html`<div
+        class="affine-data-view-list-note-action"
+        data-testid="note-action-create"
+        @click=${onClick}
+      >
+        ${PlusIcon()}
+      </div>`;
+    }
+
+    const color = dataSource.getResolvedNoteColor?.(std, rowId);
+    const onClick = (e: MouseEvent) => {
+      e.stopPropagation();
+      dataSource.revealOrInsertNoteForRow?.(std, rowId);
+    };
+    return html`<div
+      class="affine-data-view-list-note-action"
+      data-testid="note-action-open"
+      style=${color ? `color: ${color};` : ''}
+      @click=${onClick}
+    >
+      ${PageIcon()}
+    </div>`;
   }
 
   private getHierarchyLevel(rowId: string) {
@@ -330,11 +497,14 @@ export class ListViewRenderer extends SignalWatcher(
           row => row.rowId,
           row => {
             const indent = this.getHierarchyLevel(row.rowId) * 24;
+            const noteColor = this.getRowNoteColor(row.rowId);
             return html`<div
               class="affine-data-view-list-row"
               data-row-id=${row.rowId}
               tabindex="0"
-              style="padding-left: ${8 + indent}px"
+              style="padding-left: ${8 + indent}px;${noteColor
+                ? ` background-color: ${noteColor}; border-radius: 6px;`
+                : ''}"
               @focusin=${this.onRowFocusIn}
               @keydown=${this.onRowKeyDown}
             >
@@ -357,6 +527,7 @@ export class ListViewRenderer extends SignalWatcher(
                     )}
                   </div>`
                 : nothing}
+              ${this.renderNoteAction(row.rowId)}
             </div>`;
           }
         )}

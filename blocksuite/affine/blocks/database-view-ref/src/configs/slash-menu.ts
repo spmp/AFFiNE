@@ -121,6 +121,17 @@ export const journalTodoDatabaseSlashMenuConfig: SlashMenuConfig = {
           if (canonicalModel) {
             const dataSource = new DatabaseBlockDataSource(canonicalModel);
             const statusColumnId = dataSource.ensureTaskStatusColumn();
+            // Story 2.6: guarantees the "Note" column exists on this
+            // canonical every time `/Journal Todo` resolves against it —
+            // not just on rows created after this fix — mirroring the
+            // exact same eager-ensure pattern used for Status/Done date
+            // right here. Without this, `ensureNoteColumn()` (only
+            // otherwise called lazily from inside the cell's own
+            // create/reveal/attach actions) never runs for a canonical
+            // whose existing rows were all created before this story
+            // shipped, so the column — and therefore the whole feature —
+            // silently never appears.
+            dataSource.ensureNoteColumn();
             const doneOption = dataSource.getTaskStatusTargetOption(
               'done',
               statusColumnId
