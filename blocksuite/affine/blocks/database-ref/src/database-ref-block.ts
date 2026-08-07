@@ -271,7 +271,19 @@ export class DatabaseRefBlockComponent extends BlockComponent<DatabaseRefBlockMo
     // this, a doc the user hasn't opened this session never starts loading
     // at all, so `_subscribeTargetDoc`'s `update` listener below would have
     // nothing to ever fire on.
-    if (!refDoc.ready) refDoc.load();
+    if (!refDoc.ready) {
+      refDoc.load();
+      // `load()` here is fire-and-forget — the doc isn't actually loaded
+      // yet, so reading its content immediately below would see an
+      // empty/partial tree indistinguishable from "this reference is
+      // broken," flashing a resolve error (or constructing a preview over
+      // incomplete data) instead of just waiting. Bail out entirely; the
+      // `update` listener re-invokes this once real content has actually
+      // arrived and `ready` reflects that (mirrors the identical fix in
+      // `note-ref-block.ts`'s own `_maybeRefreshPreview`/
+      // `_ensureTrailingParagraph`, same underlying hazard).
+      return;
+    }
 
     const targetStore = this._getUnfilteredTargetStore(refDoc);
     const targetModel = targetStore.getBlock(refBlockId)?.model;
@@ -308,6 +320,18 @@ export class DatabaseRefBlockComponent extends BlockComponent<DatabaseRefBlockMo
     };
 
     const nextPreviewStore = refDoc.getStore({ query });
+    // `getStore({ query })` only *constructs* the Store — every
+    // `StoreExtension`'s own `loaded()` lifecycle hook (which attaches
+    // its real event listeners and computes its initial state) doesn't
+    // run until `Store.load()` is explicitly called, a step separate
+    // from `Doc.load()`. Without it, `HistoryExtension`'s own `_canUndo`/
+    // `_canRedo` signals (what `Store.canUndo`/`.canRedo` actually read)
+    // stay frozen at their construction-time default (`false`) forever,
+    // regardless of how many real, undo-stack-worthy edits happen
+    // afterward — confirmed live as a real bug for `note-ref-block.ts`'s
+    // identical pattern (see that file's own `_maybeRefreshPreview`),
+    // fixed there with this same one-line change.
+    nextPreviewStore.load();
     this._installDeleteRedirect(nextPreviewStore, targetModel.id);
     this._replacePreviewStore(nextPreviewStore, refDoc, query);
     this._resolveError = null;

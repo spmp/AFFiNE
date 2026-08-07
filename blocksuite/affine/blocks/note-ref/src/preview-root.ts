@@ -1,3 +1,4 @@
+import { PageKeyboardManager } from '@blocksuite/affine-block-root';
 import { BlockComponent } from '@blocksuite/std';
 import { BlockViewIdentifier } from '@blocksuite/std';
 import type { ExtensionType } from '@blocksuite/store';
@@ -29,6 +30,26 @@ export class NoteRefPreviewRootBlockComponent extends BlockComponent {
       display: block;
     }
   `;
+
+  // Unlike the real `PageRootBlockComponent` this is a stand-in for, this
+  // component never wired up `PageKeyboardManager` — a pre-existing gap
+  // from when this file was first written, not something introduced by
+  // any of this story's other fixes. Its absence means every keybinding
+  // `PageKeyboardManager` provides for an ordinary page — most reported
+  // live: Mod-z/Shift-Mod-z (undo/redo) — silently did nothing while
+  // editing inside a cross-doc reference, since nothing on this nested
+  // scope's own root component ever called `.undo()`/`.redo()` on its
+  // own `store` at all. `PageKeyboardManager`'s own constructor only
+  // needs a `BlockComponent` (`.bindHotKey`, `.store`, `.host.selection`
+  // — all present here, same as on the real root), so this is a direct,
+  // like-for-like port of `page-root-block.ts`'s own
+  // `connectedCallback` wiring, not a new mechanism.
+  keyboardManager: PageKeyboardManager | null = null;
+
+  override connectedCallback() {
+    super.connectedCallback();
+    this.keyboardManager = new PageKeyboardManager(this);
+  }
 
   override renderBlock() {
     const widgets = html`${Object.values(this.widgets)}`;
