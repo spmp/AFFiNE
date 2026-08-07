@@ -166,7 +166,7 @@ describe('todo note linking (Story 2.6)', () => {
     expect(dataSource.getNoteColor(rowId)).toBeTruthy();
   });
 
-  test('Note and Note color columns are both hidden in every view — the user-facing affordance is a row-level hover button, not a column', async () => {
+  test('Note color is hidden in every view; Note itself is hidden in list (row-hover button is the real affordance there) but stays visible in table (no row-hover affordance exists there)', async () => {
     const { dataSource, rowId } = createRow();
     createNoteForRow(editor.std, dataSource, rowId);
     await wait();
@@ -177,15 +177,28 @@ describe('todo note linking (Story 2.6)', () => {
     const listViewId = dataSource.viewManager.viewAdd('list');
     const tableViewId = dataSource.viewManager.viewAdd('table');
 
-    for (const viewId of [listViewId, tableViewId]) {
-      const view = dataSource.viewDataGet(viewId) as unknown as {
-        columns?: { id: string; hide?: boolean }[];
-      };
-      const noteEntry = view?.columns?.find(c => c.id === noteColumnId);
-      const colorEntry = view?.columns?.find(c => c.id === noteColorColumnId);
-      expect(noteEntry?.hide).toBe(true);
-      expect(colorEntry?.hide).toBe(true);
-    }
+    const listView = dataSource.viewDataGet(listViewId) as unknown as {
+      columns?: { id: string; hide?: boolean }[];
+    };
+    expect(listView?.columns?.find(c => c.id === noteColumnId)?.hide).toBe(
+      true
+    );
+    expect(listView?.columns?.find(c => c.id === noteColorColumnId)?.hide).toBe(
+      true
+    );
+
+    // Table view never gets an explicit per-view entry for Note at all
+    // (see `ensureNoteColumn`'s own doc comment) — its visibility comes
+    // from `materializeColumns`'s not-yet-listed-property fallback, so
+    // "no entry" (not `hide: false`) is the correct, visible state here.
+    const tableView = dataSource.viewDataGet(tableViewId) as unknown as {
+      columns?: { id: string; hide?: boolean }[];
+    };
+    const tableNoteEntry = tableView?.columns?.find(c => c.id === noteColumnId);
+    expect(tableNoteEntry?.hide).not.toBe(true);
+    expect(
+      tableView?.columns?.find(c => c.id === noteColorColumnId)?.hide
+    ).toBe(true);
   });
 
   test("color assignment avoids colors already in use on the page across two rows, and is independent of the note's own background after creation", async () => {

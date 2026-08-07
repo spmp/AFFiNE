@@ -85,7 +85,15 @@ export class NoteCell extends BaseCellRenderer<NoteRefValue, NoteRefValue> {
       `;
     }
 
-    const color = this.dataSource.getNoteColor(this.rowId);
+    // `getNoteColor` deliberately returns the raw, unresolved theme
+    // `Color` token (e.g. `{dark, light}`), not a paintable CSS string —
+    // `getResolvedNoteColor` is the one that actually resolves it against
+    // the current theme, exactly like every other renderer of this same
+    // value (`list/pc/renderer.ts`'s `getRowNoteColor`).
+    const std = this.std;
+    const color = std
+      ? this.dataSource.getResolvedNoteColor(std, this.rowId)
+      : undefined;
     return html`
       <div
         data-testid="note-cell-open"

@@ -61,14 +61,15 @@ export function pickNoteColor(
   if (unused) return unused;
   const first = candidates[0];
   if (first) return first;
-  // `NoteBackgroundColorMap`'s own type is a generic `Record<string, Color>`
-  // (from its zod schema), so a literal property access like `.White`
-  // widens to `Color | undefined` under this package's
-  // `noUncheckedIndexedAccess` — the key genuinely always exists at
-  // runtime (it's part of the literal object `default.ts` declares), this
-  // branch is only reachable if `candidateColors()` somehow returned an
-  // empty array.
-  return DefaultTheme.NoteBackgroundColorMap.White as Color;
+  // Only reachable if `candidateColors()` somehow returned an empty array
+  // (every non-excluded entry filtered out) — fall back to the very first
+  // entry of the *full*, unfiltered palette rather than hardcoding White
+  // specifically. White/Transparent are excluded above precisely because
+  // they're poor choices for this purpose, so privileging White by name
+  // in this one last-resort path would contradict that same rule; falling
+  // back to "whatever the palette's own first entry is" doesn't.
+  const fallback = Object.values(DefaultTheme.NoteBackgroundColorMap)[0];
+  return (fallback ?? DefaultTheme.NoteBackgroundColorMap.White) as Color;
 }
 
 /**
@@ -158,15 +159,23 @@ function resolveCanonicalStore(
 
 function noteRefExistsOnCurrentPage(
   std: BlockStdScope,
+  refDocId: string,
   refBlockId: string
 ): BlockModel | undefined {
-  return std.store
-    .getBlocksByFlavour('affine:note-ref')
-    .find(
-      block =>
-        (block.model as unknown as { props: { refBlockId: string } }).props
-          .refBlockId === refBlockId
-    )?.model;
+  return std.store.getBlocksByFlavour('affine:note-ref').find(block => {
+    const props = (
+      block.model as unknown as {
+        props: { refDocId?: string; refBlockId: string };
+      }
+    ).props;
+    // `refDocId` is left unset on the model for a same-doc reference
+    // (see `revealOrInsertNoteForRow`'s own `isCrossDoc ? ... : undefined`
+    // below) — normalize both sides to the real doc id before comparing,
+    // so a same-doc existing ref (`refDocId` prop `undefined`) still
+    // matches against a stored `ref.refDocId` that equals `std.store.id`.
+    const existingRefDocId = props.refDocId ?? std.store.id;
+    return existingRefDocId === refDocId && props.refBlockId === refBlockId;
+  })?.model;
 }
 
 /**
@@ -210,7 +219,10 @@ export function createNoteForRow(
   const refModel = std.store.getBlock(result.insertedNoteRefBlockId)?.model as
     | { props: { refDocId?: string; refBlockId: string } }
     | undefined;
-  if (!refModel) return;
+  if (!refModel) {
+    toast(std.host, 'Note was created but could not be finished setting up.');
+    return;
+  }
 
   const refDocId = refModel.props.refDocId ?? std.store.id;
   const refBlockId = refModel.props.refBlockId;
@@ -218,15 +230,17 @@ export function createNoteForRow(
   const canonical = canonicalStore?.getBlock(refBlockId)?.model as
     | NoteBlockModel
     | undefined;
+  if (!canonical || !canonicalStore) {
+    toast(std.host, 'Note was created but could not be finished setting up.');
+    return;
+  }
 
   const rowText = std.store.getModelById(rowId)?.text?.toString() ?? '';
   const color = pickNoteColor(std, dataSource);
-  if (canonical && canonicalStore) {
-    canonicalStore.updateBlock(canonical, {
-      name: `Journal: ${rowText}`,
-      pageBackgroundOverride: color,
-    });
-  }
+  canonicalStore.updateBlock(canonical, {
+    name: `Journal: ${rowText}`,
+    pageBackgroundOverride: color,
+  });
   applyNoteRefColor(std, result.insertedNoteRefBlockId, color);
 
   dataSource.setNoteRef(rowId, { refDocId, refBlockId });
@@ -248,9 +262,21 @@ export function revealOrInsertNoteForRow(
   const ref = dataSource.getNoteRef(rowId);
   if (!ref) return;
 
-  const existing = noteRefExistsOnCurrentPage(std, ref.refBlockId);
+  const existing = noteRefExistsOnCurrentPage(
+    std,
+    ref.refDocId,
+    ref.refBlockId
+  );
   if (existing) {
     revealBlock(std, existing.id);
+    return;
+  }
+
+  // A carryover onto a since-deleted canonical would otherwise insert a
+  // dangling `note-ref` with nothing to render — check the target still
+  // resolves before inserting anything.
+  if (!resolveCanonicalStore(std, ref.refDocId)?.getBlock(ref.refBlockId)) {
+    toast(std.host, 'That note no longer exists.');
     return;
   }
 
@@ -328,14 +354,17 @@ export async function attachExistingNoteForRow(
     return;
   }
 
-  const color = pickNoteColor(std, dataSource);
   const canonicalStore = resolveCanonicalStore(std, candidate.docId);
   const canonical = canonicalStore?.getBlock(candidate.blockId)?.model as
     | NoteBlockModel
     | undefined;
-  if (canonical && canonicalStore) {
-    canonicalStore.updateBlock(canonical, { pageBackgroundOverride: color });
+  if (!canonical || !canonicalStore) {
+    toast(std.host, 'Note was attached but could not be finished setting up.');
+    return;
   }
+
+  const color = pickNoteColor(std, dataSource);
+  canonicalStore.updateBlock(canonical, { pageBackgroundOverride: color });
   applyNoteRefColor(std, result.insertedNoteRefBlockId, color);
 
   dataSource.setNoteRef(rowId, {
