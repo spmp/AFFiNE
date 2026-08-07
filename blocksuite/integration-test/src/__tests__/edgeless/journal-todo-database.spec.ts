@@ -6,6 +6,7 @@ import {
 import type { DatabaseBlockModel } from '@blocksuite/affine/model';
 import {
   createLocalViewOverride,
+  insertDatabaseViewRefBlockCommand,
   journalTodoDatabaseSlashMenuConfig,
   journalTodoSourceSlashMenuConfig,
 } from '@blocksuite/affine/blocks/database-view-ref';
@@ -116,6 +117,275 @@ describe('journal todo database slash-menu command', () => {
     // be an `or`, not a plain live "not done" filter.
     expect(seededView.filter.op).toBe('or');
     expect(seededView.filter.conditions.length).toBe(2);
+  });
+
+  test('Story 2.6: the "Note" column exists on the canonical after invocation, even when the canonical and its rows already existed beforehand', async () => {
+    // Simulates the exact bug report this test guards against: a canonical
+    // database whose rows were created via `rowAddAsTodoList` in an earlier
+    // session, before this journal doc's own `/Journal Todo` was ever
+    // invoked here. `ensureNoteColumn()` is otherwise only ever called
+    // lazily from inside the Note cell's own create/reveal/attach actions,
+    // which can't run until the column already exists — so without eagerly
+    // ensuring it every time `/Journal Todo` resolves a canonical (mirroring
+    // the same eager-ensure Status/Done date already get), the column, and
+    // therefore the whole feature, would silently never appear on a
+    // pre-existing table.
+    const canonicalNoteId = addNote(doc);
+    const canonicalDbId = doc.addBlock(
+      'affine:database',
+      { title: new Text('Journal Todo') },
+      canonicalNoteId
+    );
+    const canonicalModel = doc.getBlock(canonicalDbId)
+      ?.model as DatabaseBlockModel;
+    const canonicalDataSource = new DatabaseBlockDataSource(canonicalModel);
+    canonicalDataSource.rowAddAsTodoList('end');
+    expect(canonicalDataSource.getNoteColumn()).toBeFalsy();
+
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+    const { stub } = createStubStd({
+      journalDate: '2026-08-02',
+      initialRef: { refDocId: doc.id, refBlockId: canonicalDbId },
+    });
+
+    const items = journalTodoDatabaseSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stub, model }) : items;
+    await (
+      resolvedItems.find(i => i.name === 'Journal Todo') as unknown as {
+        action: () => Promise<void>;
+      }
+    ).action();
+    await wait();
+
+    expect(canonicalDataSource.getNoteColumn()).toBeTruthy();
+  });
+
+  test('Story 2.6: a row-level "attach a note" hover button renders in the list view (not a visible column) — per direct user feedback that a Note column should never be user-visible', async () => {
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+    const { stub, getRef } = createStubStd({ journalDate: '2026-08-02' });
+
+    const items = journalTodoDatabaseSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stub, model }) : items;
+    await (
+      resolvedItems.find(i => i.name === 'Journal Todo') as unknown as {
+        action: () => Promise<void>;
+      }
+    ).action();
+    await wait();
+
+    const ref = getRef()!;
+    const canonicalModel = doc.getBlock(ref.refBlockId)
+      ?.model as DatabaseBlockModel;
+    const dataSource = new DatabaseBlockDataSource(canonicalModel);
+    const rowId = dataSource.rowAddAsTodoList('end');
+    await wait();
+
+    // The seeded view is `list` mode (Story 2.4's own default) — the
+    // hover button renders per-row there, not as a database column.
+    const rowEl = document.querySelector(
+      `[data-row-id="${rowId}"]`
+    ) as HTMLElement | null;
+    expect(rowEl).toBeTruthy();
+    expect(
+      rowEl?.querySelector('[data-testid="note-action-create"]')
+    ).toBeTruthy();
+  });
+
+  test('Story 2.6: clicking "New note" from the hover button on a CROSS-DOC canonical creates the note-ref on the outer journal page, not silently inside the canonical\'s own (different) document', async () => {
+    // Reproduces a real bug found via manual testing: `affine-database`
+    // (and every cell renderer inside it) renders nested, inside
+    // `affine-database-view-ref`'s own preview `BlockStdScope` — a fresh
+    // scope over the canonical's own backing doc, which in the realistic
+    // (and most common) case is a *different* doc than the journal page
+    // the user is looking at. `EditorHostKey` used to resolve to that
+    // nested preview's own host, so `std.store.addBlock(...)` (inside
+    // `createNoteForRow`) silently created the note-ref inside the
+    // canonical's own doc instead of the outer page — invisible to the
+    // user. Fixed via `DatabaseViewRefBlockComponent.outerStd` (a duck
+    // -typed getter database-block.ts's own lazy `dataSource` getter now
+    // reads, mirroring `viewLocalOverride`'s own existing pattern).
+    const secondDoc = collection
+      .createDoc(
+        `doc:journal-todo-canonical-${Math.random().toString(16).slice(2, 8)}`
+      )
+      .getStore();
+    secondDoc.load(() => {
+      const rootId = secondDoc.addBlock('affine:page', { title: new Text() });
+      secondDoc.addBlock('affine:surface', {}, rootId);
+    });
+    const secondNoteId = addNote(secondDoc);
+    const databaseId = secondDoc.addBlock(
+      'affine:database',
+      { title: new Text('Journal Todo') },
+      secondNoteId
+    );
+    const canonicalDataSource = new DatabaseBlockDataSource(
+      secondDoc.getModelById(databaseId) as DatabaseBlockModel
+    );
+    canonicalDataSource.ensureTaskStatusColumn();
+    const rowId = canonicalDataSource.rowAddAsTodoList('end');
+    secondDoc.updateBlock(secondDoc.getModelById(rowId)!, {
+      text: new Text('Cross-doc row'),
+    });
+
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+    const { stub } = createStubStd({
+      journalDate: '2026-08-03',
+      initialRef: { refDocId: secondDoc.id, refBlockId: databaseId },
+    });
+
+    const items = journalTodoDatabaseSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stub, model }) : items;
+    await (
+      resolvedItems.find(i => i.name === 'Journal Todo') as unknown as {
+        action: () => Promise<void>;
+      }
+    ).action();
+    await wait();
+
+    const rowEl = document.querySelector(
+      `[data-row-id="${rowId}"]`
+    ) as HTMLElement | null;
+    expect(rowEl).toBeTruthy();
+    const createButton = rowEl?.querySelector(
+      '[data-testid="note-action-create"]'
+    ) as HTMLElement | null;
+    expect(createButton).toBeTruthy();
+    createButton?.click();
+    await wait();
+
+    const menuItems = Array.from(
+      document.querySelectorAll('.affine-menu-action-text')
+    );
+    const newNoteItem = menuItems.find(
+      el => el.textContent?.trim() === 'New note'
+    );
+    expect(newNoteItem).toBeTruthy();
+    (newNoteItem?.closest('affine-menu-button') as HTMLElement | null)?.click();
+    await wait();
+
+    // The note-ref (and its canonical note) must land on the OUTER doc —
+    // never inside the (cross-doc) canonical's own backing document.
+    expect(doc.getBlocksByFlavour('affine:note-ref').length).toBeGreaterThan(0);
+    expect(secondDoc.getBlocksByFlavour('affine:note-ref').length).toBe(0);
+  });
+
+  test("Story 2.6: clicking the note button for a row already linked to a note (from a cross-doc canonical) inserts the note-ref on THIS page, not the canonical's own doc — the exact mechanism a carried-over task in a new journal day relies on", async () => {
+    // Directly answers the user's own question: when a task carries
+    // forward into a new day's journal, its Note reference already points
+    // at an existing note (set on some earlier day) — clicking the note
+    // button there must reveal-or-insert that note at the end of *this*
+    // page, using the exact same `std`/`outerStd` resolution the previous
+    // test already proved correct for the "create new" path. This test
+    // exercises the *other* branch (`revealOrInsertNoteForRow`, not
+    // `createNoteForRow`) against a genuinely cross-doc canonical, so both
+    // of `properties/note/actions.ts`'s insertion paths are proven, not
+    // just one.
+    const canonicalDoc = collection
+      .createDoc(`doc:canonical-${Math.random().toString(16).slice(2, 8)}`)
+      .getStore();
+    canonicalDoc.load(() => {
+      const rootId = canonicalDoc.addBlock('affine:page', {
+        title: new Text(),
+      });
+      canonicalDoc.addBlock('affine:surface', {}, rootId);
+    });
+    const canonicalNoteId = addNote(canonicalDoc);
+    const databaseId = canonicalDoc.addBlock(
+      'affine:database',
+      { title: new Text('Journal Todo') },
+      canonicalNoteId
+    );
+    const canonicalDataSource = new DatabaseBlockDataSource(
+      canonicalDoc.getModelById(databaseId) as DatabaseBlockModel
+    );
+    canonicalDataSource.ensureTaskStatusColumn();
+    const rowId = canonicalDataSource.rowAddAsTodoList('end');
+    canonicalDoc.updateBlock(canonicalDoc.getModelById(rowId)!, {
+      text: new Text('Carried-over task'),
+    });
+
+    // A note already exists and is linked to this row — standing in for
+    // "created on an earlier day," without re-testing creation itself
+    // (already covered by the previous test).
+    const existingNoteId = addNote(canonicalDoc);
+    canonicalDataSource.setNoteRef(rowId, {
+      refDocId: canonicalDoc.id,
+      refBlockId: existingNoteId,
+    });
+    canonicalDataSource.setNoteColor(rowId, '#ff0000');
+
+    // This page's own reference to the canonical — the row's Note
+    // reference is already set (above), but this exact page has never
+    // shown a `note-ref` for it before now.
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+    editor.std.command.exec(insertDatabaseViewRefBlockCommand, {
+      refBlockId: databaseId,
+      refDocId: canonicalDoc.id,
+      place: 'after',
+      selectedModels: [model],
+      initialView: { viewType: 'list' },
+    });
+    await wait();
+
+    const rowEl = document.querySelector(
+      `[data-row-id="${rowId}"]`
+    ) as HTMLElement | null;
+    expect(rowEl).toBeTruthy();
+    // The row's own background reflects its assigned color the moment it
+    // renders — *before* any note-ref for it exists on this page at all
+    // (the whole point: the color is the visual cue that a task is
+    // in-progress/has a note, independent of whether it's been revealed
+    // here yet).
+    expect(rowEl?.style.backgroundColor).toBeTruthy();
+    // Populated state (note already linked) — a single click reveals-or
+    // -inserts, no menu involved.
+    const openButton = rowEl?.querySelector(
+      '[data-testid="note-action-open"]'
+    ) as HTMLElement | null;
+    expect(openButton).toBeTruthy();
+    openButton?.click();
+    await wait();
+
+    const insertedNoteRef = doc
+      .getBlocksByFlavour('affine:note-ref')
+      .find(
+        block =>
+          (block.model as unknown as { props: { refBlockId: string } }).props
+            .refBlockId === existingNoteId
+      );
+    expect(insertedNoteRef).toBeTruthy();
+    // The newly-inserted note-ref instance carries the row's own,
+    // already-chosen color — not a freshly picked one, and not left at
+    // the plain default background.
+    expect(
+      (
+        insertedNoteRef!.model as unknown as {
+          props: { backgroundOverride?: string };
+        }
+      ).props.backgroundOverride
+    ).toBe('#ff0000');
+    // Not created a second time inside the canonical's own doc.
+    expect(
+      canonicalDoc
+        .getBlocksByFlavour('affine:note-ref')
+        .some(
+          block =>
+            (block.model as unknown as { props: { refBlockId: string } }).props
+              .refBlockId === existingNoteId
+        )
+    ).toBe(false);
   });
 
   test('second invocation reuses the same canonical database instead of creating a duplicate', async () => {

@@ -51,7 +51,11 @@ import {
   MoveToIcon,
   SettingsIcon,
 } from '@blocksuite/icons/lit';
-import { type BlockComponent, BlockSelection } from '@blocksuite/std';
+import {
+  type BlockComponent,
+  BlockSelection,
+  type EditorHost,
+} from '@blocksuite/std';
 import { RANGE_SYNC_EXCLUDE_ATTR } from '@blocksuite/std/inline';
 import { Slice } from '@blocksuite/store';
 import { autoUpdate } from '@floating-ui/dom';
@@ -258,7 +262,27 @@ export class DatabaseBlockComponent extends CaptionedBlockComponent<DatabaseBloc
 
   private readonly dataSource = lazy(() => {
     const dataSource = new DatabaseBlockDataSource(this.model, dataSource => {
-      dataSource.serviceSet(EditorHostKey, this.host);
+      // `this.host` is the OUTER page's real host for a natively-rendered
+      // `affine-database` — but when this component is instead rendered
+      // *nested*, inside a `database-view-ref`/`database-ref` reference's
+      // own preview `BlockStdScope` (a fresh scope over the canonical's own,
+      // often cross-doc, backing document — see `_maybeRefreshPreview`),
+      // `this.host` is that NESTED preview's own host, not the real page
+      // the user is looking at. Cell renderers/row actions that insert new
+      // blocks "on the current page" (Story 2.6's note-linking button, in
+      // particular) need the real outer host — resolved the same
+      // duck-typed way `viewLocalOverride` already is below, via whichever
+      // reference wrapper's own `outerStd` getter is present (confirmed
+      // live: without this, a note-ref was being created silently inside
+      // the canonical's own filtered preview doc, invisible on the actual
+      // page).
+      const outerHostHolder = this.closest(
+        'affine-database-view-ref, affine-database-ref'
+      ) as Element & { outerStd?: { host: EditorHost } };
+      dataSource.serviceSet(
+        EditorHostKey,
+        outerHostHolder?.outerStd?.host ?? this.host
+      );
       this.std.provider
         .getAll(ExternalGroupByConfigProvider)
         .forEach(config => {

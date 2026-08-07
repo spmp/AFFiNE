@@ -144,6 +144,26 @@ export class DatabaseViewRefBlockComponent extends BlockComponent<DatabaseViewRe
     return this._viewLocalOverride;
   }
 
+  /**
+   * The REAL outer page's `std` — this component itself is never nested
+   * (unlike the `affine-database` it renders internally, which lives
+   * inside a brand-new, query-filtered `BlockStdScope` over the
+   * canonical's own backing doc — see `_maybeRefreshPreview`/
+   * `this._previewStore`). Read the same way `viewLocalOverride` is (duck
+   * -typed via `this.closest('affine-database-view-ref')`, from
+   * `database-block.ts`'s own lazy `dataSource` getter) so that
+   * `EditorHostKey` resolves to the outer page inside the nested
+   * `affine-database`'s cell renderers too — Story 2.6's row-hover note
+   * button, in particular, needs to insert a `note-ref` on the page the
+   * user is actually viewing, not into the (usually different, often
+   * cross-doc) canonical's own document, which is what happened before
+   * this fix (confirmed live: the note-ref was created, just invisibly,
+   * inside the canonical's own filtered preview doc).
+   */
+  get outerStd() {
+    return this.std;
+  }
+
   private _collectSubtreeIds(model: BlockModel, ids: Set<string>) {
     ids.add(model.id);
     for (const child of model.children) {

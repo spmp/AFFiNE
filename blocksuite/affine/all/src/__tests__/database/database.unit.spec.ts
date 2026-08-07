@@ -1590,6 +1590,36 @@ describe('DatabaseManager', () => {
     expect(getCell(db, parentRow, doneDateColumnId)?.value ?? null).toBeNull();
   });
 
+  test('Story 2.6: ensureNoteColumn/ensureNoteColorColumn are idempotent, both are hidden everywhere (the user-facing affordance is a row-level hover button, not a column), and neither is directly editable', () => {
+    const dataSource = new DatabaseBlockDataSource(db);
+
+    const noteColumnId = dataSource.ensureNoteColumn();
+    const noteColumnIdAgain = dataSource.ensureNoteColumn();
+    expect(noteColumnId).toBeTruthy();
+    expect(noteColumnIdAgain).toBe(noteColumnId);
+
+    const noteColorColumnId = dataSource.ensureNoteColorColumn();
+    const noteColorColumnIdAgain = dataSource.ensureNoteColorColumn();
+    expect(noteColorColumnId).toBeTruthy();
+    expect(noteColorColumnIdAgain).toBe(noteColorColumnId);
+
+    // A freshly added view (any mode, including table) hides both Note
+    // and Note color — pure plumbing, never a user-visible column.
+    const listViewId = dataSource.viewManager.viewAdd('list');
+    const listView = dataSource.viewDataGet(listViewId) as unknown as {
+      columns?: { id: string; hide?: boolean }[];
+    };
+    expect(listView.columns?.find(c => c.id === noteColorColumnId)?.hide).toBe(
+      true
+    );
+    expect(listView.columns?.find(c => c.id === noteColumnId)?.hide).toBe(true);
+
+    // Neither column can be directly edited as a raw cell value — both are
+    // auto-managed system columns (`READONLY_SYSTEM_COLUMN_NAMES`).
+    expect(dataSource.propertyReadonlyGet(noteColumnId!)).toBe(true);
+    expect(dataSource.propertyReadonlyGet(noteColorColumnId!)).toBe(true);
+  });
+
   test('recomputes parent status for custom status column name and done label', () => {
     const customOptions = [
       { id: 'todo', value: 'Open', color: 'var(--affine-tag-yellow)' },

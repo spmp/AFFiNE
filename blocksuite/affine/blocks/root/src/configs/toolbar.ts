@@ -453,9 +453,12 @@ const configureTodoList = {
           todoRootGroup.push(root);
         }
 
+        // See `list-block.ts`'s own identical fallback: `EditorSettingProvider`
+        // isn't registered on a nested (e.g. cross-doc reference) preview
+        // scope, so this must not pass a bare `undefined` to `.parse()`.
         const taskWorkflowDefaults = TaskWorkflowDefaultsSchema.parse(
           host.std.getOptional(EditorSettingProvider)?.setting$.peek()
-            .taskWorkflowDefaults
+            .taskWorkflowDefaults ?? {}
         );
         const modal = new TodoListSettingsModal();
         modal.initialFields =

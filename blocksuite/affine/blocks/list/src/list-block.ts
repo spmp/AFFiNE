@@ -179,9 +179,19 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
     const group = this.getTodoRootGroup(root);
     const provider =
       group.find(v => (v.props.todoFieldDefs?.length ?? 0) > 0) ?? root;
+    // `EditorSettingProvider` is only registered on the real, top-level
+    // editor scope — a nested `BlockStdScope` (e.g. a cross-doc
+    // `note-ref`/`database-ref` preview, which renders todo-mode `affine:
+    // list` blocks straight through) has no such provider, so `getOptional`
+    // returns `undefined` here and the chain short-circuits to `undefined`
+    // rather than `{}`. Falling back to `{}` matches every other call site
+    // of this same schema (`commands.ts`'s own identical fallback) and lets
+    // `TaskWorkflowDefaultsSchema`'s own per-field defaults apply, instead
+    // of throwing a `ZodError` the moment a todo list renders inside a
+    // reference.
     const defaults = TaskWorkflowDefaultsSchema.parse(
       this.std.getOptional(EditorSettingProvider)?.setting$.peek()
-        .taskWorkflowDefaults
+        .taskWorkflowDefaults ?? {}
     );
     return getTodoConfigFromProvider(provider, defaults.list);
   }
