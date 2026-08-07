@@ -169,6 +169,22 @@ export class DatabaseRefBlockComponent extends BlockComponent<DatabaseRefBlockMo
     }
   `;
 
+  /**
+   * The REAL outer page's `std` — this component itself is never nested
+   * (unlike the `affine-database` it renders internally via its own,
+   * query-filtered `BlockStdScope` over the canonical's own backing doc —
+   * see `_previewStore`). Read by `database-block.ts`'s own lazy
+   * `dataSource` getter (duck-typed via `this.closest('affine-database-ref')`,
+   * mirroring `affine-database-view-ref`'s own identical `outerStd` getter)
+   * so cell renderers/row actions nested inside — Story 2.6's row-hover
+   * note button, in particular — insert new blocks onto the page the user
+   * is actually viewing, not into the (often cross-doc) canonical's own
+   * document.
+   */
+  get outerStd() {
+    return this.std;
+  }
+
   private _previewStore: Store | null = null;
 
   private _previewRefDoc: Store['doc'] | null = null;

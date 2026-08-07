@@ -760,6 +760,54 @@ describe('note referenced across pages (cross-doc)', () => {
     return noteId;
   }
 
+  test('a note containing a todo-mode list item renders through a cross-doc reference without throwing', async () => {
+    // Regression: `list-block.ts`'s `getTodoGroupConfig` (and two other
+    // call sites — `data-source.ts`, `root/configs/toolbar.ts`) parse
+    // `TaskWorkflowDefaultsSchema` against
+    // `std.getOptional(EditorSettingProvider)?.setting$.peek()
+    // .taskWorkflowDefaults` with no `?? {}` fallback.
+    // `EditorSettingProvider` is only ever registered on the real, top-level
+    // editor scope, never on a nested `BlockStdScope` like this cross-doc
+    // reference's own preview scope — so `getOptional` returns `undefined`,
+    // the optional-chain collapses to `undefined`, and `.parse(undefined)`
+    // threw a `ZodError` the instant a todo-mode list item rendered inside
+    // any reference (confirmed live: this took down rendering of the whole
+    // page the reference lived on, and the Journal page's "+" row-add
+    // affordance along with it, wherever a todo list happened to be nested
+    // this way).
+    const secondDoc = createSecondDoc();
+    const reusableNoteId = createReusableNoteOn(secondDoc);
+    secondDoc.addBlock(
+      'affine:list',
+      { type: 'todo', text: new Text('A todo item') },
+      reusableNoteId
+    );
+
+    const anchorNoteId = addNote(doc);
+    const anchorModel = doc.getBlock(anchorNoteId)!.model.children[0]!;
+    const [success, result] = editor.std.command.exec(
+      insertNoteRefBlockCommand,
+      {
+        refBlockId: reusableNoteId,
+        refDocId: secondDoc.id,
+        place: 'after',
+        selectedModels: [anchorModel],
+      }
+    );
+    expect(success).toBeTruthy();
+    await wait();
+
+    const refEl = document.querySelector(
+      `affine-note-ref[data-block-id="${result.insertedNoteRefBlockId}"]`
+    ) as NoteRefBlockComponent;
+    expect(refEl?.querySelector('.affine-note-ref-error')).toBeFalsy();
+    const todoListEl = refEl?.querySelector('affine-list') as unknown as {
+      model: { props: { type?: string } };
+    } | null;
+    expect(todoListEl?.model.props.type).toBe('todo');
+    expect(refEl?.textContent).toContain('A todo item');
+  });
+
   test('a note in another doc renders live and shares data across the two pages', async () => {
     const secondDoc = createSecondDoc();
     const reusableNoteId = createReusableNoteOn(secondDoc);
