@@ -16,6 +16,18 @@ export interface JournalTodoDatabaseService {
   getJournalDate: (docId: string) => string | undefined;
 
   /**
+   * Reverse lookup of `getJournalDate`: resolves an existing journal page's
+   * docId for a given `YYYY-MM-DD` date, or `undefined` if no journal page
+   * for that date exists yet. Deliberately a pure, side-effect-free lookup
+   * — unlike the app-level `JournalService.ensureJournalByDate`, this never
+   * creates a journal page. Used by Story 2.7's calendar click-navigation
+   * (Task 4): jumping to "today's" or "the day it was marked done" journal
+   * page should never silently conjure a new page as a side effect of a
+   * click.
+   */
+  getJournalDocId: (date: string) => string | undefined;
+
+  /**
    * Reads the single, workspace-wide "current journal todo database"
    * pointer, or `undefined` if none has been established yet. Whether that
    * pointer still resolves to a live block is the caller's responsibility

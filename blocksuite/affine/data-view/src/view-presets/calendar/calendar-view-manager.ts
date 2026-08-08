@@ -1,10 +1,15 @@
-import { DocDisplayMetaProvider } from '@blocksuite/affine-shared/services';
+import {
+  DocDisplayMetaProvider,
+  EditorSettingProvider,
+  TaskWorkflowDefaultsSchema,
+} from '@blocksuite/affine-shared/services';
 import type { AffineTextAttributes } from '@blocksuite/affine-shared/types';
 import type { InsertToPosition } from '@blocksuite/affine-shared/utils';
 import { type DeltaInsert, Text } from '@blocksuite/store';
 import { computed, type ReadonlySignal, signal } from '@preact/signals-core';
 import { Doc } from 'yjs';
 
+import { EditorHostKey } from '../../core/context/host-context.js';
 import { evalFilter } from '../../core/filter/eval.js';
 import { generateDefaultValues } from '../../core/filter/generate-default-values.js';
 import { FilterTrait, filterTraitKey } from '../../core/filter/trait.js';
@@ -39,6 +44,29 @@ export type CalendarDateMapping =
       status: 'setup';
       propertyId?: string;
     };
+
+/**
+ * Story 2.7: structural (duck-typed) view of `DatabaseBlockDataSource`'s
+ * own task-status method — `data-view` is a lower-level, flavour-agnostic
+ * package and cannot import types from `@blocksuite/affine-block-database`
+ * (same reasoning as `list/pc/renderer.ts`'s own `NoteCapableDataSource`).
+ * A generic, non-todo database's calendar view has no such method at all,
+ * so "hide from calendar when done" never applies to it.
+ */
+interface TaskStatusAwareDataSource {
+  getTaskStatusInfo?: (rowId: string) => { checked: boolean } | null;
+  /**
+   * Story 2.7 (generic-path auto-seed): when a calendar view has no
+   * explicit `date.startColumnId` of its own yet, `dateMapping$` falls
+   * back to this column instead of surfacing `CalendarDateMapping`'s
+   * `'setup'` state — so adding a Calendar view (via the database's own
+   * normal view-switcher, no special insert command needed) to *any*
+   * database that already has a Due date column (Task 0) just works, with
+   * no setup step. A generic, non-todo database has no such method at
+   * all, so it still falls through to `'setup'` as before.
+   */
+  getDueDateColumn?: () => { id: string } | undefined;
+}
 
 const getStartColumnId = (data?: CalendarStoredViewData) =>
   data?.date?.startColumnId;
@@ -250,6 +278,15 @@ export class CalendarSingleView extends SingleViewBase<CalendarStoredViewData> {
         propertyId,
       };
     }
+    const dueDateColumnId = (
+      this.dataSource as unknown as TaskStatusAwareDataSource
+    ).getDueDateColumn?.()?.id;
+    if (dueDateColumnId) {
+      return {
+        status: 'ready',
+        propertyId: dueDateColumnId,
+      };
+    }
     return {
       status: 'setup',
       propertyId,
@@ -285,13 +322,39 @@ export class CalendarSingleView extends SingleViewBase<CalendarStoredViewData> {
       .map(propertyId => this.propertyGetOrCreate(propertyId));
   });
 
+  /**
+   * Story 2.7 (AC4): whether a Done row's calendar entry should be
+   * suppressed — global-only setting (no per-table override, per direct
+   * user instruction), read fresh on every access so a live setting change
+   * is reflected immediately. `undefined` `std` (no `EditorHostKey`
+   * forwarded — a generic, non-nested calendar) falls back to the
+   * schema's own default (`true`), same fallback shape as `list-block.ts`'s
+   * own `?? {}` regression fix.
+   */
+  private get hideFromCalendarWhenDone(): boolean {
+    const std = this.manager.dataSource.serviceGet(EditorHostKey)?.std;
+    const taskWorkflowDefaults = TaskWorkflowDefaultsSchema.parse(
+      std?.getOptional(EditorSettingProvider)?.setting$.peek()
+        .taskWorkflowDefaults ?? {}
+    );
+    return taskWorkflowDefaults.database.hideFromCalendarWhenDone;
+  }
+
   rowEntries$ = computed<CalendarRowEntry[]>(() => {
     const mapping = this.dateMapping$.value;
     if (mapping.status !== 'ready') {
       return [];
     }
+    const dataSource = this.manager
+      .dataSource as unknown as TaskStatusAwareDataSource;
+    const hideDone =
+      typeof dataSource.getTaskStatusInfo === 'function' &&
+      this.hideFromCalendarWhenDone;
     const endMapping = this.endDateMapping$.value;
     return this.rows$.value.flatMap(row => {
+      if (hideDone && dataSource.getTaskStatusInfo?.(row.rowId)?.checked) {
+        return [];
+      }
       const startAt = this.cellGetOrCreate(row.rowId, mapping.propertyId)
         .jsonValue$.value;
       if (!isValidTimestamp(startAt)) {

@@ -284,6 +284,64 @@ export const TaskWorkflow = () => {
           }}
         />
       </SettingRow>
+      <SettingRow
+        name="Highlight after due date"
+        desc="Default treatment for a row that's overdue and not yet done. Individual tables can override this."
+      >
+        <select
+          value={defaults.database.highlightAfterDueDate}
+          onChange={event => {
+            setDefaults({
+              ...defaults,
+              database: {
+                ...defaults.database,
+                highlightAfterDueDate: event.currentTarget.value as
+                  | 'highlight'
+                  | 'hide'
+                  | 'off',
+              },
+            });
+          }}
+        >
+          <option value="highlight">Highlight</option>
+          <option value="hide">Hide</option>
+          <option value="off">Off</option>
+        </select>
+      </SettingRow>
+      <SettingRow
+        name="Hide from calendar when done"
+        desc="Once a row is marked Done, remove its entry from any calendar view. Global setting only."
+      >
+        <Switch
+          checked={defaults.database.hideFromCalendarWhenDone}
+          onChange={checked => {
+            setDefaults({
+              ...defaults,
+              database: {
+                ...defaults.database,
+                hideFromCalendarWhenDone: checked,
+              },
+            });
+          }}
+        />
+      </SettingRow>
+      <SettingRow
+        name='Show "Due date" in Journal todo'
+        desc="Whether a newly-created Due date column starts visible in table view. Individual tables can always be toggled via the properties menu regardless of this default."
+      >
+        <Switch
+          checked={defaults.database.showDueDateColumn}
+          onChange={checked => {
+            setDefaults({
+              ...defaults,
+              database: {
+                ...defaults.database,
+                showDueDateColumn: checked,
+              },
+            });
+          }}
+        />
+      </SettingRow>
     </SettingWrapper>
   );
 };

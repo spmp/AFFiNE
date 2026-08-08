@@ -132,6 +132,16 @@ export const journalTodoDatabaseSlashMenuConfig: SlashMenuConfig = {
             // shipped, so the column — and therefore the whole feature —
             // silently never appears.
             dataSource.ensureNoteColumn();
+            // Story 2.7: guarantees the "Due date" column exists on this
+            // canonical every time `/Journal Todo` resolves against it —
+            // same eager-ensure reasoning as Note above. Without this, a
+            // Calendar view added later via the database's own normal
+            // view-switcher (no Journal-Todo-specific insert command,
+            // per direct user correction) would have no Due date column
+            // to fall back to yet, and would ask the user to set one up
+            // even though this database has always been task-workflow-
+            // capable.
+            dataSource.ensureDueDateColumn(std);
             const doneOption = dataSource.getTaskStatusTargetOption(
               'done',
               statusColumnId
