@@ -1,4 +1,11 @@
-import { RowInput, Switch } from '@affine/component';
+import {
+  Menu,
+  MenuItem,
+  type MenuProps,
+  MenuTrigger,
+  RowInput,
+  Switch,
+} from '@affine/component';
 import {
   SettingRow,
   SettingWrapper,
@@ -8,6 +15,7 @@ import type { TaskWorkflowDefaults } from '@blocksuite/affine/shared/services';
 import { useLiveData, useService } from '@toeverything/infra';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import * as styles from './style.css';
 import {
   parseTaskWorkflowColumns,
   parseTaskWorkflowFields,
@@ -46,6 +54,21 @@ const DraftRowInput = ({
     />
   );
 };
+
+const highlightAfterDueDateMenuContentOptions: MenuProps['contentOptions'] = {
+  align: 'end',
+  sideOffset: 16,
+  style: { width: 250 },
+};
+
+const highlightAfterDueDateItems: {
+  value: 'highlight' | 'hide' | 'off';
+  label: string;
+}[] = [
+  { value: 'highlight', label: 'Highlight' },
+  { value: 'hide', label: 'Hide' },
+  { value: 'off', label: 'Off' },
+];
 
 export const TaskWorkflow = () => {
   const editorSetting = useService(EditorSettingService).editorSetting;
@@ -288,25 +311,34 @@ export const TaskWorkflow = () => {
         name="Highlight after due date"
         desc="Default treatment for a row that's overdue and not yet done. Individual tables can override this."
       >
-        <select
-          value={defaults.database.highlightAfterDueDate}
-          onChange={event => {
-            setDefaults({
-              ...defaults,
-              database: {
-                ...defaults.database,
-                highlightAfterDueDate: event.currentTarget.value as
-                  | 'highlight'
-                  | 'hide'
-                  | 'off',
-              },
-            });
-          }}
+        <Menu
+          contentOptions={highlightAfterDueDateMenuContentOptions}
+          items={highlightAfterDueDateItems.map(item => (
+            <MenuItem
+              key={item.value}
+              selected={item.value === defaults.database.highlightAfterDueDate}
+              onSelect={() => {
+                setDefaults({
+                  ...defaults,
+                  database: {
+                    ...defaults.database,
+                    highlightAfterDueDate: item.value,
+                  },
+                });
+              }}
+            >
+              {item.label}
+            </MenuItem>
+          ))}
         >
-          <option value="highlight">Highlight</option>
-          <option value="hide">Hide</option>
-          <option value="off">Off</option>
-        </select>
+          <MenuTrigger className={styles.menuTrigger}>
+            {
+              highlightAfterDueDateItems.find(
+                item => item.value === defaults.database.highlightAfterDueDate
+              )?.label
+            }
+          </MenuTrigger>
+        </Menu>
       </SettingRow>
       <SettingRow
         name="Hide from calendar when done"

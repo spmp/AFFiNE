@@ -583,13 +583,17 @@ describe('list view preset', () => {
   });
 
   test('renders rows with stable row-id keys for insert reconciliation', () => {
-    // Story 2.7 (AC5) inserted a `.filter(...)` (plus an explanatory
-    // comment) between `repeat`'s own call and its first argument — so
-    // this only checks each piece is present, not strict adjacency.
-    expect(getListRendererSource()).toMatch(/repeat\)\(/m);
+    // Verifies the filtered row list (Story 2.7 AC5's overdue-hide filter)
+    // is actually wired in as `repeat()`'s own first argument, immediately
+    // followed by the `row.rowId` key function — not just that both
+    // snippets exist somewhere in the file. `Function.prototype.toString()`
+    // reflects the vite/esbuild-transformed source: the re-exported
+    // `repeat` call becomes `(0, mod.repeat)(...)` (hence `repeat\)\(`,
+    // matching the original test's own pattern), arrow params get
+    // parenthesized, and quotes get normalized to double — an interposed
+    // comment block is still allowed between `repeat(` and the filter.
     expect(getListRendererSource()).toMatch(
-      /this\.view\.rows\$\.value\.filter\(/
+      /repeat\)\(\s*(?:\/\/[^\n]*\n\s*)*this\.view\.rows\$\.value\.filter\(\s*\(?row\)? => this\.getRowDueDateState\(row\.rowId\) !== ["']hide["']\s*\),\s*\(?row\)? => row\.rowId,/
     );
-    expect(getListRendererSource()).toMatch(/\(row\) => row\.rowId/);
   });
 });
