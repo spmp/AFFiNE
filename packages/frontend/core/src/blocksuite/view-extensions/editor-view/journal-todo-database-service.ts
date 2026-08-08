@@ -35,7 +35,15 @@ export function patchJournalTodoDatabaseService(framework: FrameworkProvider) {
       const liveData$ = framework.get(JournalService).journalsByDate$(date);
       const docs = liveData$.value;
       liveData$.complete();
-      return docs[0]?.id;
+      // Multiple docs can share a journal date (e.g. a stale/trashed
+      // duplicate). Prefer a non-trashed doc, and among ties pick the
+      // earliest-created one deterministically — `docs[0]` had no ordering
+      // guarantee and could resolve to a trashed or arbitrary doc.
+      const candidates = docs.filter(doc => !doc.trash$.value);
+      const pool = candidates.length ? candidates : docs;
+      return pool.sort(
+        (a, b) => (a.createdAt$.value ?? 0) - (b.createdAt$.value ?? 0)
+      )[0]?.id;
     },
     getJournalTodoDatabaseRef() {
       const ref = framework

@@ -16,70 +16,11 @@ import { customElement, eventOptions, property } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 
 import { EditorHostKey } from '../../../core/context/host-context.js';
+import type { TaskWorkflowCapableDataSource } from '../../../core/data-source/task-workflow-capable.js';
 import { renderUniLit } from '../../../core/utils/uni-component/index.js';
 import type { ListViewUILogic } from './list-view-ui-logic.js';
 
 const HIERARCHY_LEVEL_COLUMN_NAME = 'Hierarchy Level';
-
-/**
- * Structural (duck-typed) view of `DatabaseBlockDataSource`'s own Story
- * 2.6 methods — `data-view` is a lower-level, flavour-agnostic package and
- * cannot import types from `@blocksuite/affine-block-database` (which
- * itself depends on `data-view`), so this row-level "attach a note" button
- * is gated on structural capability instead: only a data source that
- * actually has task-status/Note-linking methods (i.e. a todo-capable
- * table, per direct user request — not every generic database) renders
- * the button at all.
- */
-interface NoteCapableDataSource {
-  getTaskStatusColumn?: () => unknown;
-  getNoteRef?: (
-    rowId: string
-  ) => { refDocId: string; refBlockId: string } | undefined;
-  // Returns an already-resolved, paintable CSS color for the *current*
-  // theme — the row's stored value is a theme `Color` token (e.g.
-  // `{dark, light}`), which `data-view` has no way to resolve itself
-  // (that needs `resolveColor`/`ThemeProvider` from
-  // `@blocksuite/affine-model`/`@blocksuite/affine-shared`, deliberately
-  // not a `data-view` dependency) — so resolution happens on the data
-  // source's own side (`DatabaseBlockDataSource.getResolvedNoteColor`),
-  // called fresh on every render so a theme switch is reflected live.
-  getResolvedNoteColor?: (
-    std: BlockStdScope,
-    rowId: string
-  ) => string | undefined;
-  createNoteForRow?: (std: BlockStdScope, rowId: string) => void;
-  revealOrInsertNoteForRow?: (std: BlockStdScope, rowId: string) => void;
-  attachExistingNoteForRow?: (
-    std: BlockStdScope,
-    rowId: string
-  ) => Promise<void>;
-  // Story 2.7: resolves the overdue-and-undone treatment for this row
-  // (`null` if neither highlight nor hide applies) — computed on the data
-  // source's own side for the same reason `getResolvedNoteColor` is: it
-  // needs `JournalTodoDatabaseProvider`/date comparison logic `data-view`
-  // deliberately doesn't depend on.
-  getDueDateHighlightState?: (
-    std: BlockStdScope,
-    rowId: string
-  ) => 'highlight' | 'hide' | null;
-  // Story 2.7 (live-render fix): read fresh on every render, same as
-  // `getDueDateHighlightState` above — see `getShowDueDateColumnSetting`'s
-  // own doc comment in `data-source.ts` for why this needs a live check
-  // in addition to (not instead of) the creation-time default.
-  getShowDueDateColumnSetting?: (std: BlockStdScope) => boolean;
-  getDueDateColumn?: () => { id: string } | undefined;
-  // Story 2.7 (Task 3): row-hover "set due date" button — reads/writes the
-  // Due date cell directly, same duck-typed-delegate shape as the Note
-  // methods above (the actual column/cell logic lives on
-  // `DatabaseBlockDataSource`, not here).
-  getDueDateForRow?: (rowId: string) => number | undefined;
-  setDueDateForRow?: (
-    std: BlockStdScope,
-    rowId: string,
-    value: number | undefined
-  ) => void;
-}
 
 @customElement('affine-data-view-list')
 export class ListViewRenderer extends SignalWatcher(
@@ -261,8 +202,9 @@ export class ListViewRenderer extends SignalWatcher(
     return this.logic.view;
   }
 
-  private get noteCapableDataSource(): NoteCapableDataSource {
-    return this.view.manager.dataSource as unknown as NoteCapableDataSource;
+  private get noteCapableDataSource(): TaskWorkflowCapableDataSource {
+    return this.view.manager
+      .dataSource as unknown as TaskWorkflowCapableDataSource;
   }
 
   private get std(): BlockStdScope | undefined {
@@ -377,7 +319,13 @@ export class ListViewRenderer extends SignalWatcher(
     </div>`;
   }
 
-  private _dueDatePortalAbortController: AbortController | null = null;
+  // Keyed by rowId — a single shared controller would make opening the
+  // picker on one row silently no-op clicks on every other row's due-date
+  // button while that first popup is still open.
+  private readonly _dueDatePortalAbortControllers = new Map<
+    string,
+    AbortController
+  >();
 
   /**
    * Row-level "set due date" button (Story 2.7, Task 3) — sibling to
@@ -409,15 +357,13 @@ export class ListViewRenderer extends SignalWatcher(
 
     const onClick = (e: MouseEvent) => {
       e.stopPropagation();
-      if (
-        this._dueDatePortalAbortController &&
-        !this._dueDatePortalAbortController.signal.aborted
-      ) {
+      const existing = this._dueDatePortalAbortControllers.get(rowId);
+      if (existing && !existing.signal.aborted) {
         return;
       }
       const target = e.currentTarget as HTMLElement;
       const abortController = new AbortController();
-      this._dueDatePortalAbortController = abortController;
+      this._dueDatePortalAbortControllers.set(rowId, abortController);
       const { portal } = createLitPortal({
         abortController,
         closeOnClickAway: true,
@@ -618,8 +564,19 @@ export class ListViewRenderer extends SignalWatcher(
       dataSource.getShowDueDateColumnSetting(std)
     ) {
       const dueDateColumnId = dataSource.getDueDateColumn()?.id;
+      // An *explicit* `hide: true` entry (as opposed to no entry at all,
+      // which just means "never touched, follow the global default") means
+      // a user deliberately hid this column via the properties menu for
+      // this specific view — that manual choice must stick even while the
+      // global setting is on (Decision 1/AC1's "always sticks" guarantee).
+      const explicitlyHidden =
+        dueDateColumnId != null &&
+        this.view.data$.value?.columns.find(
+          column => column.id === dueDateColumnId
+        )?.hide === true;
       if (
         dueDateColumnId &&
+        !explicitlyHidden &&
         !detailProperties.some(property => property.id === dueDateColumnId)
       ) {
         const dueDateProperty = this.view.propertyGetOrCreate(dueDateColumnId);
