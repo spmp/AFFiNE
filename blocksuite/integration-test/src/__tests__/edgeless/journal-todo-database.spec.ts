@@ -74,6 +74,15 @@ describe('journal todo database slash-menu command', () => {
                       },
                     }),
                   }),
+                  get value() {
+                    return {
+                      taskWorkflowDefaults: TaskWorkflowDefaultsSchema.parse({
+                        database: {
+                          showDueDateColumn: options.showDueDateColumn,
+                        },
+                      }),
+                    };
+                  },
                 },
               };
             }

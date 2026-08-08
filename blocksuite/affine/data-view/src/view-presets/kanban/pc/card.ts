@@ -36,6 +36,16 @@ const styles = css`
     background-color: var(--affine-hover-color);
   }
 
+  /* Story 2.7 (AC5, extended to kanban view): overdue-and-undone cards —
+     mirrors the list/table views' own overdue treatment. */
+  affine-data-view-kanban-card[data-overdue='true'] {
+    border-color: var(--affine-error-color);
+  }
+  affine-data-view-kanban-card[data-overdue='true'] .card-header-title {
+    color: var(--affine-error-color);
+    font-weight: 600;
+  }
+
   affine-data-view-kanban-card .card-header {
     padding: 8px;
     display: flex;

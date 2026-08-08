@@ -1,3 +1,4 @@
+import { toast } from '@blocksuite/affine-components/toast';
 import type {
   Color,
   ColumnDataType,
@@ -871,9 +872,15 @@ export class DatabaseBlockDataSource extends DataSourceBase {
    * one already known to work correctly everywhere).
    */
   getShowDueDateColumnSetting(std?: BlockStdScope): boolean {
+    // `.value`, not `.peek()` — this is read from a render tracked by Lit's
+    // `SignalWatcher` (`list/pc/renderer.ts`'s `render()`), and only a
+    // `.value` read registers as a tracked dependency; `.peek()` is
+    // invisible to that tracking, so a setting change elsewhere never
+    // triggered a re-render here (confirmed live: the setting only took
+    // effect after a page change/reload, never on an already-open list).
     const taskWorkflowDefaults = TaskWorkflowDefaultsSchema.parse(
-      std?.getOptional(EditorSettingProvider)?.setting$.peek()
-        .taskWorkflowDefaults ?? {}
+      std?.getOptional(EditorSettingProvider)?.setting$.value
+        ?.taskWorkflowDefaults ?? {}
     );
     return taskWorkflowDefaults.database.showDueDateColumn;
   }
@@ -948,7 +955,10 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     value: number | undefined
   ) {
     const columnId = this.ensureDueDateColumn(std);
-    if (!columnId) return;
+    if (!columnId) {
+      toast(std.host, 'Could not set a due date here.');
+      return;
+    }
     updateCell(this._model, rowId, { columnId, value: value ?? null });
   }
 
@@ -1189,9 +1199,11 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     if (override) {
       return override;
     }
+    // `.value`, not `.peek()` — see `getShowDueDateColumnSetting`'s own
+    // comment; same reactivity fix, same live-testing regression.
     const taskWorkflowDefaults = TaskWorkflowDefaultsSchema.parse(
-      std.getOptional(EditorSettingProvider)?.setting$.peek()
-        .taskWorkflowDefaults ?? {}
+      std.getOptional(EditorSettingProvider)?.setting$.value
+        ?.taskWorkflowDefaults ?? {}
     );
     return taskWorkflowDefaults.database.highlightAfterDueDate;
   }
@@ -1237,7 +1249,9 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     const dueDateColumnId = this.getDueDateColumn()?.id;
     if (!dueDateColumnId) return null;
     const dueDateValue = getCell(this._model, rowId, dueDateColumnId)?.value;
-    if (typeof dueDateValue !== 'number') return null;
+    if (typeof dueDateValue !== 'number' || !Number.isFinite(dueDateValue)) {
+      return null;
+    }
 
     if (this.getTaskStatusInfo(rowId)?.checked) return null;
 
@@ -1247,7 +1261,20 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     const journalDate = std
       .getOptional(JournalTodoDatabaseProvider)
       ?.getJournalDate(std.store.id);
-    const nowMs = journalDate ? new Date(journalDate).getTime() : Date.now();
+    // `parse(..., 'yyyy-MM-dd', ...)`, not `new Date(journalDate)` — the
+    // latter parses an ISO-shaped date-only string as **UTC** midnight,
+    // contradicting `formatLocalDate`'s own local-time convention used
+    // everywhere else in this file and shifting the overdue comparison by
+    // the local UTC offset near day boundaries. `isValid` guards against a
+    // malformed `journalDate` string producing `NaN` (which would
+    // otherwise make every row read as permanently overdue).
+    const parsedJournalDate = journalDate
+      ? parse(journalDate, 'yyyy-MM-dd', new Date())
+      : undefined;
+    const nowMs =
+      parsedJournalDate && isValid(parsedJournalDate)
+        ? parsedJournalDate.getTime()
+        : Date.now();
     if (dueDateValue >= nowMs) return null;
 
     return setting;

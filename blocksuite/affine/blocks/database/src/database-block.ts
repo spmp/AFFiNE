@@ -722,7 +722,14 @@ export class DatabaseBlockComponent extends CaptionedBlockComponent<DatabaseBloc
                       data.rowId
                     );
                   const targetDocId = journalTodo?.getJournalDocId(targetDate);
-                  if (targetDocId) {
+                  // `getJournalDocId` resolves against core workspace
+                  // metadata (`DocsService.list.docs$`), a different source
+                  // of truth than this block's own `std.workspace` doc
+                  // collection — confirm the doc is actually loadable here
+                  // before navigating, so a stale/out-of-sync id falls
+                  // through to the generic row-detail behavior below
+                  // instead of peeking a doc that can't render.
+                  if (targetDocId && this.std.workspace.getDoc(targetDocId)) {
                     return openDoc(targetDocId);
                   }
                 }

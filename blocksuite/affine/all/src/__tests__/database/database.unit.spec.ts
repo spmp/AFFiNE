@@ -822,6 +822,13 @@ describe('DatabaseManager', () => {
                     database: { showDueDateColumn: true },
                   }),
                 }),
+                get value() {
+                  return {
+                    taskWorkflowDefaults: TaskWorkflowDefaultsSchema.parse({
+                      database: { showDueDateColumn: true },
+                    }),
+                  };
+                },
               },
             }
           : undefined,
@@ -859,6 +866,13 @@ describe('DatabaseManager', () => {
                         database: { showDueDateColumn: true },
                       }),
                     }),
+                    get value() {
+                      return {
+                        taskWorkflowDefaults: TaskWorkflowDefaultsSchema.parse({
+                          database: { showDueDateColumn: true },
+                        }),
+                      };
+                    },
                   },
                 }
               : undefined,
@@ -899,6 +913,13 @@ describe('DatabaseManager', () => {
                         database: { showDueDateColumn: true },
                       }),
                     }),
+                    get value() {
+                      return {
+                        taskWorkflowDefaults: TaskWorkflowDefaultsSchema.parse({
+                          database: { showDueDateColumn: true },
+                        }),
+                      };
+                    },
                   },
                 }
               : undefined,
@@ -951,6 +972,13 @@ describe('DatabaseManager', () => {
               database: { highlightAfterDueDate: 'hide' },
             }),
           }),
+          get value() {
+            return {
+              taskWorkflowDefaults: TaskWorkflowDefaultsSchema.parse({
+                database: { highlightAfterDueDate: 'hide' },
+              }),
+            };
+          },
         },
       }),
     } as never;
@@ -989,6 +1017,13 @@ describe('DatabaseManager', () => {
                     database: { highlightAfterDueDate: settingValue },
                   }),
                 }),
+                get value() {
+                  return {
+                    taskWorkflowDefaults: TaskWorkflowDefaultsSchema.parse({
+                      database: { highlightAfterDueDate: settingValue },
+                    }),
+                  };
+                },
               },
             };
           }
@@ -1026,12 +1061,12 @@ describe('DatabaseManager', () => {
     // Journal date overrides wall-clock: a journal page dated *before* the
     // due date means the row isn't overdue yet from that page's own
     // perspective, even though the due date is in the real past.
-    const futureJournalDate = new Date(Date.now() - 48 * 60 * 60 * 1000)
+    const pastJournalDate = new Date(Date.now() - 48 * 60 * 60 * 1000)
       .toISOString()
       .slice(0, 10);
     expect(
       dataSource.getDueDateHighlightState(
-        makeStub('highlight', futureJournalDate),
+        makeStub('highlight', pastJournalDate),
         rowId
       )
     ).toBe(null);
@@ -1265,6 +1300,9 @@ describe('DatabaseManager', () => {
             getOptional: () => ({
               setting$: {
                 peek: () => ({ taskWorkflowDefaults: {} }),
+                get value() {
+                  return { taskWorkflowDefaults: {} };
+                },
               },
             }),
           },
@@ -1314,6 +1352,9 @@ describe('DatabaseManager', () => {
           getOptional: () => ({
             setting$: {
               peek: () => ({ taskWorkflowDefaults: {} }),
+              get value() {
+                return { taskWorkflowDefaults: {} };
+              },
             },
           }),
         },
@@ -1377,7 +1418,12 @@ describe('DatabaseManager', () => {
         std: {
           command: { exec: () => [null, { selectedModels }] },
           getOptional: () => ({
-            setting$: { peek: () => ({ taskWorkflowDefaults: {} }) },
+            setting$: {
+              peek: () => ({ taskWorkflowDefaults: {} }),
+              get value() {
+                return { taskWorkflowDefaults: {} };
+              },
+            },
           }),
         },
       } as never,
@@ -1470,6 +1516,9 @@ describe('DatabaseManager', () => {
           getOptional: () => ({
             setting$: {
               peek: () => ({ taskWorkflowDefaults: {} }),
+              get value() {
+                return { taskWorkflowDefaults: {} };
+              },
             },
           }),
         },
@@ -1536,6 +1585,18 @@ describe('DatabaseManager', () => {
                   },
                 },
               }),
+              get value() {
+                return {
+                  taskWorkflowDefaults: {
+                    list: {
+                      fieldDefs: [
+                        { key: 'cost', type: 'number', label: 'Cost' },
+                        { key: 'note', type: 'text', label: 'Note' },
+                      ],
+                    },
+                  },
+                };
+              },
             },
           }),
         },
@@ -1601,6 +1662,17 @@ describe('DatabaseManager', () => {
                   },
                 },
               }),
+              get value() {
+                return {
+                  taskWorkflowDefaults: {
+                    list: {
+                      fieldDefs: [
+                        { key: 'cost', type: 'number', label: 'Cost' },
+                      ],
+                    },
+                  },
+                };
+              },
             },
           }),
         },
@@ -1652,7 +1724,12 @@ describe('DatabaseManager', () => {
         std: {
           command: { exec: () => [null, { selectedModels }] },
           getOptional: () => ({
-            setting$: { peek: () => ({ taskWorkflowDefaults: {} }) },
+            setting$: {
+              peek: () => ({ taskWorkflowDefaults: {} }),
+              get value() {
+                return { taskWorkflowDefaults: {} };
+              },
+            },
           }),
         },
       } as never,
@@ -1711,6 +1788,9 @@ describe('DatabaseManager', () => {
           getOptional: () => ({
             setting$: {
               peek: () => ({ taskWorkflowDefaults: {} }),
+              get value() {
+                return { taskWorkflowDefaults: {} };
+              },
             },
           }),
         },
@@ -1771,7 +1851,12 @@ describe('DatabaseManager', () => {
         std: {
           command: { exec: () => [null, { selectedModels }] },
           getOptional: () => ({
-            setting$: { peek: () => ({ taskWorkflowDefaults: {} }) },
+            setting$: {
+              peek: () => ({ taskWorkflowDefaults: {} }),
+              get value() {
+                return { taskWorkflowDefaults: {} };
+              },
+            },
           }),
         },
       } as never,
