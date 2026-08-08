@@ -33,6 +33,12 @@ export type DatabaseBlockProps = {
       manualLock: 'none' | 'done_locked';
     }
   >;
+  // Story 2.7: per-table override of the global "Highlight after due date"
+  // editor setting — `undefined` means "follow the live global default",
+  // unlike `taskStatusInheritance` above (which is seeded once at creation
+  // and never re-reads the global default afterward). See
+  // `data-source.ts`'s `getHighlightAfterDueDateSetting`.
+  highlightAfterDueDateOverride?: 'highlight' | 'hide' | 'off';
 };
 
 export class DatabaseBlockModel extends BlockModel<DatabaseBlockProps> {}
@@ -48,6 +54,7 @@ export const DatabaseBlockSchema = defineBlockSchema({
     currentViewId: undefined,
     taskStatusInheritance: undefined,
     taskStatusState: undefined,
+    highlightAfterDueDateOverride: undefined,
   }),
   metadata: {
     role: 'hub',

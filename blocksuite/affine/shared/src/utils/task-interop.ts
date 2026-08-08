@@ -39,7 +39,9 @@ export function createTaskIdentity({
   blockId,
   spaceId,
 }: TaskIdentityInput) {
-  const parts = [spaceId, docId, blockId].filter(Boolean).map(encodePart);
+  const parts = [spaceId, docId, blockId]
+    .filter((part): part is string => Boolean(part))
+    .map(encodePart);
   return parts.join(TASK_ID_SEPARATOR);
 }
 

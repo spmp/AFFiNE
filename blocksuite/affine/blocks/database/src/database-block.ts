@@ -15,6 +15,7 @@ import {
   DatabaseMoveProvider,
   DocModeProvider,
   FeatureFlagService,
+  JournalTodoDatabaseProvider,
   NotificationProvider,
   type TelemetryEventMap,
   TelemetryProvider,
@@ -698,6 +699,34 @@ export class DatabaseBlockComponent extends CaptionedBlockComponent<DatabaseBloc
                   target: this,
                 });
               };
+              // Story 2.7 (Task 4): a calendar view showing the current
+              // workspace-wide "journal todo" canonical (any calendar view
+              // of it, however it was added — the generic view-switcher,
+              // not a special insert command) navigates to the row's
+              // journal-page appearance instead of the generic row detail
+              // panel — see `resolveJournalTodoNavigationDate`'s own
+              // comment. Falls through to the generic behavior below if the
+              // target journal page doesn't exist yet (never silently
+              // no-ops, never auto-creates a page as a click side effect).
+              if (data.view.type === 'calendar') {
+                const journalTodo = this.std.getOptional(
+                  JournalTodoDatabaseProvider
+                );
+                const journalTodoRef = journalTodo?.getJournalTodoDatabaseRef();
+                const isJournalTodoCanonical =
+                  journalTodoRef?.refBlockId === this.model.id &&
+                  journalTodoRef?.refDocId === this.model.store.id;
+                if (isJournalTodoCanonical) {
+                  const targetDate =
+                    this.dataSource.value.resolveJournalTodoNavigationDate(
+                      data.rowId
+                    );
+                  const targetDocId = journalTodo?.getJournalDocId(targetDate);
+                  if (targetDocId) {
+                    return openDoc(targetDocId);
+                  }
+                }
+              }
               const doc = getSingleDocIdFromText(
                 this.model.store.getBlock(data.rowId)?.model?.text
               );

@@ -11,6 +11,7 @@ import { getSelectedModelsCommand } from '@blocksuite/affine-shared/commands';
 import {
   EditorSettingProvider,
   FeatureFlagService,
+  JournalTodoDatabaseProvider,
   TaskWorkflowDefaultsSchema,
   ThemeProvider,
 } from '@blocksuite/affine-shared/services';
@@ -46,6 +47,7 @@ import { isValid } from 'date-fns/isValid';
 import { parse } from 'date-fns/parse';
 
 import { getIcon } from './block-icons.js';
+import { EditorHostKey } from './context/host-context.js';
 import { DatabaseViewLocalOverrideProvider } from './context/view-local-override-context.js';
 import {
   databaseBlockProperties,
@@ -78,8 +80,25 @@ import {
   databaseBlockViews,
 } from './views/index.js';
 
+/**
+ * Local-time `YYYY-MM-DD` formatter — deliberately not `Date#toISOString`
+ * (UTC-based, can shift the date across a local midnight boundary). Journal
+ * dates are stored/compared in local time throughout this codebase (see
+ * `JournalService`'s own `dayjs(...).format('YYYY-MM-DD')` at the app
+ * layer); no `dayjs` dependency exists in any blocksuite package, so this
+ * is hand-rolled rather than adding one for three lines of formatting.
+ */
+function formatLocalDate(ms: number): string {
+  const date = new Date(ms);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 const TASK_INTEROP_COLUMN_ID = '__affine_task_interop_link';
 const TASK_DONE_DATE_COLUMN_NAME = 'Done date';
+const TASK_DUE_DATE_COLUMN_NAME = 'Due date';
 const TASK_NOTE_COLUMN_NAME = 'Note';
 const TASK_NOTE_COLOR_COLUMN_NAME = 'Note color';
 const READONLY_SYSTEM_COLUMN_NAMES = new Set([
@@ -89,6 +108,10 @@ const READONLY_SYSTEM_COLUMN_NAMES = new Set([
   TASK_DONE_DATE_COLUMN_NAME,
   TASK_NOTE_COLUMN_NAME,
   TASK_NOTE_COLOR_COLUMN_NAME,
+  // `Due date` is deliberately NOT included — Story 2.7 (AC1) requires it
+  // to be directly editable via the table cell, unlike every other system
+  // column here (auto-managed exclusively by code, never by direct user
+  // edit).
 ]);
 
 const DEFAULT_TASK_STATUS_INHERITANCE = {
@@ -591,14 +614,43 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       // there.
       TASK_NOTE_COLOR_COLUMN_NAME,
     ];
+    // Story 2.7 (post-Task-3a live feedback, second round): "Journal Todo"
+    // is a *list*-mode view — the "Show 'Due date' in Journal todo" setting
+    // literally names that surface, not some separate table view most
+    // users never look at. Unlike Status/Done date/Note (which have real,
+    // always-available alternate representations in list/kanban — a
+    // checkbox, a row-hover button — so hiding their raw column there is
+    // never a loss), Due date's own list-mode representation *is* this
+    // very setting: on, it shows as a normal inline field (`renderCell`/
+    // `renderDetailValue`, same as any other visible property); off, the
+    // row-hover calendar icon (Task 3a) remains the only way to set it,
+    // exactly matching the setting's own name and the user's own repeated
+    // expectation. So the setting now gates Due date's hide state in
+    // *every* view mode uniformly, not just table.
+    const showDueDate = this.getShowDueDateColumnSetting(
+      this.serviceGet(EditorHostKey)?.std
+    );
     const namesToHide =
       view.mode === 'table'
-        ? alwaysHiddenNames
+        ? // This is the mechanism that applies on *every* new view creation
+          // (canonical's own AND, critically, a reference's own local view
+          // added via the generic view-switcher, since this method runs on
+          // whichever `DatabaseBlockDataSource` instance the view was
+          // created through — see `viewDataAdd`/`viewDataAddWithoutCapture`
+          // above). `ensureDueDateColumn`'s own creation-time hide only
+          // covers the narrower case of a view that already existed
+          // *before* the column itself did; this covers every other case.
+          showDueDate
+          ? alwaysHiddenNames
+          : [...alwaysHiddenNames, this.getDueDateColumn()?.name].filter(
+              (name): name is string => !!name
+            )
         : [
             ...alwaysHiddenNames,
             TASK_NOTE_COLUMN_NAME,
             this.getTaskStatusColumn()?.name,
             this.getDoneDateColumn()?.name,
+            ...(showDueDate ? [] : [this.getDueDateColumn()?.name]),
           ].filter((name): name is string => !!name);
     const columnIds = this._model.props.columns
       .filter(column => namesToHide.includes(column.name))
@@ -791,6 +843,113 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       this.hidePropertyInViews(columnId, nonTableViewIds);
     }
     return columnId;
+  }
+
+  getDueDateColumn(): ColumnDataType | undefined {
+    return this._model.props.columns.find(
+      column => column.name === TASK_DUE_DATE_COLUMN_NAME
+    );
+  }
+
+  /**
+   * Story 2.7: whether the Due date column should currently be shown.
+   * Public (unlike most of this file's other settings getters) because it
+   * has two consumers with two different timing needs: (1)
+   * `ensureDueDateColumn`/`hideDefaultHiddenColumnsForNewView` read it once
+   * at column/view-creation time to set the persisted `hide` flag — a
+   * *default*, not a live binding, exactly like every other creation-time
+   * default in this file; (2) `list/pc/renderer.ts`'s row-level rendering
+   * (Story 2.7, live-render fix) reads it **fresh on every render**,
+   * mirroring `getDueDateHighlightState`'s own already-proven live pattern,
+   * and uses it to force Due date into `detailProperties` regardless of
+   * the persisted flag — this is the belt-and-suspenders fix for a
+   * confirmed-live bug where the persisted flag alone wasn't reliably
+   * reflecting the setting for a `/Journal Todo`-inserted list (the
+   * creation-time write happens deep inside a `Command` handler, whose
+   * `ctx.std` binding could not be conclusively verified to carry
+   * `EditorSettingProvider` in every context — the render-time path is the
+   * one already known to work correctly everywhere).
+   */
+  getShowDueDateColumnSetting(std?: BlockStdScope): boolean {
+    const taskWorkflowDefaults = TaskWorkflowDefaultsSchema.parse(
+      std?.getOptional(EditorSettingProvider)?.setting$.peek()
+        .taskWorkflowDefaults ?? {}
+    );
+    return taskWorkflowDefaults.database.showDueDateColumn;
+  }
+
+  /**
+   * Ensures a "Due date" Date column exists — Story 2.7. Unlike Done date,
+   * this is a *user-set* value (directly editable via the table cell, see
+   * `READONLY_SYSTEM_COLUMN_NAMES` above), not auto-managed. Positioned
+   * right after Done date in the master column order (`{id:
+   * doneDateColumnId, before: false}`, not `'end'`), so it lands correctly
+   * in table view the first time without any of the two-wrong-turns
+   * history Note's own column went through in Story 2.6 (see that story's
+   * Change Log).
+   *
+   * Visibility across every existing view (table, list, kanban alike) is a
+   * **creation-time-only** default — controlled by `showDueDateColumn`
+   * (global setting, default `false`) — applied once, here, when the
+   * column is first created, and never touched again on subsequent calls
+   * (this method early-returns for an already-existing column, same
+   * pattern every other `ensure*Column` method in this file uses).
+   * Deliberately not a live/reactive override: a view whose owner manually
+   * shows/hides the column afterward (via the standard properties menu,
+   * per Resolved Design Decision 2) must have that choice stick —
+   * re-syncing to the global default on every `/Journal Todo` invocation
+   * or due-date edit would silently stomp it. (A genuinely new view
+   * created *after* the column already exists is handled separately, by
+   * `hideDefaultHiddenColumnsForNewView`.)
+   */
+  ensureDueDateColumn(std?: BlockStdScope): string | undefined {
+    const existing = this.getDueDateColumn();
+    if (existing) {
+      return existing.id;
+    }
+    const doneDateColumnId = this.ensureDoneDateColumn();
+    const columnId = addProperty(
+      this._model,
+      doneDateColumnId ? { id: doneDateColumnId, before: false } : 'end',
+      databaseBlockProperties.dateColumnConfig.create(TASK_DUE_DATE_COLUMN_NAME)
+    );
+    if (!this.getShowDueDateColumnSetting(std)) {
+      const allViewIds = this.viewDataList$.value.map(view => view.id);
+      if (allViewIds.length > 0) {
+        this.hidePropertyInViews(columnId, allViewIds);
+      }
+    }
+    return columnId;
+  }
+
+  /**
+   * Story 2.7 (Task 3): reads this row's current Due date (epoch ms), or
+   * `undefined` if unset / the column doesn't exist yet on this table.
+   */
+  getDueDateForRow(rowId: string): number | undefined {
+    const columnId = this.getDueDateColumn()?.id;
+    if (!columnId) return undefined;
+    const value = getCell(this._model, rowId, columnId)?.value;
+    return typeof value === 'number' ? value : undefined;
+  }
+
+  /**
+   * Story 2.7 (Task 3): writes (or clears, via `undefined`) this row's Due
+   * date from the row-hover calendar icon — ensures the column exists
+   * first (defensive: a table reached without ever going through
+   * `/Journal Todo`'s own eager-ensure could otherwise silently no-op).
+   * `std` is threaded through to `ensureDueDateColumn` purely for the
+   * creation-time visibility default — irrelevant if the column already
+   * exists.
+   */
+  setDueDateForRow(
+    std: BlockStdScope,
+    rowId: string,
+    value: number | undefined
+  ) {
+    const columnId = this.ensureDueDateColumn(std);
+    if (!columnId) return;
+    updateCell(this._model, rowId, { columnId, value: value ?? null });
   }
 
   getNoteColumn(): ColumnDataType | undefined {
@@ -1008,6 +1167,113 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     const color = this.getNoteColor(rowId);
     if (!color) return undefined;
     return resolveColor(color, std.get(ThemeProvider).appTheme);
+  }
+
+  /**
+   * Resolves the effective "Highlight after due date" behavior for this
+   * table — the per-table override (`DatabaseBlockModel.props.
+   * highlightAfterDueDateOverride`) if set, otherwise the *live* global
+   * editor setting. Unlike `taskStatusInheritance` (seeded once at
+   * creation, never re-reads the global default afterward), this always
+   * tracks the current global value when no override is set — per Story
+   * 2.7's AC7, a table without its own override should follow the global
+   * default as it changes, not a frozen snapshot from whenever the table
+   * was created. See `list-block.ts`'s own identical `?? {}` fallback:
+   * `EditorSettingProvider` isn't registered on a nested (e.g. cross-doc
+   * reference) preview scope.
+   */
+  getHighlightAfterDueDateSetting(
+    std: BlockStdScope
+  ): 'highlight' | 'hide' | 'off' {
+    const override = this._model.props.highlightAfterDueDateOverride;
+    if (override) {
+      return override;
+    }
+    const taskWorkflowDefaults = TaskWorkflowDefaultsSchema.parse(
+      std.getOptional(EditorSettingProvider)?.setting$.peek()
+        .taskWorkflowDefaults ?? {}
+    );
+    return taskWorkflowDefaults.database.highlightAfterDueDate;
+  }
+
+  /**
+   * Sets (or clears, via `undefined`) this table's own local override of
+   * "Highlight after due date" — global-only settings (e.g. "Hide from
+   * calendar when done", per Story 2.7's own explicit scope) have no
+   * equivalent setter; only this one setting gets a per-table override.
+   */
+  setHighlightAfterDueDateOverride(
+    value: 'highlight' | 'hide' | 'off' | undefined
+  ) {
+    // `store.updateBlock`'s own `syncBlockProps` explicitly skips any key
+    // whose value is `undefined` (a deliberate "no patch" convention, not
+    // a way to clear a prop) — clearing the override back to "follow the
+    // live global default" needs an actual `delete`, which the reactive
+    // `model.props` proxy supports directly (see `sync-controller.ts`'s
+    // own `deleteProperty` trap).
+    this._model.store.transact(() => {
+      if (value === undefined) {
+        delete this._model.props.highlightAfterDueDateOverride;
+      } else {
+        this._model.props.highlightAfterDueDateOverride = value;
+      }
+    });
+  }
+
+  /**
+   * Resolves whether this row should currently be highlighted/hidden for
+   * being overdue-and-undone (Story 2.7, AC5) — `null` means neither
+   * applies (no Due date set, not yet overdue, already Done, or the
+   * effective setting is `'off'`). "Overdue" compares Due date against the
+   * *journal page's own date* when `std`'s currently-active doc is a
+   * journal (per direct user decision — consistent with Done date's own
+   * journal-date-not-wall-clock filter semantics elsewhere in this epic),
+   * falling back to wall-clock "now" outside a journal context.
+   */
+  getDueDateHighlightState(
+    std: BlockStdScope,
+    rowId: string
+  ): 'highlight' | 'hide' | null {
+    const dueDateColumnId = this.getDueDateColumn()?.id;
+    if (!dueDateColumnId) return null;
+    const dueDateValue = getCell(this._model, rowId, dueDateColumnId)?.value;
+    if (typeof dueDateValue !== 'number') return null;
+
+    if (this.getTaskStatusInfo(rowId)?.checked) return null;
+
+    const setting = this.getHighlightAfterDueDateSetting(std);
+    if (setting === 'off') return null;
+
+    const journalDate = std
+      .getOptional(JournalTodoDatabaseProvider)
+      ?.getJournalDate(std.store.id);
+    const nowMs = journalDate ? new Date(journalDate).getTime() : Date.now();
+    if (dueDateValue >= nowMs) return null;
+
+    return setting;
+  }
+
+  /**
+   * Story 2.7 (Task 4): resolves the `YYYY-MM-DD` journal date a calendar
+   * click on this row should navigate to — the row's Done date if it's
+   * marked done, otherwise today's local date (an undone row is always
+   * carried over to "today"). Pure date resolution only; the caller
+   * (`database-block.ts`'s `detailPanelConfig.openDetailPanel`) is
+   * responsible for turning this into an actual docId via
+   * `JournalTodoDatabaseProvider.getJournalDocId` and deciding what to do
+   * if no journal page for that date exists yet.
+   */
+  resolveJournalTodoNavigationDate(rowId: string): string {
+    if (this.getTaskStatusInfo(rowId)?.checked) {
+      const doneDateColumnId = this.getDoneDateColumn()?.id;
+      const doneDateValue = doneDateColumnId
+        ? getCell(this._model, rowId, doneDateColumnId)?.value
+        : undefined;
+      if (typeof doneDateValue === 'number') {
+        return formatLocalDate(doneDateValue);
+      }
+    }
+    return formatLocalDate(Date.now());
   }
 
   private normalizeStatusLabel(value: string) {

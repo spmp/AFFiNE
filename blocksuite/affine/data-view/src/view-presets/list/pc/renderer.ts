@@ -3,11 +3,14 @@ import {
   popMenu,
   popupTargetFromElement,
 } from '@blocksuite/affine-components/context-menu';
+import { DatePicker } from '@blocksuite/affine-components/date-picker';
+import { createLitPortal } from '@blocksuite/affine-components/portal';
 import { SignalWatcher, WithDisposable } from '@blocksuite/global/lit';
-import { PageIcon, PlusIcon } from '@blocksuite/icons/lit';
+import { DateTimeIcon, PageIcon, PlusIcon } from '@blocksuite/icons/lit';
 import type { BlockStdScope } from '@blocksuite/std';
 import { ShadowlessElement } from '@blocksuite/std';
 import { signal } from '@preact/signals-core';
+import { flip, offset } from '@floating-ui/dom';
 import { css, html, nothing } from 'lit';
 import { customElement, eventOptions, property } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
@@ -51,6 +54,31 @@ interface NoteCapableDataSource {
     std: BlockStdScope,
     rowId: string
   ) => Promise<void>;
+  // Story 2.7: resolves the overdue-and-undone treatment for this row
+  // (`null` if neither highlight nor hide applies) — computed on the data
+  // source's own side for the same reason `getResolvedNoteColor` is: it
+  // needs `JournalTodoDatabaseProvider`/date comparison logic `data-view`
+  // deliberately doesn't depend on.
+  getDueDateHighlightState?: (
+    std: BlockStdScope,
+    rowId: string
+  ) => 'highlight' | 'hide' | null;
+  // Story 2.7 (live-render fix): read fresh on every render, same as
+  // `getDueDateHighlightState` above — see `getShowDueDateColumnSetting`'s
+  // own doc comment in `data-source.ts` for why this needs a live check
+  // in addition to (not instead of) the creation-time default.
+  getShowDueDateColumnSetting?: (std: BlockStdScope) => boolean;
+  getDueDateColumn?: () => { id: string } | undefined;
+  // Story 2.7 (Task 3): row-hover "set due date" button — reads/writes the
+  // Due date cell directly, same duck-typed-delegate shape as the Note
+  // methods above (the actual column/cell logic lives on
+  // `DatabaseBlockDataSource`, not here).
+  getDueDateForRow?: (rowId: string) => number | undefined;
+  setDueDateForRow?: (
+    std: BlockStdScope,
+    rowId: string,
+    value: number | undefined
+  ) => void;
 }
 
 @customElement('affine-data-view-list')
@@ -201,6 +229,29 @@ export class ListViewRenderer extends SignalWatcher(
     .affine-data-view-list-note-action:hover {
       background: var(--affine-hover-color);
     }
+
+    .affine-data-view-list-due-date-action {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      margin-left: 4px;
+      border-radius: 4px;
+      cursor: pointer;
+      color: var(--affine-icon-color);
+      visibility: hidden;
+      opacity: 0;
+    }
+
+    .affine-data-view-list-row:hover .affine-data-view-list-due-date-action {
+      visibility: visible;
+      opacity: 1;
+    }
+
+    .affine-data-view-list-due-date-action:hover {
+      background: var(--affine-hover-color);
+    }
   `;
 
   @property({ attribute: false })
@@ -235,6 +286,21 @@ export class ListViewRenderer extends SignalWatcher(
     const std = this.std;
     if (!std) return undefined;
     return dataSource.getResolvedNoteColor(std, rowId);
+  }
+
+  /**
+   * Story 2.7: overdue-and-undone treatment for this row — `null` if
+   * neither highlight nor hide applies (see `DatabaseBlockDataSource.
+   * getDueDateHighlightState`'s own doc comment for the full condition).
+   */
+  private getRowDueDateState(rowId: string): 'highlight' | 'hide' | null {
+    const dataSource = this.noteCapableDataSource;
+    if (typeof dataSource.getDueDateHighlightState !== 'function') {
+      return null;
+    }
+    const std = this.std;
+    if (!std) return null;
+    return dataSource.getDueDateHighlightState(std, rowId);
   }
 
   /**
@@ -308,6 +374,86 @@ export class ListViewRenderer extends SignalWatcher(
       @click=${onClick}
     >
       ${PageIcon()}
+    </div>`;
+  }
+
+  private _dueDatePortalAbortController: AbortController | null = null;
+
+  /**
+   * Row-level "set due date" button (Story 2.7, Task 3) — sibling to
+   * `renderNoteAction`, same task-status-capability gating and CSS-`:hover`
+   * mechanism. Variant (b) per the story's own Resolved Design Decision 5:
+   * a plain date-selection dialog that writes `dueDate` and does not touch
+   * column visibility. Reuses the exact same `DatePicker`/`createLitPortal`
+   * combination the Date property's own cell editor uses
+   * (`property-presets/date/cell-renderer.ts`) rather than building a new
+   * date-picker component.
+   */
+  private renderDueDateAction(rowId: string) {
+    const dataSource = this.noteCapableDataSource;
+    if (typeof dataSource.getTaskStatusColumn !== 'function') {
+      return nothing;
+    }
+    if (!dataSource.getTaskStatusColumn()) {
+      return nothing;
+    }
+    if (typeof dataSource.setDueDateForRow !== 'function') {
+      return nothing;
+    }
+    const std = this.std;
+    if (!std) {
+      return nothing;
+    }
+
+    const currentValue = dataSource.getDueDateForRow?.(rowId);
+
+    const onClick = (e: MouseEvent) => {
+      e.stopPropagation();
+      if (
+        this._dueDatePortalAbortController &&
+        !this._dueDatePortalAbortController.signal.aborted
+      ) {
+        return;
+      }
+      const target = e.currentTarget as HTMLElement;
+      const abortController = new AbortController();
+      this._dueDatePortalAbortController = abortController;
+      const { portal } = createLitPortal({
+        abortController,
+        closeOnClickAway: true,
+        computePosition: {
+          referenceElement: target,
+          placement: 'bottom',
+          middleware: [offset(10), flip()],
+        },
+        template: () => {
+          const datePicker = new DatePicker();
+          datePicker.value = currentValue ?? Date.now();
+          datePicker.popup = true;
+          datePicker.onClear = () => {
+            dataSource.setDueDateForRow?.(std, rowId, undefined);
+            abortController.abort();
+          };
+          datePicker.onChange = (date: Date) => {
+            dataSource.setDueDateForRow?.(std, rowId, date.getTime());
+            abortController.abort();
+          };
+          datePicker.onEscape = () => {
+            abortController.abort();
+          };
+          requestAnimationFrame(() => datePicker.focusDateCell());
+          return datePicker;
+        },
+      });
+      portal.style.zIndex = '1002';
+    };
+
+    return html`<div
+      class="affine-data-view-list-due-date-action"
+      data-testid="due-date-action"
+      @click=${onClick}
+    >
+      ${DateTimeIcon()}
     </div>`;
   }
 
@@ -453,9 +599,33 @@ export class ListViewRenderer extends SignalWatcher(
       return nothing;
     }
     const titleColumn = this.view.mainProperties$.value.titleColumn;
-    const detailProperties = this.view.detailProperties$.value.filter(
+    let detailProperties = this.view.detailProperties$.value.filter(
       property => property.id !== titleColumn
     );
+    // Story 2.7 (live-render fix): force Due date into the rendered detail
+    // fields when the live "Show 'Due date' in Journal todo" setting is on
+    // — regardless of whatever the column's *persisted* hide flag says.
+    // The persisted flag is only a creation-time default (see
+    // `getShowDueDateColumnSetting`'s own doc comment); this is the
+    // reliable, always-correct path, mirroring `getRowDueDateState`'s own
+    // already-proven live-read-on-every-render pattern.
+    const dataSource = this.noteCapableDataSource;
+    const std = this.std;
+    if (
+      std &&
+      typeof dataSource.getShowDueDateColumnSetting === 'function' &&
+      typeof dataSource.getDueDateColumn === 'function' &&
+      dataSource.getShowDueDateColumnSetting(std)
+    ) {
+      const dueDateColumnId = dataSource.getDueDateColumn()?.id;
+      if (
+        dueDateColumnId &&
+        !detailProperties.some(property => property.id === dueDateColumnId)
+      ) {
+        const dueDateProperty = this.view.propertyGetOrCreate(dueDateColumnId);
+        detailProperties = [...detailProperties, dueDateProperty];
+      }
+    }
     const fieldLayout = this.view.fieldLayout$.value;
     // Deferred to a microtask rather than run synchronously inline here:
     // `ensureTodoListRows` -> `ensureRowAsTodoList` can `deleteBlock` then
@@ -493,17 +663,29 @@ export class ListViewRenderer extends SignalWatcher(
         : nothing}
       <div class="affine-data-view-list">
         ${repeat(
-          this.view.rows$.value,
+          // Story 2.7 (AC5): a row whose resolved overdue-and-undone
+          // setting is `'hide'` is excluded from the list entirely — not
+          // hidden via CSS, since it should also not occupy layout space
+          // or be tab-reachable, matching the "excluded from view" wording
+          // of the AC (as opposed to `'highlight'`, which stays visible).
+          this.view.rows$.value.filter(
+            row => this.getRowDueDateState(row.rowId) !== 'hide'
+          ),
           row => row.rowId,
           row => {
             const indent = this.getHierarchyLevel(row.rowId) * 24;
             const noteColor = this.getRowNoteColor(row.rowId);
+            const isOverdueHighlighted =
+              this.getRowDueDateState(row.rowId) === 'highlight';
             return html`<div
               class="affine-data-view-list-row"
               data-row-id=${row.rowId}
+              data-overdue=${isOverdueHighlighted ? 'true' : nothing}
               tabindex="0"
               style="padding-left: ${8 + indent}px;${noteColor
                 ? ` background-color: ${noteColor}; border-radius: 6px;`
+                : ''}${isOverdueHighlighted
+                ? ' color: var(--affine-error-color); font-weight: 600;'
                 : ''}"
               @focusin=${this.onRowFocusIn}
               @keydown=${this.onRowKeyDown}
@@ -528,6 +710,7 @@ export class ListViewRenderer extends SignalWatcher(
                   </div>`
                 : nothing}
               ${this.renderNoteAction(row.rowId)}
+              ${this.renderDueDateAction(row.rowId)}
             </div>`;
           }
         )}

@@ -28,6 +28,15 @@ export function patchJournalTodoDatabaseService(framework: FrameworkProvider) {
       liveData$.complete();
       return value;
     },
+    getJournalDocId(date) {
+      // Same eager-peek-then-`.complete()` shape as `getJournalDate` above —
+      // `journalsByDate$` also constructs a fresh, eagerly-subscribing
+      // `LiveData` per call.
+      const liveData$ = framework.get(JournalService).journalsByDate$(date);
+      const docs = liveData$.value;
+      liveData$.complete();
+      return docs[0]?.id;
+    },
     getJournalTodoDatabaseRef() {
       const ref = framework
         .get(JournalTodoDatabaseCoreService)

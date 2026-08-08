@@ -583,8 +583,12 @@ describe('list view preset', () => {
   });
 
   test('renders rows with stable row-id keys for insert reconciliation', () => {
+    // Story 2.7 (AC5) inserted a `.filter(...)` (plus an explanatory
+    // comment) between `repeat`'s own call and its first argument — so
+    // this only checks each piece is present, not strict adjacency.
+    expect(getListRendererSource()).toMatch(/repeat\)\(/m);
     expect(getListRendererSource()).toMatch(
-      /repeat\)\(\s*this\.view\.rows\$\.value,/m
+      /this\.view\.rows\$\.value\.filter\(/
     );
     expect(getListRendererSource()).toMatch(/\(row\) => row\.rowId/);
   });

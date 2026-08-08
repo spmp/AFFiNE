@@ -13,9 +13,13 @@ import {
   ensureDocLoaded,
   waitForBlockInDoc,
 } from '@blocksuite/affine-shared/utils';
-import type { Command } from '@blocksuite/std';
+import type { BlockStdScope, Command } from '@blocksuite/std';
 import type { BlockModel } from '@blocksuite/store';
-import type { BasicViewDataType, FilterGroup } from '@blocksuite/data-view';
+import {
+  type BasicViewDataType,
+  EditorHostKey,
+  type FilterGroup,
+} from '@blocksuite/data-view';
 
 import { createLocalViewOverride } from './view-override.js';
 
@@ -43,6 +47,7 @@ export interface SeedInitialViewOptions {
  * pass `{ viewType: 'list', initialFilter }`.
  */
 function seedInitialView(
+  std: BlockStdScope,
   refModel: DatabaseViewRefBlockModel,
   canonicalModel: DatabaseBlockModel,
   options?: SeedInitialViewOptions
@@ -50,6 +55,16 @@ function seedInitialView(
   const override = createLocalViewOverride(refModel);
   const dataSource = new DatabaseBlockDataSource(canonicalModel, ds => {
     ds.serviceSet(DatabaseViewLocalOverrideProvider, override);
+    // Without this, `hideDefaultHiddenColumnsForNewView`'s internal
+    // `this.serviceGet(EditorHostKey)?.std` resolution (Story 2.7 —
+    // `showDueDateColumn`) silently falls back to the schema default
+    // (hidden) for every view seeded through this path, regardless of the
+    // live setting — confirmed live: toggling the setting had no effect on
+    // a freshly-created "Journal Todo" list precisely because this
+    // throwaway `DatabaseBlockDataSource` never had `EditorHostKey` set at
+    // all, unlike the real `database-block.ts`-constructed one used for
+    // actual rendering.
+    ds.serviceSet(EditorHostKey, std.host);
   });
   const id = dataSource.viewManager.viewAdd(options?.viewType ?? 'table');
   if (options?.initialFilter) {
@@ -150,7 +165,7 @@ export const insertDatabaseViewRefBlockCommand: Command<
       | DatabaseBlockModel
       | undefined;
     if (refModel && canonicalModel) {
-      seedInitialView(refModel, canonicalModel, initialView);
+      seedInitialView(std, refModel, canonicalModel, initialView);
     }
   }
 
@@ -180,7 +195,7 @@ export const insertDatabaseViewRefBlockCommand: Command<
             | DatabaseViewRefBlockModel
             | undefined;
           if (refModel) {
-            seedInitialView(refModel, canonicalModel, initialView);
+            seedInitialView(std, refModel, canonicalModel, initialView);
           }
         })
         .catch(() => {

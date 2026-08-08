@@ -22,12 +22,16 @@ import {
   ParagraphBlockSchemaExtension,
   RootBlockSchemaExtension,
 } from '@blocksuite/affine-model';
-import { TaskWorkflowDefaultsSchema } from '@blocksuite/affine-shared/services';
+import {
+  EditorSettingProvider,
+  TaskWorkflowDefaultsSchema,
+} from '@blocksuite/affine-shared/services';
 import {
   createTaskIdentity,
   TASK_HIERARCHY_LEVEL_COLUMN_NAME,
   TASK_PARENT_IDENTIFIER_COLUMN_NAME,
 } from '@blocksuite/affine-shared/utils';
+import { EditorHostKey } from '@blocksuite/data-view';
 import { propertyModelPresets } from '@blocksuite/data-view/property-pure-presets';
 import type { BlockModel, Store } from '@blocksuite/store';
 import { Text } from '@blocksuite/store';
@@ -292,6 +296,9 @@ describe('DatabaseManager', () => {
           cascadeManualDoneToDescendants: true,
         },
         kanbanColumns: ['Todo:todo', 'In Progress:in_progress', 'Done:done'],
+        highlightAfterDueDate: 'highlight',
+        hideFromCalendarWhenDone: true,
+        showDueDateColumn: false,
       },
     });
   });
@@ -756,6 +763,321 @@ describe('DatabaseManager', () => {
     };
     expect(findHide(tableViewId)).not.toBe(true);
     expect(findHide(listViewId)).toBe(true);
+  });
+
+  test('Story 2.7: "Due date" column is idempotent, positioned right after Done date, hidden everywhere by default (including table, per direct user instruction — see the `showDueDateColumn` setting test below), and is directly cell-editable (unlike every other system column)', () => {
+    const dataSource = new DatabaseBlockDataSource(db);
+
+    const tableViewId = dataSource.viewManager.viewAdd('table');
+    const listViewId = dataSource.viewManager.viewAdd('list');
+
+    const dueDateColumnId = dataSource.ensureDueDateColumn();
+    const dueDateColumnIdAgain = dataSource.ensureDueDateColumn();
+    expect(dueDateColumnId).toBeTruthy();
+    expect(dueDateColumnIdAgain).toBe(dueDateColumnId);
+
+    const doneDateColumn = dataSource.getDoneDateColumn()!;
+    expect(doneDateColumn).toBeTruthy();
+    const masterColumnIds = db.props.columns.map(c => c.id);
+    expect(masterColumnIds.indexOf(dueDateColumnId)).toBe(
+      masterColumnIds.indexOf(doneDateColumn.id) + 1
+    );
+
+    const findHide = (viewId: string) => {
+      const view = db.props.views.find(v => v.id === viewId) as
+        | { columns?: { id: string; hide?: boolean }[] }
+        | undefined;
+      return view?.columns?.find(c => c.id === dueDateColumnId)?.hide;
+    };
+    // No `std` passed (and no `EditorSettingProvider` registered even if it
+    // were) — `showDueDateColumn` resolves to its schema default (`false`),
+    // so the column starts hidden in table too, not just non-table views.
+    expect(findHide(tableViewId)).toBe(true);
+    expect(findHide(listViewId)).toBe(true);
+
+    // Unlike Done date/Status/Note/Note color (all auto-managed, never
+    // directly editable), Due date is a user-set value — AC1 requires it
+    // be directly writable via the table cell.
+    expect(dataSource.propertyReadonlyGet(dueDateColumnId!)).toBe(false);
+  });
+
+  test('Story 2.7: "showDueDateColumn" setting controls the Due date column\'s table visibility at creation time only — a manual per-table override afterward is never re-synced away', () => {
+    const dataSource = new DatabaseBlockDataSource(db);
+    const tableViewId = dataSource.viewManager.viewAdd('table');
+
+    const findHide = (viewId: string, columnId: string) => {
+      const view = db.props.views.find(v => v.id === viewId) as
+        | { columns?: { id: string; hide?: boolean }[] }
+        | undefined;
+      return view?.columns?.find(c => c.id === columnId)?.hide;
+    };
+
+    const stubStdShow = {
+      getOptional: (identifier: unknown) =>
+        identifier === EditorSettingProvider
+          ? {
+              setting$: {
+                peek: () => ({
+                  taskWorkflowDefaults: TaskWorkflowDefaultsSchema.parse({
+                    database: { showDueDateColumn: true },
+                  }),
+                }),
+              },
+            }
+          : undefined,
+    } as never;
+
+    const dueDateColumnId = dataSource.ensureDueDateColumn(stubStdShow)!;
+    expect(findHide(tableViewId, dueDateColumnId)).not.toBe(true);
+
+    // Calling `ensureDueDateColumn` again — even with the setting now
+    // implying `false` — must NOT touch the already-established hide
+    // state (creation-time-only default, not a live resync).
+    const stubStdHide = { getOptional: () => undefined } as never;
+    dataSource.ensureDueDateColumn(stubStdHide);
+    expect(findHide(tableViewId, dueDateColumnId)).not.toBe(true);
+  });
+
+  test('Story 2.7: a brand new table view (added after the Due date column already exists, e.g. via the generic view-switcher) respects the live "showDueDateColumn" setting, not just a table view that predates the column', () => {
+    // Regression for the exact bug the user hit live: toggling the global
+    // setting, then adding a *new* table view — `ensureDueDateColumn`'s own
+    // creation-time default only covers a table view that already existed
+    // *before* the column did; every other new-view-creation path goes
+    // through `hideDefaultHiddenColumnsForNewView` instead (resolves `std`
+    // internally via `EditorHostKey`, since `viewDataAdd`'s own generic
+    // `DataSource` interface signature has no `std` parameter to thread
+    // through).
+    const dataSource = new DatabaseBlockDataSource(db, ds => {
+      ds.serviceSet(EditorHostKey, {
+        std: {
+          getOptional: (identifier: unknown) =>
+            identifier === EditorSettingProvider
+              ? {
+                  setting$: {
+                    peek: () => ({
+                      taskWorkflowDefaults: TaskWorkflowDefaultsSchema.parse({
+                        database: { showDueDateColumn: true },
+                      }),
+                    }),
+                  },
+                }
+              : undefined,
+        },
+      } as never);
+    });
+
+    // Column already exists, created with the setting off (hidden).
+    const dueDateColumnId = dataSource.ensureDueDateColumn({
+      getOptional: () => undefined,
+    } as never)!;
+
+    // A brand new table view, added *after* the column exists and *after*
+    // the live setting was switched on — should start visible.
+    const newTableViewId = dataSource.viewManager.viewAdd('table');
+    const view = db.props.views.find(v => v.id === newTableViewId) as
+      | { columns?: { id: string; hide?: boolean }[] }
+      | undefined;
+    expect(view?.columns?.find(c => c.id === dueDateColumnId)?.hide).not.toBe(
+      true
+    );
+  });
+
+  test('Story 2.7: the setting also applies to a brand new *list* view (i.e. `/Journal Todo` itself) — Due date is not unconditionally hidden in list/kanban the way Status/Done date/Note are', () => {
+    // Regression for the second round of live feedback: "Journal Todo" is
+    // a list-mode view, not a table — the user's own expectation was that
+    // enabling the setting and creating a new journal todo would surface
+    // the column right there, not only in some separate table view.
+    const dataSource = new DatabaseBlockDataSource(db, ds => {
+      ds.serviceSet(EditorHostKey, {
+        std: {
+          getOptional: (identifier: unknown) =>
+            identifier === EditorSettingProvider
+              ? {
+                  setting$: {
+                    peek: () => ({
+                      taskWorkflowDefaults: TaskWorkflowDefaultsSchema.parse({
+                        database: { showDueDateColumn: true },
+                      }),
+                    }),
+                  },
+                }
+              : undefined,
+        },
+      } as never);
+    });
+
+    // Status/Done date/Due date all ensured *before* the view is created —
+    // mirroring the real `/Journal Todo` sequence (eager-ensure happens
+    // first, the list view is seeded after).
+    const statusColumnId = dataSource.ensureTaskStatusColumn();
+    const dueDateColumnId = dataSource.ensureDueDateColumn({
+      getOptional: () => undefined,
+    } as never)!;
+    const doneDateColumnId = dataSource.getDoneDateColumn()!.id;
+
+    const newListViewId = dataSource.viewManager.viewAdd('list');
+    const view = db.props.views.find(v => v.id === newListViewId) as
+      | { columns?: { id: string; hide?: boolean }[] }
+      | undefined;
+    expect(view?.columns?.find(c => c.id === dueDateColumnId)?.hide).not.toBe(
+      true
+    );
+
+    // Status/Done date/Note stay unconditionally hidden in list regardless
+    // of this setting — they have their own always-available list-mode
+    // representations (checkbox, row-hover button), unlike Due date.
+    expect(view?.columns?.find(c => c.id === statusColumnId)?.hide).toBe(true);
+    expect(view?.columns?.find(c => c.id === doneDateColumnId)?.hide).toBe(
+      true
+    );
+  });
+
+  test('Story 2.7: "Highlight after due date" follows the live global default when no per-table override is set, and the per-table override wins once set', () => {
+    const dataSource = new DatabaseBlockDataSource(db);
+
+    const stubStdNoProvider = { getOptional: () => undefined } as never;
+    // No `EditorSettingProvider` registered at all — falls through to the
+    // schema's own default (`highlight`), same fallback shape as
+    // `list-block.ts`'s own `?? {}` regression fix.
+    expect(dataSource.getHighlightAfterDueDateSetting(stubStdNoProvider)).toBe(
+      'highlight'
+    );
+
+    const stubStdWithProvider = {
+      getOptional: () => ({
+        setting$: {
+          peek: () => ({
+            taskWorkflowDefaults: TaskWorkflowDefaultsSchema.parse({
+              database: { highlightAfterDueDate: 'hide' },
+            }),
+          }),
+        },
+      }),
+    } as never;
+    expect(
+      dataSource.getHighlightAfterDueDateSetting(stubStdWithProvider)
+    ).toBe('hide');
+
+    dataSource.setHighlightAfterDueDateOverride('off');
+    expect(
+      dataSource.getHighlightAfterDueDateSetting(stubStdWithProvider)
+    ).toBe('off');
+
+    dataSource.setHighlightAfterDueDateOverride(undefined);
+    expect(
+      dataSource.getHighlightAfterDueDateSetting(stubStdWithProvider)
+    ).toBe('hide');
+  });
+
+  test('Story 2.7: getDueDateHighlightState resolves highlight/hide only for a past-due, undone row, comparing against journal date when available', () => {
+    const dataSource = new DatabaseBlockDataSource(db);
+    const rowId = dataSource.rowAddAsTodoList('end');
+    const dueDateColumnId = dataSource.ensureDueDateColumn()!;
+
+    const makeStub = (
+      settingValue: 'highlight' | 'hide' | 'off',
+      journalDate: string | undefined
+    ) =>
+      ({
+        store: { id: 'stub-doc' },
+        getOptional: (identifier: unknown) => {
+          if (identifier === EditorSettingProvider) {
+            return {
+              setting$: {
+                peek: () => ({
+                  taskWorkflowDefaults: TaskWorkflowDefaultsSchema.parse({
+                    database: { highlightAfterDueDate: settingValue },
+                  }),
+                }),
+              },
+            };
+          }
+          // Stands in for `JournalTodoDatabaseProvider`.
+          return { getJournalDate: () => journalDate };
+        },
+      }) as never;
+
+    // No Due date set yet.
+    expect(
+      dataSource.getDueDateHighlightState(
+        makeStub('highlight', undefined),
+        rowId
+      )
+    ).toBe(null);
+
+    // Due date in the past (relative to wall-clock, no journal context).
+    updateCell(db, rowId, {
+      columnId: dueDateColumnId,
+      value: Date.now() - 24 * 60 * 60 * 1000,
+    });
+    expect(
+      dataSource.getDueDateHighlightState(
+        makeStub('highlight', undefined),
+        rowId
+      )
+    ).toBe('highlight');
+    expect(
+      dataSource.getDueDateHighlightState(makeStub('hide', undefined), rowId)
+    ).toBe('hide');
+    expect(
+      dataSource.getDueDateHighlightState(makeStub('off', undefined), rowId)
+    ).toBe(null);
+
+    // Journal date overrides wall-clock: a journal page dated *before* the
+    // due date means the row isn't overdue yet from that page's own
+    // perspective, even though the due date is in the real past.
+    const futureJournalDate = new Date(Date.now() - 48 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    expect(
+      dataSource.getDueDateHighlightState(
+        makeStub('highlight', futureJournalDate),
+        rowId
+      )
+    ).toBe(null);
+
+    // Marking the row Done suppresses the highlight regardless of due date.
+    dataSource.setTaskStatusChecked(rowId, true);
+    expect(
+      dataSource.getDueDateHighlightState(
+        makeStub('highlight', undefined),
+        rowId
+      )
+    ).toBe(null);
+  });
+
+  test("Story 2.7 (Task 4): resolveJournalTodoNavigationDate resolves today's date for an undone row, and the row's Done date once marked done", () => {
+    const dataSource = new DatabaseBlockDataSource(db);
+    const rowId = dataSource.rowAddAsTodoList('end');
+
+    const todayLocal = (() => {
+      const d = new Date();
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    })();
+
+    // Undone — always resolves to today, regardless of any Due date.
+    expect(dataSource.resolveJournalTodoNavigationDate(rowId)).toBe(todayLocal);
+
+    // Marked done — resolves to the row's own (auto-stamped) Done date,
+    // not today, even if "today" and the Done date happen to differ.
+    dataSource.setTaskStatusChecked(rowId, true);
+    const doneDateColumnId = dataSource.getDoneDateColumn()!.id;
+    const pastDoneDate = new Date('2026-01-15T12:00:00');
+    updateCell(db, rowId, {
+      columnId: doneDateColumnId,
+      value: pastDoneDate.getTime(),
+    });
+    expect(dataSource.resolveJournalTodoNavigationDate(rowId)).toBe(
+      '2026-01-15'
+    );
+
+    // Un-marking clears the Done date back to `null` (existing behavior) —
+    // falls back to today again.
+    dataSource.setTaskStatusChecked(rowId, false);
+    expect(dataSource.resolveJournalTodoNavigationDate(rowId)).toBe(todayLocal);
   });
 
   test('todo list rows track checkbox state through the task status column, not the plain affine:list.checked boolean', () => {

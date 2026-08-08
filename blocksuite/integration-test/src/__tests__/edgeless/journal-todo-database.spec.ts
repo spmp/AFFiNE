@@ -13,8 +13,12 @@ import {
 import type { DatabaseViewRefBlockComponent } from '@blocksuite/affine/blocks/database-view-ref';
 import {
   CrossDocReferenceProvider,
+  EditorSettingExtension,
+  EditorSettingProvider,
   JournalTodoDatabaseProvider,
+  TaskWorkflowDefaultsSchema,
 } from '@blocksuite/affine/shared/services';
+import { signal } from '@preact/signals-core';
 import { Text } from '@blocksuite/store';
 import { beforeEach, describe, expect, test } from 'vitest';
 
@@ -41,21 +45,57 @@ describe('journal todo database slash-menu command', () => {
   function createStubStd(options: {
     journalDate: string | undefined;
     initialRef?: { refDocId: string; refBlockId: string };
+    showDueDateColumn?: boolean;
   }) {
     let ref = options.initialRef;
     const stub = new Proxy(editor.std, {
       get(target, prop, receiver) {
         if (prop === 'getOptional') {
-          return (identifier: unknown) =>
-            identifier === JournalTodoDatabaseProvider
-              ? {
-                  getJournalDate: () => options.journalDate,
-                  getJournalTodoDatabaseRef: () => ref,
-                  setJournalTodoDatabaseRef: (newRef: typeof ref) => {
-                    ref = newRef;
-                  },
-                }
-              : undefined;
+          return (identifier: unknown) => {
+            if (identifier === JournalTodoDatabaseProvider) {
+              return {
+                getJournalDate: () => options.journalDate,
+                getJournalTodoDatabaseRef: () => ref,
+                setJournalTodoDatabaseRef: (newRef: typeof ref) => {
+                  ref = newRef;
+                },
+              };
+            }
+            if (
+              identifier === EditorSettingProvider &&
+              options.showDueDateColumn !== undefined
+            ) {
+              return {
+                setting$: {
+                  peek: () => ({
+                    taskWorkflowDefaults: TaskWorkflowDefaultsSchema.parse({
+                      database: {
+                        showDueDateColumn: options.showDueDateColumn,
+                      },
+                    }),
+                  }),
+                },
+              };
+            }
+            return undefined;
+          };
+        }
+        if (prop === 'host') {
+          // `seedInitialView`/`hideDefaultHiddenColumnsForNewView` resolve
+          // `std` back out via `EditorHostKey`'s stored `EditorHost`'s own
+          // `.std` getter (`this.serviceGet(EditorHostKey)?.std`) — without
+          // this override, `.host.std` would return the *real*, un-stubbed
+          // `editor.std` (bypassing this whole `getOptional` override),
+          // since `Reflect.get` on `host` returns the real host object
+          // as-is, and that real host's own `.std` getter points back to
+          // the real, original `editor.std`, not this Proxy.
+          const realHost = Reflect.get(target, prop, receiver) as object;
+          return new Proxy(realHost, {
+            get(hostTarget, hostProp, hostReceiver) {
+              if (hostProp === 'std') return stub;
+              return Reflect.get(hostTarget, hostProp, hostReceiver);
+            },
+          });
         }
         return Reflect.get(target, prop, receiver);
       },
@@ -117,6 +157,105 @@ describe('journal todo database slash-menu command', () => {
     // be an `or`, not a plain live "not done" filter.
     expect(seededView.filter.op).toBe('or');
     expect(seededView.filter.conditions.length).toBe(2);
+  });
+
+  describe('Story 2.7: "Show \'Due date\' in Journal todo" global setting, end-to-end', () => {
+    // A real `EditorSettingExtension` (not a `getOptional` Proxy stub) —
+    // needed because the visibility fix (see `list/pc/renderer.ts`'s
+    // `render()`) resolves `std` via `EditorHostKey`/`this.host.std`, a
+    // completely different path from the plain `std.getOptional(...)` call
+    // this file's own `createStubStd` intercepts, and a `Command` handler's
+    // `ctx.std` is bound by `CommandManager`'s own internal std reference
+    // at construction time — neither path can be reliably intercepted by
+    // wrapping the outer `editor.std` in a `Proxy` after the fact. Only a
+    // genuinely-registered extension on the real editor works for both.
+    beforeEach(async () => {
+      const cleanup = await setupEditor('page', [
+        EditorSettingExtension({
+          setting$: signal({
+            taskWorkflowDefaults: {
+              database: { showDueDateColumn: true },
+            },
+          }),
+        }),
+      ]);
+      return cleanup;
+    });
+
+    test('a freshly-invoked "Journal Todo" list actually renders the Due date field', async () => {
+      const noteId = addNote(doc);
+      const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+      const model = doc.getModelById(paragraphId)!;
+      const { stub } = createStubStd({ journalDate: '2026-07-29' });
+
+      const items = journalTodoDatabaseSlashMenuConfig.items;
+      const resolvedItems =
+        typeof items === 'function' ? items({ std: stub, model }) : items;
+      const item = resolvedItems.find(i => i.name === 'Journal Todo');
+      expect(item).toBeTruthy();
+
+      await (item as unknown as { action: () => Promise<void> }).action();
+      await wait();
+
+      const refEl = document.querySelector(
+        'affine-database-view-ref'
+      ) as DatabaseViewRefBlockComponent;
+      expect(refEl).toBeTruthy();
+
+      // Detail fields render per-row — an empty list has none.
+      const canonicalModel = doc.getBlock(refEl.model.props.refBlockId)
+        ?.model as DatabaseBlockModel;
+      const dataSource = new DatabaseBlockDataSource(canonicalModel);
+      const rowId = dataSource.rowAddAsTodoList('end');
+      await wait();
+
+      // The row-level detail-fields container only renders at all when
+      // `detailProperties.length > 0` (`nothing` otherwise) — its own
+      // `--affine-list-field-count` CSS variable directly reflects that
+      // count, giving a precise, DOM-level assertion that the live
+      // render-time override (not just the persisted, creation-time-only
+      // hide flag) actually took effect.
+      const fieldsEl = refEl.querySelector(
+        '.affine-data-view-list-fields'
+      ) as HTMLElement | null;
+      expect(fieldsEl).toBeTruthy();
+      expect(
+        fieldsEl?.style.getPropertyValue('--affine-list-field-count')
+      ).toBe('1');
+    });
+  });
+
+  test('Story 2.7: "Journal Todo" eagerly ensures a Due date column exists on the canonical, so a Calendar view added later via the database\'s own normal view-switcher never needs a manual setup step', async () => {
+    // Direct user correction (2026-08-07): there is no Journal-Todo-specific
+    // "insert a calendar" command — the calendar is reached exclusively
+    // through the database's own generic view-switcher (a plain, non-
+    // Journal-Todo-aware `viewAdd('calendar')`), the same way any other
+    // database gets a calendar view. This test guards the actual
+    // requirement: by the time that generic switcher is used, Due date
+    // must already exist so `CalendarDateMapping` resolves straight to
+    // `'ready'`, never `'setup'`.
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+    const { stub, getRef } = createStubStd({ journalDate: '2026-07-29' });
+
+    const items = journalTodoDatabaseSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stub, model }) : items;
+    const item = resolvedItems.find(i => i.name === 'Journal Todo');
+    expect(item).toBeTruthy();
+
+    await (item as unknown as { action: () => Promise<void> }).action();
+    await wait();
+
+    const ref = getRef();
+    expect(ref).toBeTruthy();
+    const canonicalModel = doc.getBlock(ref!.refBlockId)
+      ?.model as DatabaseBlockModel;
+    const canonicalDataSource = new DatabaseBlockDataSource(canonicalModel);
+    // Due date already exists — no manual setup needed once a calendar
+    // view is added via the generic switcher.
+    expect(canonicalDataSource.getDueDateColumn()).toBeTruthy();
   });
 
   test('Story 2.6: the "Note" column exists on the canonical after invocation, even when the canonical and its rows already existed beforehand', async () => {
