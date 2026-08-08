@@ -57,6 +57,7 @@ export const ConnectorSchema = z
     strokeWidth: LineWidthSchema,
     rough: z.boolean(),
     mode: ConnectorModeSchema,
+    cornerRadius: z.number().optional(),
     labelStyle: z.object({
       color: ColorSchema,
       fontSize: z.number(),

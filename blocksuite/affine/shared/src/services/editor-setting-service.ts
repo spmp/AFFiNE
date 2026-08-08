@@ -50,6 +50,28 @@ export const TaskWorkflowDefaultsSchema = z.object({
       kanbanColumns: z
         .array(z.string())
         .default(['Todo:todo', 'In Progress:in_progress', 'Done:done']),
+      // Story 2.7: overdue-and-undone row treatment. `highlight` bolds/
+      // colors the row's text while keeping it visible; `hide` excludes it
+      // from view; `off` makes no visual change. Per-table override lives
+      // on `DatabaseBlockModel.props.highlightAfterDueDateOverride` (see
+      // `data-source.ts`'s `getHighlightAfterDueDateSetting`).
+      highlightAfterDueDate: z
+        .enum(['highlight', 'hide', 'off'])
+        .default('highlight'),
+      // Story 2.7: global-only (no per-table override, per direct user
+      // instruction) — whether a row's calendar entry disappears once its
+      // Status is Done.
+      hideFromCalendarWhenDone: z.boolean().default(true),
+      // Story 2.7: global-only, applied only at column-creation time (see
+      // `DatabaseBlockDataSource.ensureDueDateColumn`'s own doc comment for
+      // why this is a creation-time default, not a live override) — whether
+      // a newly-created Due date column starts visible in table view.
+      // Defaults to `false` per direct user instruction: due dates already
+      // surface via the row-hover calendar icon and highlight/hide
+      // treatment, so the raw column stays out of the way unless someone
+      // explicitly wants it (global default here, or per-table via the
+      // properties menu regardless of this setting).
+      showDueDateColumn: z.boolean().default(false),
     })
     .default({}),
 });
