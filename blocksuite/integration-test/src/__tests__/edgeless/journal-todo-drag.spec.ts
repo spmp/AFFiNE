@@ -234,6 +234,49 @@ describe('journal todo list view row drag (Story 2.8)', () => {
     expect(getLevel(rowA)).toBe(1);
   });
 
+  test('dragging left of the reference row promotes a nested row back out to the top level (AC5)', async () => {
+    const { dataSource, getLevel, setLevel } = await seedJournalTodo();
+    const rowA = dataSource.rowAddAsTodoList('end');
+    // Needed only so row-b isn't already adjacent to row-a — see the
+    // comment below on why that matters for `rowMove`.
+    dataSource.rowAddAsTodoList('end');
+    const rowB = dataSource.rowAddAsTodoList('end');
+    setLevel(rowB, 1);
+    await wait();
+    expect(getLevel(rowB)).toBe(1);
+
+    const handleB = getHandle(rowB);
+    const rowAEl = getRowEl(rowA);
+    const titleA = rowAEl?.querySelector(
+      '.affine-data-view-list-title'
+    ) as HTMLElement | null;
+    expect(handleB).toBeTruthy();
+    expect(titleA).toBeTruthy();
+
+    const rowARect = rowAEl!.getBoundingClientRect();
+    const titleARect = titleA!.getBoundingClientRect();
+    // row-b starts as the 3rd row (after row-a, row-c); dropping it right
+    // after row-a is a genuine position change (not a same-position no-op,
+    // which `rowMove` itself short-circuits before ever recomputing
+    // hierarchy metadata — see this test file's sibling "subtree" test for
+    // the same gotcha in setup). Well to the *left* of row-a's own title
+    // start clamps the level to 0, so the previously-nested row-b lands as
+    // row-a's sibling, promoted back out.
+    dragHandleOnto(
+      handleB!,
+      rowAEl!,
+      Math.max(0, titleARect.left - 100),
+      rowARect.bottom - 2
+    );
+    await wait();
+
+    const rowIds = Array.from(
+      document.querySelectorAll('.affine-data-view-list-row')
+    ).map(el => (el as HTMLElement).dataset.rowId);
+    expect(rowIds.indexOf(rowB)).toBe(rowIds.indexOf(rowA) + 1);
+    expect(getLevel(rowB)).toBe(0);
+  });
+
   test('dragging a parent row carries its child subtree along (AC7)', async () => {
     const { dataSource, getLevel, setLevel } = await seedJournalTodo();
     const parent = dataSource.rowAddAsTodoList('end');
