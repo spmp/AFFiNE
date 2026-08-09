@@ -28,6 +28,17 @@ export class ListViewRenderer extends SignalWatcher(
 ) {
   private readonly cellEditing$ = signal(true);
 
+  // Story 2.8: mirrors `TableViewUI.connectedCallback`'s own
+  // `this.logic.ui$.value = this` + controller `hostConnected()` wiring —
+  // `ListDragController` needs a live DOM anchor to query rows/handles
+  // from, and `hostConnected` is where it registers its `dragStart`
+  // listener.
+  override connectedCallback() {
+    super.connectedCallback();
+    this.logic.ui$.value = this;
+    this.logic.dragController.hostConnected();
+  }
+
   private focusRowTitle(rowId: string) {
     const focus = (attempt = 0) => {
       const row = this.querySelector<HTMLElement>(`[data-row-id="${rowId}"]`);
@@ -192,6 +203,33 @@ export class ListViewRenderer extends SignalWatcher(
 
     .affine-data-view-list-due-date-action:hover {
       background: var(--affine-hover-color);
+    }
+
+    /* Story 2.8: left-side drag handle — visually mirrors table view's own
+       .data-view-table-view-drag-handler (table/pc/row/row.ts): same
+       grey pill, same hover-only visibility, same grab cursor. Sits before
+       the indent spacer so it stays at a consistent near-left position
+       regardless of the row's own hierarchy depth (matching table's
+       dedicated left-bar column, which also never indents). */
+    .affine-data-view-list-drag-handle {
+      width: 12px;
+      height: 20px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: grab;
+      visibility: hidden;
+      opacity: 0;
+    }
+
+    .affine-data-view-list-row:hover .affine-data-view-list-drag-handle {
+      visibility: visible;
+      opacity: 1;
+    }
+
+    .affine-data-view-list-indent-spacer {
+      flex-shrink: 0;
     }
   `;
 
@@ -400,6 +438,39 @@ export class ListViewRenderer extends SignalWatcher(
       @click=${onClick}
     >
       ${DateTimeIcon()}
+    </div>`;
+  }
+
+  /**
+   * Story 2.8: left-side drag handle — only rendered for a todo-capable,
+   * non-readonly view (same gating `renderNoteAction`/`renderDueDateAction`
+   * already use for their own todo-only affordances). The handle itself is
+   * inert here (no drag wiring) — `ListDragController` (Story 2.8, Task 1)
+   * owns starting a drag from it, matching table's own separation between
+   * this file's markup and `table/pc/controller/drag.ts`'s event handling.
+   */
+  private renderDragHandle(rowId: string) {
+    const dataSource = this.noteCapableDataSource;
+    if (typeof dataSource.getTaskStatusColumn !== 'function') {
+      return nothing;
+    }
+    if (!dataSource.getTaskStatusColumn()) {
+      return nothing;
+    }
+    if (this.view.readonly$.value) {
+      return nothing;
+    }
+    return html`<div
+      class="affine-data-view-list-drag-handle"
+      data-testid="drag-handle"
+      data-row-id=${rowId}
+    >
+      <div
+        style="width: 4px;
+        border-radius: 2px;
+        height: 12px;
+        background-color: var(--affine-placeholder-color);"
+      ></div>
     </div>`;
   }
 
@@ -639,14 +710,19 @@ export class ListViewRenderer extends SignalWatcher(
               data-row-id=${row.rowId}
               data-overdue=${isOverdueHighlighted ? 'true' : nothing}
               tabindex="0"
-              style="padding-left: ${8 + indent}px;${noteColor
-                ? ` background-color: ${noteColor}; border-radius: 6px;`
+              style="${noteColor
+                ? `background-color: ${noteColor}; border-radius: 6px;`
                 : ''}${isOverdueHighlighted
                 ? ' color: var(--affine-error-color); font-weight: 600;'
                 : ''}"
               @focusin=${this.onRowFocusIn}
               @keydown=${this.onRowKeyDown}
             >
+              ${this.renderDragHandle(row.rowId)}
+              <div
+                class="affine-data-view-list-indent-spacer"
+                style="width: ${indent}px"
+              ></div>
               <div class="affine-data-view-list-title">
                 ${titleColumn
                   ? this.renderCell(row.rowId, titleColumn)
