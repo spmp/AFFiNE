@@ -1,10 +1,12 @@
 import { signal } from '@preact/signals-core';
-import { describe, expect, test } from 'vitest';
+import { nothing } from 'lit';
+import { afterEach, describe, expect, test } from 'vitest';
 
 import type { ViewManager } from '../core/view-manager/view-manager.js';
 import { ViewManagerBase } from '../core/view-manager/view-manager.js';
 import { viewConverts, viewPresets } from '../view-presets/index.js';
 import { ListSingleView, listViewModel } from '../view-presets/list/index.js';
+import { ListDragController } from '../view-presets/list/pc/controller/drag.js';
 import { ListViewUILogic } from '../view-presets/list/pc/list-view-ui-logic.js';
 import { ListViewRenderer } from '../view-presets/list/pc/renderer.js';
 import {
@@ -595,5 +597,278 @@ describe('list view preset', () => {
     expect(getListRendererSource()).toMatch(
       /repeat\)\(\s*(?:\/\/[^\n]*\n\s*)*this\.view\.rows\$\.value\.filter\(\s*\(?row\)? => this\.getRowDueDateState\(row\.rowId\) !== ["']hide["']\s*\),\s*\(?row\)? => row\.rowId,/
     );
+  });
+
+  describe('Story 2.8: row drag-to-reorder and drag-to-reindent', () => {
+    const attached: Element[] = [];
+    afterEach(() => {
+      for (const el of attached.splice(0)) {
+        el.remove();
+      }
+    });
+
+    test("drag handle is gated on todo-capability and readonly, matching the row's other todo-only actions", () => {
+      const renderer = new ListViewRenderer();
+      const render = (
+        getTaskStatusColumn: (() => unknown) | undefined,
+        readonly: boolean
+      ) => {
+        Object.assign(renderer, {
+          logic: {
+            view: {
+              manager: { dataSource: { getTaskStatusColumn } },
+              readonly$: { value: readonly },
+            },
+          },
+        });
+        return (
+          renderer as unknown as {
+            renderDragHandle: (rowId: string) => unknown;
+          }
+        ).renderDragHandle('row-1');
+      };
+
+      // Plain, non-todo database — no `getTaskStatusColumn` method at all.
+      expect(render(undefined, false)).toBe(nothing);
+      // Todo-capable, but no status column actually configured yet.
+      expect(render(() => undefined, false)).toBe(nothing);
+      // Todo-capable and configured, but the view is read-only.
+      expect(render(() => ({ id: 'status' }), true)).toBe(nothing);
+      // Todo-capable, configured, writable — handle renders.
+      expect(render(() => ({ id: 'status' }), false)).not.toBe(nothing);
+    });
+
+    const hierarchyProperty = (levels: Map<string, number>) => ({
+      name$: { value: 'Hierarchy Level' },
+      cellGetOrCreate: (rowId: string) => ({
+        jsonValue$: { value: levels.get(rowId) ?? 0 },
+      }),
+    });
+
+    const createRow = (
+      rowId: string,
+      rect: { top: number; bottom: number },
+      titleLeft: number
+    ) => {
+      const row = document.createElement('div');
+      row.className = 'affine-data-view-list-row';
+      row.dataset.rowId = rowId;
+      row.getBoundingClientRect = () =>
+        ({
+          top: rect.top,
+          bottom: rect.bottom,
+          left: 0,
+          right: 400,
+          width: 400,
+          height: rect.bottom - rect.top,
+        }) as DOMRect;
+      const title = document.createElement('div');
+      title.className = 'affine-data-view-list-title';
+      title.getBoundingClientRect = () =>
+        ({
+          top: rect.top,
+          bottom: rect.bottom,
+          left: titleLeft,
+          right: titleLeft + 200,
+          width: 200,
+          height: rect.bottom - rect.top,
+        }) as DOMRect;
+      row.append(title);
+      return row;
+    };
+
+    const createHost = (rows: HTMLElement[]) => {
+      const list = document.createElement('div');
+      list.className = 'affine-data-view-list';
+      list.getBoundingClientRect = () =>
+        ({
+          top: 0,
+          bottom: rows.length * 30,
+          left: 0,
+          right: 400,
+          width: 400,
+          height: rows.length * 30,
+        }) as DOMRect;
+      for (const row of rows) {
+        list.append(row);
+      }
+      const host = document.createElement('div');
+      host.append(list);
+      document.body.append(host);
+      attached.push(host);
+      return host;
+    };
+
+    test('getInsertPosition: zero horizontal offset keeps the moved row a sibling of the reference row', () => {
+      const rowA = createRow('row-a', { top: 0, bottom: 30 }, 20);
+      const host = createHost([rowA]);
+      const levels = new Map([['row-a', 0]]);
+      const logic = {
+        view: { propertiesRaw$: { value: [hierarchyProperty(levels)] } },
+        ui$: { value: host },
+      } as unknown as ListViewUILogic;
+      const controller = new ListDragController(logic);
+
+      // Upper half of row-a (before=true), no horizontal offset from
+      // row-a's own title start (x === titleLeft).
+      const result = controller.getInsertPosition({
+        clientX: 20,
+        clientY: 5,
+        target: rowA,
+      } as unknown as MouseEvent);
+
+      expect(result?.position).toEqual({ id: 'row-a', before: true });
+      expect(result?.level).toBe(0);
+    });
+
+    test("getInsertPosition: dragging right past the 24px threshold nests as the reference row's child, clamped at maxLevel", () => {
+      const rowA = createRow('row-a', { top: 0, bottom: 30 }, 20);
+      const host = createHost([rowA]);
+      const levels = new Map([['row-a', 0]]);
+      const logic = {
+        view: { propertiesRaw$: { value: [hierarchyProperty(levels)] } },
+        ui$: { value: host },
+      } as unknown as ListViewUILogic;
+      const controller = new ListDragController(logic);
+
+      // Lower half (before=false / after row-a) so maxLevel = refLevel + 1.
+      const oneLevelRight = controller.getInsertPosition({
+        clientX: 20 + 24,
+        clientY: 25,
+        target: rowA,
+      } as unknown as MouseEvent);
+      expect(oneLevelRight?.position).toEqual({ id: 'row-a', before: false });
+      expect(oneLevelRight?.level).toBe(1);
+
+      // Two levels' worth of rightward drag still clamps at maxLevel (1),
+      // not 2 — can't become a grandchild of a row with no children yet.
+      const twoLevelsRight = controller.getInsertPosition({
+        clientX: 20 + 48,
+        clientY: 25,
+        target: rowA,
+      } as unknown as MouseEvent);
+      expect(twoLevelsRight?.level).toBe(1);
+    });
+
+    test('getInsertPosition: dragging left of the reference row promotes it shallower, clamped at 0', () => {
+      const rowB = createRow('row-b', { top: 30, bottom: 60 }, 44);
+      const host = createHost([rowB]);
+      const levels = new Map([['row-b', 1]]);
+      const logic = {
+        view: { propertiesRaw$: { value: [hierarchyProperty(levels)] } },
+        ui$: { value: host },
+      } as unknown as ListViewUILogic;
+      const controller = new ListDragController(logic);
+
+      const farLeft = controller.getInsertPosition({
+        clientX: 44 - 200,
+        clientY: 35,
+        target: rowB,
+      } as unknown as MouseEvent);
+      expect(farLeft?.level).toBe(0);
+    });
+
+    test('a completed drop calls setPendingHierarchyLevel then row.move with the resolved position/level', () => {
+      const rowA = createRow('row-a', { top: 0, bottom: 30 }, 20);
+      const rowB = createRow('row-b', { top: 30, bottom: 60 }, 20);
+      const host = createHost([rowA, rowB]);
+      const levels = new Map([
+        ['row-a', 0],
+        ['row-b', 0],
+      ]);
+      const calls: string[] = [];
+      const dataSource = {
+        setPendingHierarchyLevel: (rowId: string, level: number) => {
+          calls.push(`setPendingHierarchyLevel(${rowId}, ${level})`);
+        },
+      };
+      const rowGetOrCreate = (rowId: string) => ({
+        move: (position: unknown) => {
+          calls.push(`move(${rowId}, ${JSON.stringify(position)})`);
+        },
+      });
+      const logic = {
+        view: {
+          propertiesRaw$: { value: [hierarchyProperty(levels)] },
+          manager: { dataSource },
+          rowGetOrCreate,
+          readonly$: { value: false },
+        },
+        ui$: { value: host },
+        root: { config: {} },
+      } as unknown as ListViewUILogic;
+      const controller = new ListDragController(logic);
+
+      controller.dragStart(
+        rowA,
+        new PointerEvent('pointerdown', { clientX: 20, clientY: 5 })
+      );
+      // Drag row-a to become a child of row-b (lower half, one level right
+      // of row-b's own title start), dispatched on row-b so the window
+      // `pointermove` listener sees `event.target === rowB`.
+      rowB.dispatchEvent(
+        new PointerEvent('pointermove', {
+          clientX: 44,
+          clientY: 55,
+          bubbles: true,
+        })
+      );
+      window.dispatchEvent(new PointerEvent('pointerup'));
+
+      expect(calls).toEqual([
+        'setPendingHierarchyLevel(row-a, 1)',
+        'move(row-a, {"id":"row-b","before":false})',
+      ]);
+    });
+
+    test('cancelling with Escape commits nothing', () => {
+      const rowA = createRow('row-a', { top: 0, bottom: 30 }, 20);
+      const rowB = createRow('row-b', { top: 30, bottom: 60 }, 20);
+      const host = createHost([rowA, rowB]);
+      const levels = new Map([
+        ['row-a', 0],
+        ['row-b', 0],
+      ]);
+      const calls: string[] = [];
+      const dataSource = {
+        setPendingHierarchyLevel: (rowId: string, level: number) => {
+          calls.push(`setPendingHierarchyLevel(${rowId}, ${level})`);
+        },
+      };
+      const rowGetOrCreate = (rowId: string) => ({
+        move: (position: unknown) => {
+          calls.push(`move(${rowId}, ${JSON.stringify(position)})`);
+        },
+      });
+      const logic = {
+        view: {
+          propertiesRaw$: { value: [hierarchyProperty(levels)] },
+          manager: { dataSource },
+          rowGetOrCreate,
+          readonly$: { value: false },
+        },
+        ui$: { value: host },
+        root: { config: {} },
+      } as unknown as ListViewUILogic;
+      const controller = new ListDragController(logic);
+
+      controller.dragStart(
+        rowA,
+        new PointerEvent('pointerdown', { clientX: 20, clientY: 5 })
+      );
+      rowB.dispatchEvent(
+        new PointerEvent('pointermove', {
+          clientX: 44,
+          clientY: 55,
+          bubbles: true,
+        })
+      );
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+      );
+      window.dispatchEvent(new PointerEvent('pointerup'));
+
+      expect(calls).toEqual([]);
+    });
   });
 });
