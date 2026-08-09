@@ -9,6 +9,7 @@ import {
   TASK_PARENT_IDENTIFIER_COLUMN_NAME,
 } from '@blocksuite/affine-shared/utils';
 import { ArrowRightSmallIcon, ViewIcon } from '@blocksuite/icons/lit';
+import { signal } from '@preact/signals-core';
 import { html } from 'lit';
 
 import { createUniComponentFromWebComponent } from '../../../core/utils/uni-component/uni-component.js';
@@ -20,6 +21,7 @@ import {
   normalizeHierarchyLevel,
 } from '../../table/utils.js';
 import type { ListSingleView } from '../list-view-manager.js';
+import { ListDragController } from './controller/drag.js';
 import { ListViewRenderer } from './renderer.js';
 
 type TodoListRowDataSource = {
@@ -38,6 +40,14 @@ const addTodoListRow = (
 };
 
 export class ListViewUILogic extends DataViewUILogicBase<ListSingleView> {
+  // Story 2.8: mirrors `TableViewUILogic.ui$` — the rendered
+  // `ListViewRenderer` instance, set from its own `connectedCallback`, so
+  // `ListDragController` (which needs real DOM to query rows/handles from)
+  // has something to anchor to.
+  ui$ = signal<ListViewRenderer>();
+
+  dragController = new ListDragController(this);
+
   clearSelection = () => {
     this.setSelection();
   };
