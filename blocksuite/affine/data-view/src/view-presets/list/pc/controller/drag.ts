@@ -215,11 +215,17 @@ export class ListDragController implements ReactiveController {
   }
 
   hostConnected() {
-    if (this.logic.view.readonly$.value) {
-      return;
-    }
     this.host?.disposables.add(
       this.logic.handleEvent('dragStart', context => {
+        // Re-checked on every drag attempt, not just once at mount — matches
+        // table's own `TableDragController.hostConnected` guard exactly.
+        // Gating registration of the listener itself here instead would mean
+        // a view that's readonly at mount time and later becomes writable
+        // (without a full disconnect/reconnect) never gets drag working at
+        // all, since the listener would never have been registered.
+        if (this.logic.view.readonly$.value) {
+          return false;
+        }
         const event = context.get('pointerState').raw;
         const target = event.target;
         if (
