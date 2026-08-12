@@ -15,6 +15,7 @@ import {
 import {
   type ConnectorElementModel,
   ConnectorMode,
+  DEFAULT_CONNECTOR_CORNER_RADIUS,
   DefaultTheme,
   type JumpStyle,
   type LocalConnectorElementModel,
