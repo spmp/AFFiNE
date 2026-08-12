@@ -8,7 +8,6 @@ import type { ShapeElementModel, ShapeName } from '@blocksuite/affine-model';
 import {
   COLLAPSIBLE_CONTAINER_SHAPES,
   DefaultTheme,
-  getShapeRadius,
   getShapeType,
   ShapeType,
   TextVerticalAlign,
@@ -308,22 +307,6 @@ export class ShapeTool extends BaseTool<ShapeToolOption> {
     this.clearOverlay();
   }
 
-  private _getShapeAttributes(shapeName: ShapeName) {
-    const propsStore = this.std.get(EditPropsStore);
-    const rectProps = propsStore.lastProps$.value['shape:rect'];
-    return {
-      radius: getShapeRadius(shapeName),
-      filled: rectProps?.filled ?? true,
-      strokeColor: rectProps?.strokeColor ?? DefaultTheme.shapeStrokeColor,
-      fillColor: rectProps?.fillColor ?? DefaultTheme.shapeFillColor,
-      strokeStyle: rectProps?.strokeStyle ?? 'solid',
-      strokeWidth: rectProps?.strokeWidth ?? 4,
-      gradientFinal: rectProps?.gradientFinal,
-      gradientDirection: rectProps?.gradientDirection,
-      shapeStyle: rectProps?.shapeStyle,
-      roughness: rectProps?.roughness,
-    };
-  }
   override dragEnd() {
     if (this._disableOverlay) return;
     if (this._draggingElement) {
