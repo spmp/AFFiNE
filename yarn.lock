@@ -1995,7 +1995,6 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@blocksuite/affine-block-database@workspace:blocksuite/affine/blocks/database"
   dependencies:
-    "@blocksuite/affine-block-note-ref": "workspace:*"
     "@blocksuite/affine-components": "workspace:*"
     "@blocksuite/affine-ext-loader": "workspace:*"
     "@blocksuite/affine-inline-preset": "workspace:*"
