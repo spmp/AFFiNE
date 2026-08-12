@@ -366,6 +366,12 @@ export class LocalShapeElementModel extends GfxLocalElementModel {
   accessor strokeWidth: number = 4;
 
   @prop()
+  accessor flipX: boolean = false;
+
+  @prop()
+  accessor flipY: boolean = false;
+
+  @prop()
   accessor lockAspectRatio: boolean = false;
 
   @prop()
