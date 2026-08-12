@@ -222,21 +222,48 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
   // never independently arrive at on its own.
   private _pendingFocus: { blockId: string; index: number } | null = null;
 
-  // Guards against overlapping `_reclaimFocusAfterSelectionChange` polling
-  // chains. The `selection.slots.changed` subscription that starts a chain
-  // fires on every keystroke that moves the caret, and each chain can poll
-  // via `requestAnimationFrame` for up to 60 frames while waiting for a
-  // structurally-rebuilt std to reconnect its target block (see that
-  // method's own comment). Confirmed live: typing quickly during that
-  // window — exactly the case `_pendingFocus` exists to handle — started a
-  // fresh 60-frame chain on every keystroke, and since none of them
-  // exit early, the overlapping chains piled up and pegged the CPU with
-  // redundant per-frame DOM queries. A single in-flight chain already
-  // re-reads `_pendingFocus`/`_previewStd` fresh each frame (see its own
-  // comment), so it alone is sufficient to pick up the latest intent —
-  // additional concurrent chains are pure waste, never a correctness
-  // requirement.
+  // `_reclaimFocusAfterSelectionChange` itself calls `std.selection.
+  // setGroup(...)` to restore the caret, which synchronously fires the very
+  // `selection.slots.changed` subscription that calls it — the
+  // `activeInScope` check below is meant to break that cycle once real DOM
+  // focus lands, but doesn't reliably do so in every case (confirmed live:
+  // a profile capture showed this function dominating ~65% of all CPU
+  // samples, a self-sustaining setGroup -> selection-changed -> reclaim ->
+  // setGroup loop that pegs the tab and makes the page unresponsive). Set
+  // for the duration of the synchronous selection-restoring work below so
+  // the re-entrant subscription firing can recognize "this is my own echo,
+  // not a new selection to reclaim" and skip re-triggering, independent of
+  // focus-timing.
   private _isReclaimingFocus = false;
+
+  // `_ensureTrailingParagraph`'s own `addBlock` call is itself a Y.doc
+  // mutation, which re-fires `_subscribeTargetDoc`'s doc-update listener —
+  // the same debounced path that calls `_ensureTrailingParagraph` in the
+  // first place. A second profiler capture (navigating into a page whose
+  // note contains another note reference) showed that doc-update handler
+  // firing hundreds of times over the capture window — a genuine, ongoing
+  // stream of Y.doc mutations, not just re-renders — with this method the
+  // only thing in that path that writes to the doc at all. Guards a real
+  // second trailing-paragraph add within this window; no legitimate case
+  // needs one added milliseconds after the last.
+  private _lastTrailingParagraphAddedAt = 0;
+
+  // `_reclaimFocusAfterSelectionChange` also gets triggered fresh (not via
+  // its own guarded recursion) every time `_maybeRefreshPreview` swaps in a
+  // brand-new `_previewStd` while `_pendingFocus` is set — documented,
+  // intentional behavior for the "a structural edit replaced the std
+  // mid-poll" case. But forcing a `note-ref` nested inside another
+  // reference onto this same cross-doc machinery (see
+  // `_isNestedInAnotherReference`) means that std-rebuild path now runs far
+  // more often than it used to for a plain top-level reference — a third
+  // profiler capture showed this function back to dominating ~39% of all
+  // samples, each a full, legitimate (bounded, 60-attempt) polling burst,
+  // just triggered over and over. Rate-limits *fresh* top-level attempts
+  // only (detected via the default `attemptsLeft` — an in-progress bounded
+  // retry chain always passes an explicit, decremented value and is never
+  // throttled here) — no legitimate case needs a new one within 250ms of
+  // the last.
+  private _lastFreshReclaimAttemptAt = 0;
 
   // Scroll position captured at the *earliest* possible moment — see
   // `_snapshotScrollIfNeeded`'s own comment for why timing here is not a
@@ -246,6 +273,25 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
   // anything.
   private _scrollSnapshot: { el: Element | Window; top: number }[] | null =
     null;
+
+  // When `_scrollSnapshot` was actually captured — not just "is it set",
+  // which was the only thing checked before. `_snapshotScrollIfNeeded`'s
+  // own "don't overwrite an existing snapshot" guard is meant to protect a
+  // snapshot from being *replaced* by a later, already-drifted one taken
+  // mid-poll (its own doc comment) — it was never meant to let a snapshot
+  // sit unconsumed indefinitely. But `_snapshotScrollIfNeeded` is also
+  // called from `_subscribeTargetDoc`'s doc-update handler independently
+  // of whether a reclaim ever actually follows — confirmed live: a
+  // snapshot taken once (scrollTop legitimately 0, e.g. near page load)
+  // and never consumed sat there until an unrelated reclaim, triggered
+  // much later by a slash-menu equation insert after the user had scrolled
+  // deep into the page, reused that stale value and forced the page back
+  // to the top. A snapshot older than this is treated as unusable —
+  // discarded in favor of a fresh one — rather than "the only one we
+  // have."
+  private _scrollSnapshotTakenAt = 0;
+
+  private static readonly SCROLL_SNAPSHOT_MAX_AGE_MS = 2000;
 
   /**
    * Render-time backstop against unbounded recursive nesting: reference
@@ -311,9 +357,41 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
 
   private get _isCrossDoc(): boolean {
     return (
-      !!this.model.props.refDocId &&
-      this.model.props.refDocId !== this.std.store.id
+      (!!this.model.props.refDocId &&
+        this.model.props.refDocId !== this.std.store.id) ||
+      this._isNestedInAnotherReference()
     );
+  }
+
+  /**
+   * The same-doc path's entire premise (see this class's own doc comment)
+   * is "there is only ever one std/store" — true for a `note-ref` rendered
+   * directly on the page, but not for one rendered as part of *another*
+   * reference's own content: a cross-doc reference's preview mounts a
+   * genuinely separate, `Query`-scoped `BlockStdScope`/`Store` restricted
+   * to *its own* canonical's subtree (`_maybeRefreshPreview`'s `mode:
+   * 'include'` query), and `this.std` for anything rendered inside that
+   * preview — including a nested `note-ref` — is that same restricted one,
+   * not the real page's. Taking the same-doc fast path there means
+   * `renderBlock`'s `this.std.host.renderChildren(canonical)` resolves
+   * each child's `blockViewType` via that restricted store
+   * (`EditorHost._renderModel`'s own `this.store.getBlock(model.id)`) —
+   * and since this reference's own target was never part of the outer
+   * query's explicit include list, every child defaults to hidden and
+   * renders as nothing at all (confirmed live: "a note referencing a note
+   * containing a note" renders the inner reference as an empty colored
+   * line, not its content). Forcing the cross-doc path here — even for a
+   * target in the *same* underlying doc as the outer reference — mounts
+   * this reference's own independent, unrestricted `BlockStdScope`
+   * instead, sidestepping the outer preview's restriction entirely.
+   */
+  private _isNestedInAnotherReference(): boolean {
+    let ancestor = this.parentElement;
+    while (ancestor) {
+      if (ancestor.tagName.toLowerCase() === 'affine-note-ref') return true;
+      ancestor = ancestor.parentElement;
+    }
+    return false;
   }
 
   private _getCanonical(): BlockModel | null {
@@ -321,17 +399,24 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
     if (!refDoc) return null;
     ensureDocLoaded(refDoc);
 
-    // Same-doc case: `this.std.store` is already the correct, single
-    // shared store for the current doc — reuse it directly rather than
-    // fetching a second `Store` instance for the doc we're already in.
-    // Cross-doc case: `refDoc` is a genuinely different doc, so its own
-    // (unfiltered — this is for structural reads/writes like
-    // `_ensureTrailingParagraph`, not for rendering) `Store` has to be
-    // fetched explicitly.
-    const targetStore =
-      refDoc === this.std.store.doc
-        ? this.std.store
-        : refDoc.getStore({ id: refDoc.id });
+    // Always fetches the plain, query-*unrestricted* store for `refDoc` via
+    // its bare `id` — `StoreContainer.getStore` caches by key, and a plain
+    // `id` (no `query`) is the same cache key the doc's own top-level store
+    // was originally constructed with, so this is the *same* cached
+    // instance as `this.std.store` in the ordinary (not-nested) case, at no
+    // extra cost. That equivalence breaks down for a `note-ref` rendered
+    // *inside* another cross-doc reference's preview, though: there,
+    // `this.std.store` is `_maybeRefreshPreview`'s own `mode: 'include'`
+    // query-scoped store (deliberately restricted to the outer canonical's
+    // own subtree) — a *different* nested note-ref's target living in the
+    // same underlying doc, but outside that subtree, would previously
+    // resolve via that same restricted store and render as empty (viewType
+    // defaults to hidden for anything the outer query didn't explicitly
+    // include) — the reported "note inside a note doesn't render, just a
+    // single colored line" symptom. Fetching by plain `id` here always
+    // gets the real, unrestricted store regardless of which store this
+    // component's own `this.std` happens to be scoped to.
+    const targetStore = refDoc.getStore({ id: refDoc.id });
 
     const canonical = targetStore.getBlock(this.model.props.refBlockId)?.model;
     if (!canonical || canonical.flavour !== 'affine:note') return null;
@@ -525,6 +610,10 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
     // render, snowballing extra blank lines neither reference asked for.
     if (lastChild?.text !== undefined) return;
 
+    const now = Date.now();
+    if (now - this._lastTrailingParagraphAddedAt < 300) return;
+    this._lastTrailingParagraphAddedAt = now;
+
     // Uses `canonical.store` (the canonical's *own* originating store), not
     // `this.std.store` (this component's own, possibly-foreign-doc host
     // store) — for a cross-doc reference those are two different stores
@@ -626,26 +715,41 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
    * place.
    */
   private _reclaimFocusAfterSelectionChange(attemptsLeft = 60) {
-    this._isReclaimingFocus = true;
+    if (attemptsLeft === 60) {
+      const now = Date.now();
+      if (now - this._lastFreshReclaimAttemptAt < 250) return;
+      this._lastFreshReclaimAttemptAt = now;
+    }
     requestAnimationFrame(() => {
       const std = this._previewStd;
       const pending = this._pendingFocus;
-      if (!std || !pending) {
-        this._isReclaimingFocus = false;
-        return;
-      }
+      if (!std || !pending) return;
+      // `std` can be a stale reference to an already-superseded
+      // `_previewStd` if a rebuild happened between scheduling this poll
+      // and it actually running (see this method's own doc comment on the
+      // "std swap mid-poll" hazard) — comparing strictly against
+      // `std.host` in that case incorrectly concludes focus was "lost"
+      // even though the user's own click already landed correctly inside
+      // the *replacement* std's own content, stealing it right back out
+      // from under them onto the bare host element instead (confirmed
+      // live: `document.activeElement` turned out to be the plain
+      // `<editor-host>` container itself, not any text position — exactly
+      // what calling `.focus()` directly on it, rather than a real caret,
+      // produces; symptom was a cursor appearing for a moment after a
+      // click, then vanishing with typing going nowhere). Treating
+      // "already inside *some* live, connected contenteditable region" as
+      // good enough avoids depending on the exact (possibly stale)
+      // instance match.
+      const activeElement = document.activeElement;
       const activeInScope =
-        document.activeElement?.closest('editor-host') === std.host;
-      if (activeInScope) {
-        this._isReclaimingFocus = false;
-        return;
-      }
+        activeElement?.closest('editor-host') === std.host ||
+        (!!activeElement?.isConnected &&
+          !!activeElement.closest('[contenteditable="true"]'));
+      if (activeInScope) return;
 
       if (!std.view.getBlock(pending.blockId)) {
         if (attemptsLeft > 0) {
           this._reclaimFocusAfterSelectionChange(attemptsLeft - 1);
-        } else {
-          this._isReclaimingFocus = false;
         }
         return;
       }
@@ -715,9 +819,14 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
         from: { blockId: pending.blockId, index: pending.index, length: 0 },
         to: null,
       });
-      std.selection.setGroup('note', [sel]);
-      std.host.range?.syncTextSelectionToRange(sel);
-      std.host.focus({ preventScroll: true });
+      this._isReclaimingFocus = true;
+      try {
+        std.selection.setGroup('note', [sel]);
+        std.host.range?.syncTextSelectionToRange(sel);
+        std.host.focus({ preventScroll: true });
+      } finally {
+        this._isReclaimingFocus = false;
+      }
 
       // Safety net only, at this point — see the suppression added just
       // above for the primary fix. Re-asserting the snapshot on every
@@ -737,7 +846,6 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
         }
       };
       requestAnimationFrame(restore);
-      this._isReclaimingFocus = false;
     });
   }
 
@@ -768,6 +876,17 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
    * earliest hook this component has any access to at all.
    */
   private _snapshotScrollIfNeeded() {
+    // A previous snapshot that's too old to trust gets discarded here,
+    // before the "already have one" guard below — see `_scrollSnapshotTakenAt`'s
+    // own field comment for why staleness, not just presence, is what
+    // actually matters.
+    if (
+      this._scrollSnapshot &&
+      Date.now() - this._scrollSnapshotTakenAt >
+        NoteRefBlockComponent.SCROLL_SNAPSHOT_MAX_AGE_MS
+    ) {
+      this._scrollSnapshot = null;
+    }
     if (this._scrollSnapshot) return;
     const snapshots: { el: Element | Window; top: number }[] = [];
     let node: HTMLElement | null = this;
@@ -779,6 +898,7 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
     }
     snapshots.push({ el: window, top: window.scrollY });
     this._scrollSnapshot = snapshots;
+    this._scrollSnapshotTakenAt = Date.now();
   }
 
   /**
@@ -863,12 +983,18 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
   }
 
   private _maybeRefreshPreview() {
-    const { refBlockId, refDocId } = this.model.props;
-    if (!refBlockId || !refDocId) {
+    const { refBlockId } = this.model.props;
+    if (!refBlockId) {
       this._resolveError = 'This reference is missing its target.';
       this._replacePreviewStore(null, null, null);
       return;
     }
+    // `_targetDocId`, not the raw `refDocId` prop directly — an
+    // originally same-doc-authored reference has no `refDocId` of its own
+    // at all (see that getter's own comment), which is a perfectly valid
+    // target once forced onto this, the cross-doc, path (see
+    // `_isNestedInAnotherReference`) — it was never actually "missing."
+    const refDocId = this._targetDocId;
 
     const refDoc = this.std.workspace.getDoc(refDocId);
     if (!refDoc) {
@@ -1241,9 +1367,12 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
                 blockId: sel.from.blockId,
                 index: sel.from.index,
               };
-              if (!this._isReclaimingFocus) {
-                this._reclaimFocusAfterSelectionChange();
-              }
+              // This selection change is our own reclaim's `setGroup` echo,
+              // not a new external selection needing to be reclaimed — see
+              // `_isReclaimingFocus`'s own field comment. Recursing here
+              // was the actual infinite loop, not just a redundant retry.
+              if (this._isReclaimingFocus) return;
+              this._reclaimFocusAfterSelectionChange();
             });
           // A brand-new std (e.g. from `_maybeRefreshPreview` rebuilding
           // the query mid-edit — see `_reclaimFocusAfterSelectionChange`'s
@@ -1251,9 +1380,7 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
           // will never fire the subscription above on its own. If the
           // user had an in-progress focus intent from *before* this std
           // was created, try to reapply it here too.
-          if (this._pendingFocus && !this._isReclaimingFocus) {
-            this._reclaimFocusAfterSelectionChange();
-          }
+          if (this._pendingFocus) this._reclaimFocusAfterSelectionChange();
           return std.render();
         })}
       </div>`;
