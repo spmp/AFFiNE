@@ -28,7 +28,7 @@ export function mindmapBranch(
 
   ctx.save();
   ctx.setTransform(
-    new DOMMatrix(matrix)
+    DOMMatrix.fromMatrix(matrix)
       .translateSelf(renderOffset, renderOffset)
       .translateSelf(cx, cy)
       .scaleSelf(flipX ? -1 : 1, flipY ? -1 : 1)
