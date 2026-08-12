@@ -178,9 +178,43 @@ export class SyncController {
     const siblings = syncControllersByYBlock.get(this.yBlock);
     siblings?.forEach(sibling => {
       if (signalKey in sibling.model.props) {
-        sibling._mutex(() => {
-          // @ts-expect-error allow magic props
-          sibling.model.props[signalKey].value = fresh;
+        // Deferred to the next microtask rather than written synchronously
+        // here. This observer callback runs *inside* the very Yjs
+        // transaction/observer chain that a `SyncController`'s own
+        // `_createModel` `effect()` triggers when it writes `data.value`
+        // (this exact `${keyName}$` signal) into `model.props[key]` ->
+        // Yjs — for the *originating* `SyncController` (always included
+        // in `siblings`, see the constructor), writing back into that
+        // same signal here is still inside that same effect's own
+        // synchronous callback, which Preact Signals' own cycle detection
+        // correctly refuses (confirmed live: a "Cycle detected" throw,
+        // initiating an inline LaTeX equation).
+        //
+        // A first attempt compared values with `equalityDeep` and skipped
+        // only when unchanged, on the theory this was a redundant-write
+        // problem — it wasn't: the throw still happened on an actual,
+        // intentional value change, because Preact's cycle detection
+        // cares about still being inside this signal's own notification,
+        // not about whether the value differs. A second attempt skipped
+        // the originating sibling unconditionally instead — also wrong:
+        // that signal genuinely does need to reflect the confirmed value
+        // (this method exists precisely to propagate a Yjs-observed
+        // change, whichever origin, into *every* sibling's signal — see
+        // this class's own header comment), so skipping it left any
+        // `SignalWatcher`-based UI reading it directly stuck on stale
+        // data indefinitely (confirmed live: inline equations stopped
+        // updating anywhere on a page with a nested reference present,
+        // not just inside the reference).
+        //
+        // Deferring the write to the next microtask — after the current
+        // synchronous notification has fully unwound — keeps the update
+        // for every sibling, including the originating one, while still
+        // avoiding the same-tick reentrancy Preact objects to.
+        queueMicrotask(() => {
+          sibling._mutex(() => {
+            // @ts-expect-error allow magic props
+            sibling.model.props[signalKey].value = fresh;
+          });
         });
       }
     });
