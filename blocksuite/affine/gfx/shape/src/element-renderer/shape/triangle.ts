@@ -7,7 +7,7 @@ import type {
   ShapeElementModel,
 } from '@blocksuite/affine-model';
 
-import { type Colors, drawGeneralShape } from './utils.js';
+import { type Colors, drawGeneralShape, getStrokeLineDash } from './utils.js';
 
 export function triangle(
   model: ShapeElementModel | LocalShapeElementModel,
@@ -58,7 +58,7 @@ export function triangle(
       {
         seed,
         roughness: shapeStyle === 'Scribbled' ? roughness : 0,
-        strokeLineDash: strokeStyle === 'dash' ? [12, 12] : undefined,
+        strokeLineDash: getStrokeLineDash(strokeStyle, strokeWidth),
         stroke: strokeStyle === 'none' ? 'none' : strokeColor,
         strokeWidth,
         fill: filled ? fillColor : undefined,

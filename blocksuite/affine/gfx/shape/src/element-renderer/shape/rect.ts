@@ -7,7 +7,7 @@ import type {
   ShapeElementModel,
 } from '@blocksuite/affine-model';
 
-import { type Colors, drawGeneralShape } from './utils.js';
+import { type Colors, drawGeneralShape, getStrokeLineDash } from './utils.js';
 
 /**
  * "magic number" for bezier approximations of arcs (http://itc.ktu.lt/itc354/Riskus354.pdf)
@@ -79,7 +79,7 @@ export function rect(
       {
         seed,
         roughness,
-        strokeLineDash: strokeStyle === 'dash' ? [12, 12] : undefined,
+        strokeLineDash: getStrokeLineDash(strokeStyle, strokeWidth),
         stroke: strokeStyle === 'none' ? 'none' : strokeColor,
         strokeWidth,
         fill: filled ? fillColor : undefined,
