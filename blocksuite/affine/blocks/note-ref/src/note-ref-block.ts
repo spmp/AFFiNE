@@ -222,6 +222,22 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
   // never independently arrive at on its own.
   private _pendingFocus: { blockId: string; index: number } | null = null;
 
+  // Guards against overlapping `_reclaimFocusAfterSelectionChange` polling
+  // chains. The `selection.slots.changed` subscription that starts a chain
+  // fires on every keystroke that moves the caret, and each chain can poll
+  // via `requestAnimationFrame` for up to 60 frames while waiting for a
+  // structurally-rebuilt std to reconnect its target block (see that
+  // method's own comment). Confirmed live: typing quickly during that
+  // window — exactly the case `_pendingFocus` exists to handle — started a
+  // fresh 60-frame chain on every keystroke, and since none of them
+  // exit early, the overlapping chains piled up and pegged the CPU with
+  // redundant per-frame DOM queries. A single in-flight chain already
+  // re-reads `_pendingFocus`/`_previewStd` fresh each frame (see its own
+  // comment), so it alone is sufficient to pick up the latest intent —
+  // additional concurrent chains are pure waste, never a correctness
+  // requirement.
+  private _isReclaimingFocus = false;
+
   // Scroll position captured at the *earliest* possible moment — see
   // `_snapshotScrollIfNeeded`'s own comment for why timing here is not a
   // minor detail: a snapshot taken even one async tick too late has
@@ -610,17 +626,26 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
    * place.
    */
   private _reclaimFocusAfterSelectionChange(attemptsLeft = 60) {
+    this._isReclaimingFocus = true;
     requestAnimationFrame(() => {
       const std = this._previewStd;
       const pending = this._pendingFocus;
-      if (!std || !pending) return;
+      if (!std || !pending) {
+        this._isReclaimingFocus = false;
+        return;
+      }
       const activeInScope =
         document.activeElement?.closest('editor-host') === std.host;
-      if (activeInScope) return;
+      if (activeInScope) {
+        this._isReclaimingFocus = false;
+        return;
+      }
 
       if (!std.view.getBlock(pending.blockId)) {
         if (attemptsLeft > 0) {
           this._reclaimFocusAfterSelectionChange(attemptsLeft - 1);
+        } else {
+          this._isReclaimingFocus = false;
         }
         return;
       }
@@ -712,6 +737,7 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
         }
       };
       requestAnimationFrame(restore);
+      this._isReclaimingFocus = false;
     });
   }
 
@@ -1215,7 +1241,9 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
                 blockId: sel.from.blockId,
                 index: sel.from.index,
               };
-              this._reclaimFocusAfterSelectionChange();
+              if (!this._isReclaimingFocus) {
+                this._reclaimFocusAfterSelectionChange();
+              }
             });
           // A brand-new std (e.g. from `_maybeRefreshPreview` rebuilding
           // the query mid-edit — see `_reclaimFocusAfterSelectionChange`'s
@@ -1223,7 +1251,9 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
           // will never fire the subscription above on its own. If the
           // user had an in-progress focus intent from *before* this std
           // was created, try to reapply it here too.
-          if (this._pendingFocus) this._reclaimFocusAfterSelectionChange();
+          if (this._pendingFocus && !this._isReclaimingFocus) {
+            this._reclaimFocusAfterSelectionChange();
+          }
           return std.render();
         })}
       </div>`;
