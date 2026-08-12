@@ -3,17 +3,17 @@
   "compilerOptions": {
     "rootDir": "./src",
     "outDir": "./dist",
-    "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo"
+    "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo",
+    "noUncheckedIndexedAccess": true
   },
   "include": ["./src"],
   "references": [
     { "path": "../database" },
-    { "path": "../database-ref" },
+    { "path": "../note-ref" },
     { "path": "../../components" },
     { "path": "../../ext-loader" },
     { "path": "../../model" },
     { "path": "../../shared" },
-    { "path": "../../widgets/slash-menu" },
     { "path": "../../data-view" },
     { "path": "../../../framework/global" },
     { "path": "../../../framework/std" },
