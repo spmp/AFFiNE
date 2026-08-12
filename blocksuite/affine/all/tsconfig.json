@@ -13,6 +13,7 @@
     { "path": "../blocks/code" },
     { "path": "../blocks/data-view" },
     { "path": "../blocks/database" },
+    { "path": "../blocks/database-note-property" },
     { "path": "../blocks/database-ref" },
     { "path": "../blocks/database-view-ref" },
     { "path": "../blocks/divider" },

@@ -1,4 +1,10 @@
 import {
+  EditorHostKey,
+  notePropertyModelConfig,
+  type DatabaseBlockDataSource,
+  type NoteRefValue,
+} from '@blocksuite/affine-block-database';
+import {
   menu,
   popMenu,
   popupTargetFromElement,
@@ -11,36 +17,21 @@ import {
 import { PageIcon, PlusIcon } from '@blocksuite/icons/lit';
 import { html } from 'lit';
 
-import { EditorHostKey } from '../../context/host-context.js';
-import type { DatabaseBlockDataSource } from '../../data-source.js';
 import {
   attachExistingNoteForRow,
   createNoteForRow,
   revealOrInsertNoteForRow,
 } from './actions.js';
-import { notePropertyModelConfig, type NoteRefValue } from './define.js';
 
 const CELL_STYLE =
   'display: flex; align-items: center; justify-content: center; cursor: pointer;';
 
 export class NoteCell extends BaseCellRenderer<NoteRefValue, NoteRefValue> {
-  get std() {
-    const host = this.view.serviceGet(EditorHostKey);
-    return host?.std;
-  }
-
-  get dataSource() {
-    return this.view.manager.dataSource as unknown as DatabaseBlockDataSource;
-  }
-
-  get rowId() {
-    return this.cell.rowId;
-  }
-
   private readonly _openCreateOrAttachMenu = (e: MouseEvent) => {
     e.stopPropagation();
     const std = this.std;
     if (!std) return;
+
     popMenu(popupTargetFromElement(e.currentTarget as HTMLElement), {
       options: {
         items: [
@@ -72,6 +63,19 @@ export class NoteCell extends BaseCellRenderer<NoteRefValue, NoteRefValue> {
     revealOrInsertNoteForRow(std, this.dataSource, this.rowId);
   };
 
+  get std() {
+    const host = this.view.serviceGet(EditorHostKey);
+    return host?.std;
+  }
+
+  get dataSource() {
+    return this.view.manager.dataSource as DatabaseBlockDataSource;
+  }
+
+  get rowId() {
+    return this.cell.rowId;
+  }
+
   override render() {
     if (!this.value) {
       return html`
@@ -94,6 +98,7 @@ export class NoteCell extends BaseCellRenderer<NoteRefValue, NoteRefValue> {
     const color = std
       ? this.dataSource.getResolvedNoteColor(std, this.rowId)
       : undefined;
+
     return html`
       <div
         data-testid="note-cell-open"
