@@ -16,6 +16,7 @@ import {
 import { Bound } from '@blocksuite/global/gfx';
 import type { PointerEventState } from '@blocksuite/std';
 import {
+  generateKeyBetween,
   GfxElementModelView,
   type GfxModel,
   GfxViewInteractionExtension,
@@ -204,6 +205,7 @@ export class ShapeElementView extends GfxElementModelView<ShapeElementModel> {
     const buttonBound = this._getCollapseButtonBound();
 
     this._collapseButton.xywh = buttonBound.serialize();
+    this._collapseButton.index = generateKeyBetween(this.model.index, null);
     this._collapseButton.shapeType = ShapeType.Rect;
     this._collapseButton.radius = 2;
     this._collapseButton.filled = true;
