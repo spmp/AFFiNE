@@ -16,6 +16,7 @@
     "@blocksuite/affine-block-code": "workspace:*",
     "@blocksuite/affine-block-data-view": "workspace:*",
     "@blocksuite/affine-block-database": "workspace:*",
+    "@blocksuite/affine-block-database-note-property": "workspace:*",
     "@blocksuite/affine-block-database-ref": "workspace:*",
     "@blocksuite/affine-block-database-view-ref": "workspace:*",
     "@blocksuite/affine-block-divider": "workspace:*",

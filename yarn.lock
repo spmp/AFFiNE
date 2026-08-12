@@ -1928,6 +1928,26 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"@blocksuite/affine-block-database-note-property@workspace:*, @blocksuite/affine-block-database-note-property@workspace:blocksuite/affine/blocks/database-note-property":
+  version: 0.0.0-use.local
+  resolution: "@blocksuite/affine-block-database-note-property@workspace:blocksuite/affine/blocks/database-note-property"
+  dependencies:
+    "@blocksuite/affine-block-database": "workspace:*"
+    "@blocksuite/affine-block-note-ref": "workspace:*"
+    "@blocksuite/affine-components": "workspace:*"
+    "@blocksuite/affine-ext-loader": "workspace:*"
+    "@blocksuite/affine-model": "workspace:*"
+    "@blocksuite/affine-shared": "workspace:*"
+    "@blocksuite/data-view": "workspace:*"
+    "@blocksuite/global": "workspace:*"
+    "@blocksuite/icons": "npm:^2.2.17"
+    "@blocksuite/std": "workspace:*"
+    "@blocksuite/store": "workspace:*"
+    "@preact/signals-core": "npm:^1.8.0"
+    lit: "npm:^3.2.0"
+  languageName: unknown
+  linkType: soft
+
 "@blocksuite/affine-block-database-ref@workspace:*, @blocksuite/affine-block-database-ref@workspace:blocksuite/affine/blocks/database-ref":
   version: 0.0.0-use.local
   resolution: "@blocksuite/affine-block-database-ref@workspace:blocksuite/affine/blocks/database-ref"
@@ -1975,7 +1995,6 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@blocksuite/affine-block-database@workspace:blocksuite/affine/blocks/database"
   dependencies:
-    "@blocksuite/affine-block-note-ref": "workspace:*"
     "@blocksuite/affine-components": "workspace:*"
     "@blocksuite/affine-ext-loader": "workspace:*"
     "@blocksuite/affine-inline-preset": "workspace:*"
@@ -3310,6 +3329,7 @@ __metadata:
     "@blocksuite/affine-block-code": "workspace:*"
     "@blocksuite/affine-block-data-view": "workspace:*"
     "@blocksuite/affine-block-database": "workspace:*"
+    "@blocksuite/affine-block-database-note-property": "workspace:*"
     "@blocksuite/affine-block-database-ref": "workspace:*"
     "@blocksuite/affine-block-database-view-ref": "workspace:*"
     "@blocksuite/affine-block-divider": "workspace:*"

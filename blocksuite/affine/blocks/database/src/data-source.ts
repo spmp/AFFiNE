@@ -54,11 +54,6 @@ import {
   databaseBlockProperties,
   databasePropertyConverts,
 } from './properties/index.js';
-import {
-  attachExistingNoteForRow,
-  createNoteForRow,
-  revealOrInsertNoteForRow,
-} from './properties/note/actions.js';
 import type { NoteRefValue } from './properties/note/define.js';
 import { notePropertyModelConfig } from './properties/note/define.js';
 import {
@@ -1161,24 +1156,41 @@ export class DatabaseBlockDataSource extends DataSourceBase {
   }
 
   /**
-   * Thin delegates to `properties/note/actions.js`'s own free functions,
-   * exposed as methods on the data source itself so `data-view`'s own
-   * (flavour-agnostic, cannot import from this package) view-preset
-   * renderers can reach them via a duck-typed structural cast — e.g.
-   * `list/pc/renderer.ts`'s row-level note-action button — without a
-   * backwards package dependency from `data-view` onto
-   * `@blocksuite/affine-block-database`/`@blocksuite/affine-block-note-ref`.
+   * Thin delegates to whatever `@blocksuite/affine-block-database-note-property`
+   * registers into `noteRefRowActions` at setup time, exposed as methods on
+   * the data source itself so `data-view`'s own (flavour-agnostic, cannot
+   * import from this package) view-preset renderers can reach them via a
+   * duck-typed structural cast — e.g. `list/pc/renderer.ts`'s row-level
+   * note-action button. This package itself never imports
+   * `@blocksuite/affine-block-note-ref` (or the note-property package)
+   * directly — note-ref depends on root, which depends back on database;
+   * a static import here would close that cycle. See `noteRefRowActions`'s
+   * own field comment.
    */
   createNoteForRow(std: BlockStdScope, rowId: string): void {
-    createNoteForRow(std, this, rowId);
+    DatabaseBlockDataSource.noteRefRowActions?.createNoteForRow(
+      std,
+      this,
+      rowId
+    );
   }
 
   revealOrInsertNoteForRow(std: BlockStdScope, rowId: string): void {
-    revealOrInsertNoteForRow(std, this, rowId);
+    DatabaseBlockDataSource.noteRefRowActions?.revealOrInsertNoteForRow(
+      std,
+      this,
+      rowId
+    );
   }
 
   attachExistingNoteForRow(std: BlockStdScope, rowId: string): Promise<void> {
-    return attachExistingNoteForRow(std, this, rowId);
+    return (
+      DatabaseBlockDataSource.noteRefRowActions?.attachExistingNoteForRow(
+        std,
+        this,
+        rowId
+      ) ?? Promise.resolve()
+    );
   }
 
   /**
@@ -1980,6 +1992,34 @@ export class DatabaseBlockDataSource extends DataSourceBase {
   ): unknown {
     return this.spacialProperties[propertyType]?.valueGet(rowId, propertyId);
   }
+
+  /**
+   * Registration seam for the note-row actions (create/reveal-or-insert/
+   * attach-existing), filled in at setup time by
+   * `@blocksuite/affine-block-database-note-property`'s
+   * `DatabaseNotePropertyViewExtension`. `undefined` until that
+   * extension's `setup()` runs. See `createNoteForRow`/friends above for
+   * why this indirection exists instead of a static import.
+   */
+  static noteRefRowActions:
+    | {
+        createNoteForRow: (
+          std: BlockStdScope,
+          dataSource: DatabaseBlockDataSource,
+          rowId: string
+        ) => void;
+        revealOrInsertNoteForRow: (
+          std: BlockStdScope,
+          dataSource: DatabaseBlockDataSource,
+          rowId: string
+        ) => void;
+        attachExistingNoteForRow: (
+          std: BlockStdScope,
+          dataSource: DatabaseBlockDataSource,
+          rowId: string
+        ) => Promise<void>;
+      }
+    | undefined = undefined;
 
   static externalProperties = signal<PropertyMetaConfig[]>([]);
   static propertiesList = computed(() => {

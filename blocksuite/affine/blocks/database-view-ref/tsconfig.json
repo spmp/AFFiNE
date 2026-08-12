@@ -10,11 +10,11 @@
     { "path": "../database" },
     { "path": "../database-ref" },
     { "path": "../../components" },
-    { "path": "../../data-view" },
     { "path": "../../ext-loader" },
     { "path": "../../model" },
     { "path": "../../shared" },
     { "path": "../../widgets/slash-menu" },
+    { "path": "../../data-view" },
     { "path": "../../../framework/global" },
     { "path": "../../../framework/std" },
     { "path": "../../../framework/store" }

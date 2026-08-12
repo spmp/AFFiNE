@@ -1,18 +1,13 @@
-import { toast } from '@blocksuite/affine-components/toast';
 import {
   createReusableNoteAndInsertRefCommand,
   insertNoteRefBlockCommand,
 } from '@blocksuite/affine-block-note-ref';
-import type { Color, NoteBlockModel } from '@blocksuite/affine-model';
-import { DefaultTheme } from '@blocksuite/affine-model';
+import { toast } from '@blocksuite/affine-components/toast';
+import type { DatabaseBlockDataSource, NoteRefValue } from '@blocksuite/affine-block-database';
+import { DefaultTheme, type Color, type NoteBlockModel } from '@blocksuite/affine-model';
 import { CrossDocReferenceProvider } from '@blocksuite/affine-shared/services';
 import { getLastNoteBlock } from '@blocksuite/affine-shared/utils';
-import type { BlockStdScope } from '@blocksuite/std';
-import { BlockSelection } from '@blocksuite/std';
-import type { BlockModel, Store } from '@blocksuite/store';
-
-import type { DatabaseBlockDataSource } from '../../data-source.js';
-import type { NoteRefValue } from './define.js';
+import { BlockSelection, type BlockStdScope } from '@blocksuite/std';
 
 // White/Transparent are poor choices for "make this row visually distinct"
 // — White is indistinguishable from the table's own default background,
@@ -46,7 +41,7 @@ export function pickNoteColor(
   std: BlockStdScope,
   dataSource: DatabaseBlockDataSource
 ): Color {
-  const inUse = new Set<string>(
+  const inUse = new Set(
     dataSource.getAllNoteColors().map(color => JSON.stringify(color))
   );
   for (const note of std.store.getBlocksByFlavour('affine:note')) {
@@ -59,8 +54,10 @@ export function pickNoteColor(
   const candidates = candidateColors();
   const unused = candidates.find(color => !inUse.has(JSON.stringify(color)));
   if (unused) return unused;
+
   const first = candidates[0];
   if (first) return first;
+
   // Only reachable if `candidateColors()` somehow returned an empty array
   // (every non-excluded entry filtered out) — fall back to the very first
   // entry of the *full*, unfiltered palette rather than hardcoding White
@@ -69,7 +66,7 @@ export function pickNoteColor(
   // in this one last-resort path would contradict that same rule; falling
   // back to "whatever the palette's own first entry is" doesn't.
   const fallback = Object.values(DefaultTheme.NoteBackgroundColorMap)[0];
-  return (fallback ?? DefaultTheme.NoteBackgroundColorMap.White) as Color;
+  return fallback ?? DefaultTheme.NoteBackgroundColorMap.White;
 }
 
 /**
@@ -82,14 +79,14 @@ export function pickNoteColor(
  * itself, unlike `appendParagraphCommand`, which inserts directly into the
  * note by id rather than as a sibling of one of its children).
  */
-function resolveEndOfPageAnchor(std: BlockStdScope): BlockModel | undefined {
+function resolveEndOfPageAnchor(std: BlockStdScope) {
   const store = std.store;
   if (!store.root) return undefined;
 
-  let note: NoteBlockModel | null | undefined = getLastNoteBlock(store);
+  let note = getLastNoteBlock(store);
   if (!note) {
     const noteId = store.addBlock('affine:note', {}, store.root.id);
-    note = store.getBlock(noteId)?.model as NoteBlockModel | undefined;
+    note = (store.getBlock(noteId)?.model as NoteBlockModel | undefined) ?? null;
   }
   if (!note) return undefined;
 
@@ -138,20 +135,15 @@ function applyNoteRefColor(
   noteRefBlockId: string,
   color: Color
 ) {
-  const refModel = std.store.getBlock(noteRefBlockId)?.model as
-    | { props: { backgroundOverride?: Color; showBorder?: boolean } }
-    | undefined;
+  const refModel = std.store.getBlock(noteRefBlockId)?.model;
   if (!refModel) return;
-  std.store.updateBlock(refModel as never, {
+  std.store.updateBlock(refModel, {
     backgroundOverride: color,
     showBorder: true,
   });
 }
 
-function resolveCanonicalStore(
-  std: BlockStdScope,
-  refDocId: string
-): Store | undefined {
+function resolveCanonicalStore(std: BlockStdScope, refDocId: string) {
   return refDocId === std.store.id
     ? std.store
     : std.workspace.getDoc(refDocId)?.getStore({ id: refDocId });
@@ -161,13 +153,12 @@ function noteRefExistsOnCurrentPage(
   std: BlockStdScope,
   refDocId: string,
   refBlockId: string
-): BlockModel | undefined {
+) {
   return std.store.getBlocksByFlavour('affine:note-ref').find(block => {
-    const props = (
-      block.model as unknown as {
-        props: { refDocId?: string; refBlockId: string };
-      }
-    ).props;
+    const props = block.model.props as {
+      refDocId?: string;
+      refBlockId?: string;
+    };
     // `refDocId` is left unset on the model for a same-doc reference
     // (see `revealOrInsertNoteForRow`'s own `isCrossDoc ? ... : undefined`
     // below) — normalize both sides to the real doc id before comparing,
@@ -216,20 +207,16 @@ export function createNoteForRow(
     return;
   }
 
-  const refModel = std.store.getBlock(result.insertedNoteRefBlockId)?.model as
-    | { props: { refDocId?: string; refBlockId: string } }
-    | undefined;
+  const refModel = std.store.getBlock(result.insertedNoteRefBlockId)?.model;
   if (!refModel) {
     toast(std.host, 'Note was created but could not be finished setting up.');
     return;
   }
-
-  const refDocId = refModel.props.refDocId ?? std.store.id;
-  const refBlockId = refModel.props.refBlockId;
+  const refDocId =
+    (refModel.props as { refDocId?: string }).refDocId ?? std.store.id;
+  const refBlockId = (refModel.props as { refBlockId: string }).refBlockId;
   const canonicalStore = resolveCanonicalStore(std, refDocId);
-  const canonical = canonicalStore?.getBlock(refBlockId)?.model as
-    | NoteBlockModel
-    | undefined;
+  const canonical = canonicalStore?.getBlock(refBlockId)?.model;
   if (!canonical || !canonicalStore) {
     toast(std.host, 'Note was created but could not be finished setting up.');
     return;
@@ -242,7 +229,6 @@ export function createNoteForRow(
     pageBackgroundOverride: color,
   });
   applyNoteRefColor(std, result.insertedNoteRefBlockId, color);
-
   dataSource.setNoteRef(rowId, { refDocId, refBlockId });
   dataSource.setNoteColor(rowId, color);
   focusInsertedRef(std, result.insertedNoteRefBlockId);
@@ -297,6 +283,7 @@ export function revealOrInsertNoteForRow(
     toast(std.host, 'Could not insert this note here.');
     return;
   }
+
   // Reuses the row's already-chosen color (set once, at first creation/
   // attachment) rather than picking a new one — this is the exact
   // carryover case: a task already linked to a note on an earlier day,
@@ -355,18 +342,18 @@ export async function attachExistingNoteForRow(
   }
 
   const canonicalStore = resolveCanonicalStore(std, candidate.docId);
-  const canonical = canonicalStore?.getBlock(candidate.blockId)?.model as
-    | NoteBlockModel
-    | undefined;
+  const canonical = canonicalStore?.getBlock(candidate.blockId)?.model;
   if (!canonical || !canonicalStore) {
-    toast(std.host, 'Note was attached but could not be finished setting up.');
+    toast(
+      std.host,
+      'Note was attached but could not be finished setting up.'
+    );
     return;
   }
 
   const color = pickNoteColor(std, dataSource);
   canonicalStore.updateBlock(canonical, { pageBackgroundOverride: color });
   applyNoteRefColor(std, result.insertedNoteRefBlockId, color);
-
   dataSource.setNoteRef(rowId, {
     refDocId: candidate.docId,
     refBlockId: candidate.blockId,
