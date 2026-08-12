@@ -173,6 +173,12 @@ export class ShapeElementModel extends GfxPrimitiveElementModel<ShapeProps> {
   accessor gradientDirection: GradientDirection | undefined = undefined;
 
   @field()
+  accessor flipX: boolean = false;
+
+  @field()
+  accessor flipY: boolean = false;
+
+  @field()
   accessor lockAspectRatio: boolean = false;
 
   @field()
@@ -352,6 +358,12 @@ export class LocalShapeElementModel extends GfxLocalElementModel {
 
   @prop()
   accessor strokeWidth: number = 4;
+
+  @prop()
+  accessor flipX: boolean = false;
+
+  @prop()
+  accessor flipY: boolean = false;
 
   @prop()
   accessor lockAspectRatio: boolean = false;
