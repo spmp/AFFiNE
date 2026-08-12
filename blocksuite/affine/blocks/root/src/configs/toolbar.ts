@@ -510,7 +510,7 @@ const configureTodoList = {
     const model = selectedModels[0] as ListBlockModel;
     return model.flavour === 'affine:list' && model.props.type === 'todo';
   },
-} as const satisfies ToolbarAction;
+} as const satisfies ToolbarActionGroup;
 
 export const builtinToolbarConfig = {
   actions: [
