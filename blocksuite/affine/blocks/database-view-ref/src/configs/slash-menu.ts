@@ -28,21 +28,46 @@ import { Text } from '@blocksuite/store';
 import { insertDatabaseViewRefBlockCommand } from '../commands.js';
 
 /**
+ * Story 2.11 (post-review): every `isTemplateDoc` call in this file gates
+ * whether a canonical/pointer mutation is allowed to proceed — it must
+ * never be allowed to crash the *whole* slash menu (every other command
+ * registered alongside these, not just this file's own) if a provider
+ * implementation misbehaves or throws. Fails open (`false`, i.e. "not a
+ * template") rather than closed: this guard is a narrow safety net against
+ * accidentally forking the canonical, not a security boundary, so an
+ * indeterminate answer should not block ordinary usage.
+ */
+function safeIsTemplateDoc(
+  journalTodo: { isTemplateDoc: (docId: string) => boolean },
+  docId: string
+): boolean {
+  try {
+    return journalTodo.isTemplateDoc(docId);
+  } catch (error) {
+    console.error('[journal-todo] isTemplateDoc check failed', error);
+    return false;
+  }
+}
+
+/**
  * Story 2.4: a creation preset over `insertDatabaseViewRefBlockCommand`
  * (Story 2.2) — auto-resolves (or creates, on first-ever use) "the current
  * journal todo database" (a single workspace-wide pointer, see
  * `JournalTodoDatabaseProvider`) and inserts a reference to it seeded with
- * a `'list'`-mode view filtered to hide done tasks. Only offered inside a
- * journal doc (gated on `getJournalDate` resolving) — general-purpose
+ * a `'list'`-mode view filtered to hide done tasks. Story 2.11: offered
+ * from any doc (journal, normal page, or a template doc), not gated on
+ * `getJournalDate` resolving — journal-date-vs-wall-clock behavior for the
+ * inserted view is handled live, per-render, by
+ * `DatabaseBlockDataSource.getDueDateHighlightState`, not by this command's
+ * own visibility. The one remaining doc-type-sensitive behavior lives
+ * inside the action below: first-use canonical creation refuses to run
+ * inside a template doc (see the `isTemplateDoc` check). General-purpose
  * "reference an arbitrary database" is Story 2.5's job, not this one.
  */
 export const journalTodoDatabaseSlashMenuConfig: SlashMenuConfig = {
   items: ({ std, model }) => {
     const journalTodo = std.getOptional(JournalTodoDatabaseProvider);
     if (!journalTodo) return [];
-
-    const journalDate = journalTodo.getJournalDate(std.store.id);
-    if (!journalDate) return [];
 
     return [
       {
@@ -58,6 +83,21 @@ export const journalTodoDatabaseSlashMenuConfig: SlashMenuConfig = {
           let justCreatedCanonical:
             | { hiddenNoteId: string; databaseId: string }
             | undefined;
+          if (!ref && safeIsTemplateDoc(journalTodo, store.id)) {
+            // Story 2.11: refuse rather than silently create — a canonical
+            // created inside a template doc would get deep-copied fresh
+            // into every future daily journal (template duplication has no
+            // ID-remapping awareness of this block's ref props at all, see
+            // `replace-id.ts`), permanently forking the "single source of
+            // truth" database once per day. Point the user at explicit
+            // setup instead (`journalTodoSourceSlashMenuConfig`, run from a
+            // non-template doc).
+            toast(
+              std.host,
+              'This doc is a template, so a new Journal Todo table can’t be created here. Set up your Journal Todo table from a regular page first, then it can be referenced here.'
+            );
+            return;
+          }
           if (!ref) {
             // First-ever use: create a fresh canonical database, pre-
             // promoted into its own hidden note (mirrors
@@ -116,6 +156,29 @@ export const journalTodoDatabaseSlashMenuConfig: SlashMenuConfig = {
           }
           const canonicalModel = canonicalStore?.getBlock(ref.refBlockId)
             ?.model as DatabaseBlockModel | undefined;
+
+          if (!canonicalModel && safeIsTemplateDoc(journalTodo, store.id)) {
+            // Story 2.11 (post-review): a *stale* ref (pointing at a
+            // deleted/never-resolving canonical) bypasses the `!ref`-only
+            // guard above, since `ref` itself is still set. Falling through
+            // to `insertDatabaseViewRefBlockCommand` below with a ref that's
+            // already known (via the resolution just above) not to resolve
+            // would leave a broken, unseeded `database-view-ref` sitting in
+            // this template doc — that command's cross-doc branch inserts
+            // optimistically and only discovers a missing target
+            // asynchronously afterward, without rolling back (a deliberate,
+            // established pattern mirrored from `database-ref`'s identical
+            // command; not something to change there, since it's shared by
+            // several other stories and every other caller relies on it).
+            // A broken block left inside a template gets deep-copied into
+            // every future daily journal, so refuse here instead, same as
+            // the no-ref case above.
+            toast(
+              std.host,
+              'Your Journal Todo source no longer exists. Set up your Journal Todo table from a regular page first, then it can be referenced here.'
+            );
+            return;
+          }
 
           let initialFilter: FilterGroup | undefined;
           if (canonicalModel) {
@@ -419,6 +482,21 @@ export const journalTodoSourceSlashMenuConfig: SlashMenuConfig = {
           toast(std.host, 'Could not set that as your Journal Todo source.');
           return;
         }
+        // Story 2.11 (post-review): guards the *invoking* doc against being
+        // a template, but a picked candidate can itself live inside a
+        // template doc regardless of where this command was run from (e.g.
+        // a database manually added to a template via `/Table`) — refuse
+        // that pick too, for the same reason: the canonical would then live
+        // inside a template, and every future daily journal duplication
+        // would carry a dead copy of it while the real pointer stayed
+        // pinned to the template forever.
+        if (safeIsTemplateDoc(journalTodo, candidate.docId)) {
+          toast(
+            std.host,
+            'That table lives inside a template doc and can’t be used as your Journal Todo source. Move it to a regular page first.'
+          );
+          return;
+        }
 
         journalTodo.setJournalTodoDatabaseRef({
           refDocId: candidate.docId,
@@ -454,6 +532,20 @@ export const journalTodoSourceSlashMenuConfig: SlashMenuConfig = {
       group: `7_Database@${index++}`,
       action: () => {
         const store = std.store;
+        // Story 2.11 (post-review): re-check at click time, not just when
+        // the menu was built — the list-level filter below only decides
+        // whether this item is *offered*; without this, a doc's template
+        // status flipping between menu-open and click (or a resolved-items
+        // array reused/cached by some caller not in view here) would let
+        // this slip through unguarded. Mirrors
+        // `journalTodoDatabaseSlashMenuConfig`'s own action-time re-check.
+        if (safeIsTemplateDoc(journalTodo, store.id)) {
+          toast(
+            std.host,
+            'This doc is a template, so a new Journal Todo table can’t be created here.'
+          );
+          return;
+        }
         const hadPriorSource = !!journalTodo.getJournalTodoDatabaseRef();
 
         store.captureSync();
@@ -500,6 +592,19 @@ export const journalTodoSourceSlashMenuConfig: SlashMenuConfig = {
         ]);
       },
     };
+
+    // Story 2.11: "New Journal Todo Table" always creates a table wherever
+    // it's invoked and unconditionally repoints the workspace-wide pointer
+    // — never valid to do inside a template doc (would fork a new
+    // "canonical" into every future daily journal). Unlike
+    // `journalTodoDatabaseSlashMenuConfig`'s "Journal Todo" item (which
+    // stays visible and toast-refuses on click, since it's a habitual
+    // daily command), there's no legitimate reason to ever offer this one
+    // here, so it's simply omitted. "Set Journal Todo Table" never
+    // creates anything, so it stays available unconditionally.
+    if (safeIsTemplateDoc(journalTodo, std.store.id)) {
+      return [setExistingItem];
+    }
 
     return [setExistingItem, newSourceItem];
   },
