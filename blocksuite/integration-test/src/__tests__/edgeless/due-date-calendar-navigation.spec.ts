@@ -56,6 +56,10 @@ describe('Story 2.7: calendar entry click navigates to the journal page', () => 
           journalTodoRef = ref;
         },
         getJournalDocId: date => docIdsByJournalDate.get(date),
+        // Story 2.11: not exercised by this suite (the canonical renders
+        // directly, never through the slash-menu commands), but required
+        // by the interface.
+        isTemplateDoc: () => false,
       }),
       PeekViewExtension({
         peek: ((pageRef: { docId: string }) => {

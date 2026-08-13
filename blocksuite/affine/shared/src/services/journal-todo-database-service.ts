@@ -43,6 +43,20 @@ export interface JournalTodoDatabaseService {
    * again.
    */
   setJournalTodoDatabaseRef: (ref: JournalTodoDatabaseRef | undefined) => void;
+
+  /**
+   * Whether `docId` is marked as a template doc (page template or journal
+   * template — any template, not only the specifically-configured journal
+   * template). Story 2.11: used to refuse first-use canonical creation
+   * (both the silent auto-create in `journalTodoDatabaseSlashMenuConfig`
+   * and the explicit "New Journal Todo Table" item in
+   * `journalTodoSourceSlashMenuConfig`) when invoked from inside a
+   * template doc — creating the canonical there would get deep-copied
+   * fresh into every future daily journal, forking the "single source of
+   * truth" database once per day. Synchronous, current-value read, same
+   * shape as `getJournalDate`/`getJournalDocId` above.
+   */
+  isTemplateDoc: (docId: string) => boolean;
 }
 
 export const JournalTodoDatabaseProvider =
