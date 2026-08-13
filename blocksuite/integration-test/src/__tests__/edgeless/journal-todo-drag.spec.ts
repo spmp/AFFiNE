@@ -42,6 +42,8 @@ describe('journal todo list view row drag (Story 2.8)', () => {
                 setJournalTodoDatabaseRef: (newRef: typeof ref) => {
                   ref = newRef;
                 },
+                // Story 2.11: not a template doc in this suite.
+                isTemplateDoc: () => false,
               };
             }
             return undefined;
@@ -50,9 +52,12 @@ describe('journal todo list view row drag (Story 2.8)', () => {
         if (prop === 'host') {
           const realHost = Reflect.get(target, prop, receiver) as object;
           return new Proxy(realHost, {
-            get(hostTarget, hostProp, hostReceiver) {
+            get(hostTarget, hostProp) {
               if (hostProp === 'std') return stub;
-              return Reflect.get(hostTarget, hostProp, hostReceiver);
+              // Story 2.11: `hostTarget`, not `hostReceiver` — see the
+              // identical fix/comment in `journal-todo-database.spec.ts`'s
+              // own `createStubStd`.
+              return Reflect.get(hostTarget, hostProp, hostTarget);
             },
           });
         }

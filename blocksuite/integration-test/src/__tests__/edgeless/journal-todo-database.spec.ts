@@ -42,10 +42,26 @@ describe('journal todo database slash-menu command', () => {
     return cleanup;
   });
 
+  // Story 2.11 (post-review): `toast()` appends a plain text-content `<div>`
+  // to a `.toast-container` element (see `@blocksuite/affine-components/
+  // toast`'s `create.ts`/`toast.ts`) — reads the most recently appended
+  // one back out, so refusal tests can assert on the message shown to the
+  // user, not just on the absence of side effects.
+  function latestToastText(): string | null {
+    const container = document.querySelector('.toast-container');
+    if (!container) return null;
+    const children = Array.from(container.children);
+    return children[children.length - 1]?.textContent ?? null;
+  }
+
   function createStubStd(options: {
     journalDate: string | undefined;
     initialRef?: { refDocId: string; refBlockId: string };
     showDueDateColumn?: boolean;
+    // Story 2.11: defaults to `false` (not a template doc) so every
+    // existing test — none of which pass this option — keeps exercising
+    // the non-template code path exactly as before.
+    isTemplateDoc?: boolean;
   }) {
     let ref = options.initialRef;
     const stub = new Proxy(editor.std, {
@@ -59,6 +75,7 @@ describe('journal todo database slash-menu command', () => {
                 setJournalTodoDatabaseRef: (newRef: typeof ref) => {
                   ref = newRef;
                 },
+                isTemplateDoc: () => options.isTemplateDoc ?? false,
               };
             }
             if (
@@ -100,9 +117,18 @@ describe('journal todo database slash-menu command', () => {
           // the real, original `editor.std`, not this Proxy.
           const realHost = Reflect.get(target, prop, receiver) as object;
           return new Proxy(realHost, {
-            get(hostTarget, hostProp, hostReceiver) {
+            get(hostTarget, hostProp) {
               if (hostProp === 'std') return stub;
-              return Reflect.get(hostTarget, hostProp, hostReceiver);
+              // Story 2.11: `hostTarget`, not `hostReceiver` (the Proxy
+              // itself) — `toast()` reads `.store` off the real host
+              // element, a getter backed by a JS private class field.
+              // Private-field access is tied to the exact instance; calling
+              // it with `this` bound to this Proxy wrapper (as passing
+              // `hostReceiver` here would do) throws "Cannot read from
+              // private field", not a silent miss — this was a latent bug
+              // in this stub, only surfaced once a test exercises a code
+              // path that calls `toast(std.host, ...)` through it.
+              return Reflect.get(hostTarget, hostProp, hostTarget);
             },
           });
         }
@@ -112,18 +138,163 @@ describe('journal todo database slash-menu command', () => {
     return { stub, getRef: () => ref };
   }
 
-  test('is not offered when the current doc has no journal date', () => {
+  // Story 2.11: superseded the old "is not offered when the current doc has
+  // no journal date" test — that gate was removed. "Journal Todo" is now
+  // offered from any doc; the doc-type-sensitive behavior moved from
+  // *visibility* to the *first-use creation* codepath (see the tests below).
+  test('Story 2.11: is offered even when the current doc has no journal date (normal page, not a template)', () => {
     const noteId = addNote(doc);
     const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
     const model = doc.getModelById(paragraphId)!;
-    const { stub } = createStubStd({ journalDate: undefined });
+    const { stub } = createStubStd({
+      journalDate: undefined,
+      isTemplateDoc: false,
+    });
 
     const items = journalTodoDatabaseSlashMenuConfig.items;
     const resolvedItems =
       typeof items === 'function' ? items({ std: stub, model }) : items;
     expect(
       resolvedItems.find(item => item.name === 'Journal Todo')
-    ).toBeFalsy();
+    ).toBeTruthy();
+  });
+
+  test('Story 2.11: first invocation from a normal page (no journal date) still creates a fresh canonical, same as from a journal', async () => {
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+    const { stub, getRef } = createStubStd({
+      journalDate: undefined,
+      isTemplateDoc: false,
+    });
+
+    const items = journalTodoDatabaseSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stub, model }) : items;
+    const item = resolvedItems.find(i => i.name === 'Journal Todo');
+    expect(item).toBeTruthy();
+
+    await (item as unknown as { action: () => Promise<void> }).action();
+    await wait();
+
+    const ref = getRef();
+    expect(ref).toBeTruthy();
+    const refEl = document.querySelector(
+      'affine-database-view-ref'
+    ) as DatabaseViewRefBlockComponent;
+    expect(refEl).toBeTruthy();
+    expect(refEl.model.props.refBlockId).toBe(ref!.refBlockId);
+  });
+
+  test('Story 2.11: is offered from a template doc too, but first invocation refuses to create a canonical there', async () => {
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+    const { stub, getRef } = createStubStd({
+      journalDate: undefined,
+      isTemplateDoc: true,
+    });
+
+    const items = journalTodoDatabaseSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stub, model }) : items;
+    const item = resolvedItems.find(i => i.name === 'Journal Todo');
+    // Still offered — only the *action*, not the visibility, is guarded.
+    expect(item).toBeTruthy();
+
+    const refCountBefore = doc.getBlocksByFlavour('affine:database').length;
+    const refBlockCountBefore = doc.getBlocksByFlavour(
+      'affine:database-view-ref'
+    ).length;
+    await (item as unknown as { action: () => Promise<void> }).action();
+    await wait();
+
+    // Nothing was created, and the pointer was never set.
+    expect(doc.getBlocksByFlavour('affine:database').length).toBe(
+      refCountBefore
+    );
+    expect(doc.getBlocksByFlavour('affine:database-view-ref').length).toBe(
+      refBlockCountBefore
+    );
+    expect(getRef()).toBeUndefined();
+    // AC4 explicitly requires the user sees a toast explaining why.
+    expect(latestToastText()).toContain('template');
+  });
+
+  test('Story 2.11 (post-review): a stale ref (pointing at a deleted canonical) inside a template doc refuses instead of inserting a broken reference', async () => {
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+    // A ref pointing at a database that doesn't exist anywhere — simulates
+    // the canonical having been deleted.
+    const { stub, getRef } = createStubStd({
+      journalDate: undefined,
+      isTemplateDoc: true,
+      initialRef: { refDocId: doc.id, refBlockId: 'block-does-not-exist' },
+    });
+
+    const items = journalTodoDatabaseSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stub, model }) : items;
+    const item = resolvedItems.find(i => i.name === 'Journal Todo');
+
+    const refBlockCountBefore = doc.getBlocksByFlavour(
+      'affine:database-view-ref'
+    ).length;
+    await (item as unknown as { action: () => Promise<void> }).action();
+    await wait();
+
+    // No broken reference block was left behind, and the stale pointer
+    // itself is untouched (not silently cleared or replaced).
+    expect(doc.getBlocksByFlavour('affine:database-view-ref').length).toBe(
+      refBlockCountBefore
+    );
+    expect(getRef()).toEqual({
+      refDocId: doc.id,
+      refBlockId: 'block-does-not-exist',
+    });
+    // Not asserting toast content here (unlike the AC4 refusal test above):
+    // `toast()`'s module-level container gets orphaned by `beforeEach`'s
+    // `setupEditor` teardown once a prior test in this file has already
+    // triggered one, making `document.querySelector('.toast-container')`
+    // unreliable for any test after the first toast-producing one. The
+    // side-effect-free assertions above are the load-bearing checks here.
+  });
+
+  test('Story 2.11: from a template doc, an existing canonical is still referenced normally (only first-use creation is guarded)', async () => {
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+    const existingNoteId = addNote(doc);
+    const existingDatabaseId = doc.addBlock(
+      'affine:database',
+      { title: new Text('Journal Todo') },
+      existingNoteId
+    );
+    const { stub, getRef } = createStubStd({
+      journalDate: undefined,
+      isTemplateDoc: true,
+      initialRef: { refDocId: doc.id, refBlockId: existingDatabaseId },
+    });
+
+    const items = journalTodoDatabaseSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stub, model }) : items;
+    const item = resolvedItems.find(i => i.name === 'Journal Todo');
+
+    await (item as unknown as { action: () => Promise<void> }).action();
+    await wait();
+
+    // The pre-existing pointer is untouched, and the existing canonical was
+    // referenced, not replaced.
+    expect(getRef()).toEqual({
+      refDocId: doc.id,
+      refBlockId: existingDatabaseId,
+    });
+    const refEl = document.querySelector(
+      'affine-database-view-ref'
+    ) as DatabaseViewRefBlockComponent;
+    expect(refEl.model.props.refBlockId).toBe(existingDatabaseId);
   });
 
   test('first invocation creates a fresh canonical database and inserts a filtered list view', async () => {
@@ -842,6 +1013,13 @@ describe('journal todo source selection (Story 2.5.5)', () => {
 
   function createStubStd(options: {
     initialRef?: { refDocId: string; refBlockId: string };
+    // Story 2.11 (post-review): a plain boolean applies uniformly to every
+    // docId queried (matches every prior test's needs — the invoking doc's
+    // own template status). A function lets a test distinguish by docId
+    // (e.g. "the invoking doc isn't a template, but the picked candidate's
+    // doc is") or return different answers on successive calls (simulating
+    // the doc's template status changing between menu-build and click).
+    isTemplateDoc?: boolean | ((docId: string) => boolean);
   }) {
     let ref = options.initialRef;
     const stub = new Proxy(editor.std, {
@@ -855,8 +1033,25 @@ describe('journal todo source selection (Story 2.5.5)', () => {
                   setJournalTodoDatabaseRef: (newRef: typeof ref) => {
                     ref = newRef;
                   },
+                  isTemplateDoc: (docId: string) =>
+                    typeof options.isTemplateDoc === 'function'
+                      ? options.isTemplateDoc(docId)
+                      : (options.isTemplateDoc ?? false),
                 }
               : undefined;
+        }
+        if (prop === 'host') {
+          // Story 2.11 (post-review): needed so the new template-guard
+          // refusal toasts (which read `.host.store`, a private-field-
+          // backed getter) don't crash — same fix as the outer describe
+          // block's own `createStubStd`.
+          const realHost = Reflect.get(target, prop, receiver) as object;
+          return new Proxy(realHost, {
+            get(hostTarget, hostProp) {
+              if (hostProp === 'std') return stub;
+              return Reflect.get(hostTarget, hostProp, hostTarget);
+            },
+          });
         }
         return Reflect.get(target, prop, receiver);
       },
@@ -901,6 +1096,102 @@ describe('journal todo source selection (Story 2.5.5)', () => {
     expect(
       resolvedItems.find(item => item.name === 'New Journal Todo Table')
     ).toBeTruthy();
+  });
+
+  test('Story 2.11: "New Journal Todo Table" is omitted from a template doc, but "Set Journal Todo Table" remains offered', () => {
+    const anchorNoteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, anchorNoteId);
+    const model = doc.getModelById(paragraphId)!;
+    const { stub } = createStubStd({ isTemplateDoc: true });
+
+    const items = journalTodoSourceSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stub, model }) : items;
+    expect(
+      resolvedItems.find(item => item.name === 'Set Journal Todo Table')
+    ).toBeTruthy();
+    expect(
+      resolvedItems.find(item => item.name === 'New Journal Todo Table')
+    ).toBeFalsy();
+  });
+
+  test('Story 2.11 (post-review): "Set Journal Todo Table" refuses a picked candidate that itself lives inside a template doc, even from a non-template invoking doc', async () => {
+    const anchorNoteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, anchorNoteId);
+    const model = doc.getModelById(paragraphId)!;
+    // The invoking doc (`doc`) is NOT a template; only the *picked
+    // candidate's* doc is — this is exactly the gap a per-invoking-doc-only
+    // check would miss.
+    const templateDocId = 'doc:some-template';
+    const { stub, getRef } = createStubStd({
+      isTemplateDoc: docId => docId === templateDocId,
+    });
+
+    const stubStd = new Proxy(stub, {
+      get(target, prop, receiver) {
+        if (prop === 'getOptional') {
+          return (identifier: unknown) => {
+            if (identifier === CrossDocReferenceProvider) {
+              return createCrossDocStub({
+                docId: templateDocId,
+                blockId: 'some-database-in-the-template',
+                flavour: 'affine:database',
+              });
+            }
+            return Reflect.get(target, 'getOptional', receiver)(identifier);
+          };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+
+    const items = journalTodoSourceSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stubStd, model }) : items;
+    const item = resolvedItems.find(
+      i => i.name === 'Set Journal Todo Table'
+    ) as unknown as { action: () => Promise<void> };
+
+    await item.action();
+    await wait();
+
+    expect(getRef()).toBeUndefined();
+    // Not asserting toast content (see the stale-ref test's own comment
+    // above, in the sibling describe block, for why).
+  });
+
+  test('Story 2.11 (post-review): "New Journal Todo Table" re-checks template status at click time, not just when the menu was built', async () => {
+    const anchorNoteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, anchorNoteId);
+    const model = doc.getModelById(paragraphId)!;
+    // Not a template when the menu is built (so the item is offered), but
+    // becomes one before the click resolves — simulates the doc's template
+    // flag flipping in the gap between menu-open and click.
+    let isTemplateNow = false;
+    const { stub, getRef } = createStubStd({
+      isTemplateDoc: () => isTemplateNow,
+    });
+
+    const items = journalTodoSourceSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stub, model }) : items;
+    const item = resolvedItems.find(
+      i => i.name === 'New Journal Todo Table'
+    ) as unknown as { action: () => void };
+    expect(item).toBeTruthy();
+
+    isTemplateNow = true;
+    const databaseCountBefore =
+      doc.getBlocksByFlavour('affine:database').length;
+    item.action();
+    await wait();
+
+    expect(doc.getBlocksByFlavour('affine:database').length).toBe(
+      databaseCountBefore
+    );
+    expect(getRef()).toBeUndefined();
+    // Not asserting toast content (see the stale-ref test's own comment
+    // in the sibling describe block for why).
   });
 
   test('"Set Journal Todo Table" opens one picker excluding nothing (same-doc tables included), sets the pointer to a same-doc pick without inserting any block', async () => {
@@ -991,6 +1282,7 @@ describe('journal todo source selection (Story 2.5.5)', () => {
                 getJournalDate: () => undefined,
                 getJournalTodoDatabaseRef: () => undefined,
                 setJournalTodoDatabaseRef: () => {},
+                isTemplateDoc: () => false,
               };
             }
             if (identifier === CrossDocReferenceProvider) {
@@ -1139,6 +1431,7 @@ describe('journal todo source selection (Story 2.5.5)', () => {
                   setJournalTodoDatabaseRef: (newRef: typeof ref) => {
                     ref = newRef;
                   },
+                  isTemplateDoc: () => false,
                 }
               : undefined;
         }

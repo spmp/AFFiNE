@@ -2,6 +2,7 @@ import {
   JournalService,
   JournalTodoDatabaseService as JournalTodoDatabaseCoreService,
 } from '@affine/core/modules/journal';
+import { TemplateDocService } from '@affine/core/modules/template-doc';
 import { JournalTodoDatabaseExtension } from '@blocksuite/affine/shared/services';
 import type { FrameworkProvider } from '@toeverything/infra';
 
@@ -59,6 +60,15 @@ export function patchJournalTodoDatabaseService(framework: FrameworkProvider) {
         .setJournalTodoDatabaseRef(
           ref ? { docId: ref.refDocId, databaseId: ref.refBlockId } : undefined
         );
+    },
+    isTemplateDoc(docId) {
+      // Plain synchronous store read (`docProperties.find`, not a
+      // `LiveData`/observable) — unlike `getJournalDate`/`getJournalDocId`
+      // above, there's no eagerly-subscribing `LiveData` to `.complete()`
+      // here.
+      return framework
+        .get(TemplateDocService)
+        .list.listStore.isTemplateDoc(docId);
     },
   });
 }
