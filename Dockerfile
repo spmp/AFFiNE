@@ -9,6 +9,7 @@ ARG GIT_REPO=https://github.com/spmp/AFFiNE.git
 ARG GIT_TAG=pr/N-build
 ARG GIT_DEPTH=0
 ARG BUILD_VERSION=
+ARG BUILD_TYPE=canary
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -109,11 +110,8 @@ RUN yarn install --inline-builds
 # it's missing, regardless of the canary gate. Do not remove this build.
 # Set AFFINE_ENV=dev at runtime to enable mobile to be served
 RUN yarn affine @affine/web build
-RUN df -h /affine && ls -la packages/frontend/apps/web/dist/ || echo "MISSING RIGHT AFTER web build"
 RUN yarn affine @affine/admin build
-RUN df -h /affine && ls -la packages/frontend/admin/dist/ || echo "MISSING RIGHT AFTER admin build"
 RUN yarn affine @affine/mobile build
-RUN df -h /affine && ls -la packages/frontend/apps/mobile/dist/ || echo "MISSING RIGHT AFTER mobile build"
 
 # Generate Prisma client
 RUN yarn config set --json supportedArchitectures.cpu '["x64", "arm64", "arm"]'
@@ -123,20 +121,6 @@ RUN yarn workspace @affine/server prisma generate
 
 # Move node_modules
 RUN mv ./node_modules ./packages/backend/server
-
-# Debug: capture disk/memory state and the actual filesystem contents right
-# before verifying, since the failure so far has been silent otherwise (every
-# prior RUN step reports success). None of these commands can fail the build.
-RUN echo "=== disk space ===" && df -h; \
-    echo "=== memory ===" && free -h; \
-    echo "=== /affine top level ===" && ls -la /affine; \
-    echo "=== packages/frontend (recursive, 4 levels, or absence) ===" && \
-      (find packages/frontend -maxdepth 4 2>&1 | sort || echo "packages/frontend MISSING ENTIRELY"); \
-    echo "=== node_modules top-level entry count ===" && \
-      (ls packages/backend/server/node_modules 2>&1 | wc -l || echo "packages/backend/server/node_modules MISSING"); \
-    echo "=== dmesg tail (often unavailable in an unprivileged build - check the DOCKER HOST's dmesg/journalctl for OOM kills if this is empty) ===" && \
-      (dmesg 2>&1 | tail -50 || echo "dmesg unavailable in this build context"); \
-    true
 
 # Verify build artifacts
 RUN ls -la packages/backend/server/dist/ && \
