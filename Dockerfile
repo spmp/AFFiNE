@@ -52,7 +52,9 @@ RUN if [ -n "${BUILD_VERSION}" ]; then \
 RUN corepack enable
 
 # Configure yarn
-RUN yarn config set nmMode classic || true
+# (nmMode is left at the repo default, hardlinks-local, set in .yarnrc.yml -
+# it shares file content across node_modules instead of duplicating it,
+# which matters a lot here given yarn install runs 3 times in this build)
 RUN yarn config set enableScripts true
 
 # Set environment variables
@@ -68,6 +70,14 @@ RUN yarn install --inline-builds
 RUN chmod +x node_modules/.bin/* || true
 
 # Build native components first
+# The workspace Cargo.toml's [profile.release] uses codegen-units=1 + fat LTO,
+# which is great for the shipped binary but makes the final codegen/link pass
+# almost single-threaded - it dwarfs the (parallel) dependency compile time.
+# Override it for this throw-away Docker build only, via Cargo's env-based
+# profile overrides (does not touch the committed Cargo.toml, so real release
+# builds elsewhere, e.g. desktop packaging, keep full fat-LTO).
+ENV CARGO_PROFILE_RELEASE_LTO=thin
+ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
 RUN yarn workspaces focus @affine/server-native
 RUN yarn workspace @affine/server-native build
 RUN cp ./packages/backend/native/server-native.node ./packages/backend/native/server-native.x64.node
@@ -92,9 +102,18 @@ RUN yarn workspace @affine/server build
 RUN yarn install --inline-builds
 
 # Build frontend components (now all dependencies should be available)
+# Note: @affine/mobile is built even though its bundle is only *served* when
+# env.namespaces.canary is true - DocRendererController's constructor
+# (core/doc-renderer/controller.ts) unconditionally reads
+# static/mobile/assets-manifest.json at boot and throws in production if
+# it's missing, regardless of the canary gate. Do not remove this build.
+# Set AFFINE_ENV=dev at runtime to enable mobile to be served
 RUN yarn affine @affine/web build
+RUN df -h /affine && ls -la packages/frontend/apps/web/dist/ || echo "MISSING RIGHT AFTER web build"
 RUN yarn affine @affine/admin build
+RUN df -h /affine && ls -la packages/frontend/admin/dist/ || echo "MISSING RIGHT AFTER admin build"
 RUN yarn affine @affine/mobile build
+RUN df -h /affine && ls -la packages/frontend/apps/mobile/dist/ || echo "MISSING RIGHT AFTER mobile build"
 
 # Generate Prisma client
 RUN yarn config set --json supportedArchitectures.cpu '["x64", "arm64", "arm"]'
@@ -104,6 +123,20 @@ RUN yarn workspace @affine/server prisma generate
 
 # Move node_modules
 RUN mv ./node_modules ./packages/backend/server
+
+# Debug: capture disk/memory state and the actual filesystem contents right
+# before verifying, since the failure so far has been silent otherwise (every
+# prior RUN step reports success). None of these commands can fail the build.
+RUN echo "=== disk space ===" && df -h; \
+    echo "=== memory ===" && free -h; \
+    echo "=== /affine top level ===" && ls -la /affine; \
+    echo "=== packages/frontend (recursive, 4 levels, or absence) ===" && \
+      (find packages/frontend -maxdepth 4 2>&1 | sort || echo "packages/frontend MISSING ENTIRELY"); \
+    echo "=== node_modules top-level entry count ===" && \
+      (ls packages/backend/server/node_modules 2>&1 | wc -l || echo "packages/backend/server/node_modules MISSING"); \
+    echo "=== dmesg tail (often unavailable in an unprivileged build - check the DOCKER HOST's dmesg/journalctl for OOM kills if this is empty) ===" && \
+      (dmesg 2>&1 | tail -50 || echo "dmesg unavailable in this build context"); \
+    true
 
 # Verify build artifacts
 RUN ls -la packages/backend/server/dist/ && \
