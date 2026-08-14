@@ -9,8 +9,11 @@ import {
   insertDatabaseViewRefBlockCommand,
   journalTodoDatabaseSlashMenuConfig,
   journalTodoSourceSlashMenuConfig,
+  refreshJournalTodoGraceLiteralMiddleware,
 } from '@blocksuite/affine/blocks/database-view-ref';
 import type { DatabaseViewRefBlockComponent } from '@blocksuite/affine/blocks/database-view-ref';
+import { AffineSchemas } from '@blocksuite/affine/schemas';
+import { replaceIdMiddleware } from '@blocksuite/affine/shared/adapters';
 import {
   CrossDocReferenceProvider,
   EditorSettingExtension,
@@ -19,8 +22,8 @@ import {
   TaskWorkflowDefaultsSchema,
 } from '@blocksuite/affine/shared/services';
 import { signal } from '@preact/signals-core';
-import { Text } from '@blocksuite/store';
-import { beforeEach, describe, expect, test } from 'vitest';
+import { Schema, Slice, Text, Transformer } from '@blocksuite/store';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { wait } from '../utils/common.js';
 import { addNote } from '../utils/edgeless.js';
@@ -295,6 +298,53 @@ describe('journal todo database slash-menu command', () => {
       'affine-database-view-ref'
     ) as DatabaseViewRefBlockComponent;
     expect(refEl.model.props.refBlockId).toBe(existingDatabaseId);
+
+    // Story 2.11 (live bug report, resolved — see `slash-menu.ts`'s own
+    // comment on this filter's construction for the full history): every
+    // insertion, template-sourced or not, always seeds the same grace-clause
+    // filter — `OR(isNotOneOf(done), after(doneDate, referenceCreatedAtMs))`.
+    // The literal's "frozen forever" problem is fixed at the actual root
+    // (block duplication, via `refreshJournalTodoGraceLiteralMiddleware`),
+    // not by omitting the clause here.
+    const seededView = refEl.model.props.views[0] as unknown as {
+      filter?: { op: string; conditions: unknown[] };
+    };
+    expect(seededView.filter?.op).toBe('or');
+    expect(seededView.filter?.conditions.length).toBe(2);
+  });
+
+  test('Story 2.11 (live bug report, resolved): the seeded filter is identical whether inserted from a template doc or not, even when a canonical already exists', async () => {
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+    const existingNoteId = addNote(doc);
+    const existingDatabaseId = doc.addBlock(
+      'affine:database',
+      { title: new Text('Journal Todo') },
+      existingNoteId
+    );
+    const { stub } = createStubStd({
+      journalDate: undefined,
+      isTemplateDoc: false,
+      initialRef: { refDocId: doc.id, refBlockId: existingDatabaseId },
+    });
+
+    const items = journalTodoDatabaseSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stub, model }) : items;
+    const item = resolvedItems.find(i => i.name === 'Journal Todo');
+
+    await (item as unknown as { action: () => Promise<void> }).action();
+    await wait();
+
+    const refEl = document.querySelector(
+      'affine-database-view-ref'
+    ) as DatabaseViewRefBlockComponent;
+    const seededView = refEl.model.props.views[0] as unknown as {
+      filter?: { op: string; conditions: unknown[] };
+    };
+    expect(seededView.filter?.op).toBe('or');
+    expect(seededView.filter?.conditions.length).toBe(2);
   });
 
   test('first invocation creates a fresh canonical database and inserts a filtered list view', async () => {
@@ -332,7 +382,7 @@ describe('journal todo database slash-menu command', () => {
       filter: { op: string; conditions: unknown[] };
     };
     expect(seededView.mode).toBe('list');
-    // OR(not-done, done-on-this-journal-day) — see
+    // OR(not-done, done-after-this-reference-was-created) — see
     // `journalTodoDatabaseSlashMenuConfig`'s own comment for why this must
     // be an `or`, not a plain live "not done" filter.
     expect(seededView.filter.op).toBe('or');
@@ -858,18 +908,287 @@ describe('journal todo database slash-menu command', () => {
     expect(doc.getBlock(rowId)).toBeTruthy();
     expect(dataSource.getTaskStatusInfo(rowId)?.checked).toBe(true);
 
-    // Marking done also stamps the hidden "Done date" column — the piece
-    // the seeded OR-filter relies on to keep the row visible in *this*
-    // reference (created moments ago) while still excluding it from a
-    // later reference (see `table.unit.spec.ts`'s own `'journal todo "done
-    // date" filter semantics'` suite for the pure filter-evaluation proof
-    // of that behavior).
+    // Marking done also stamps the hidden "Done date" column (kept for its
+    // own sake as a real, user-visible property — see `ensureDoneDateColumn`'s
+    // own comment) and, separately, records the row in this
+    // `DatabaseBlockDataSource` instance's own ephemeral grace set — see the
+    // next two tests for the actual visibility behavior that produces.
     const doneDateColumnId = dataSource.ensureDoneDateColumn();
     expect(doneDateColumnId).toBeTruthy();
     const doneDateValue = doneDateColumnId
       ? getCell(canonicalModel, rowId, doneDateColumnId)?.value
       : undefined;
     expect(typeof doneDateValue).toBe('number');
+  });
+
+  test.each([
+    ['a manually-inserted (non-template) reference', false, '2026-07-29'],
+    ['a template-sourced reference', true, undefined],
+  ] as const)(
+    'Story 2.11: a row marked done stays visible in %s\'s own filtered view (the persisted OR grace clause, identical for both)',
+    async (_label, isTemplateDoc, journalDate) => {
+      const noteId = addNote(doc);
+      const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+      const model = doc.getModelById(paragraphId)!;
+      // A template doc's *first* `/Journal Todo` invocation refuses to
+      // create a fresh canonical (Task 2 guard) — pre-seed an existing one
+      // so both branches of this parametrized test reach the same
+      // "reference an existing canonical" code path.
+      let initialRef: { refDocId: string; refBlockId: string } | undefined;
+      if (isTemplateDoc) {
+        const existingNoteId = addNote(doc);
+        const existingDatabaseId = doc.addBlock(
+          'affine:database',
+          { title: new Text('Journal Todo') },
+          existingNoteId
+        );
+        initialRef = { refDocId: doc.id, refBlockId: existingDatabaseId };
+      }
+      const { stub, getRef } = createStubStd({
+        journalDate,
+        isTemplateDoc,
+        initialRef,
+      });
+
+      const items = journalTodoDatabaseSlashMenuConfig.items;
+      const resolvedItems =
+        typeof items === 'function' ? items({ std: stub, model }) : items;
+      await (
+        resolvedItems.find(i => i.name === 'Journal Todo') as unknown as {
+          action: () => Promise<void>;
+        }
+      ).action();
+      await wait();
+
+      const ref = getRef()!;
+      const canonicalModel = doc.getBlock(ref.refBlockId)
+        ?.model as DatabaseBlockModel;
+      const refEl = document.querySelector(
+        'affine-database-view-ref'
+      ) as DatabaseViewRefBlockComponent;
+      const refModel = refEl.model;
+      const override = createLocalViewOverride(refModel);
+      const dataSource = new DatabaseBlockDataSource(canonicalModel, ds => {
+        ds.serviceSet(DatabaseViewLocalOverrideProvider, override);
+      });
+      const rowId = dataSource.rowAddAsTodoList('end');
+      const viewId = refModel.props.views[0].id;
+      const view = dataSource.viewManager.viewGet(viewId)!;
+
+      expect(view.rows$.value.map(r => r.rowId)).toContain(rowId);
+
+      dataSource.setTaskStatusChecked(rowId, true);
+
+      // Still shown in *this* reference/instance, even though the
+      // persisted filter alone (plain "not done") would now exclude it —
+      // identical outcome for template-sourced and manual insertions.
+      expect(view.rows$.value.map(r => r.rowId)).toContain(rowId);
+    }
+  );
+
+  test('Story 2.11 (live bug report — regression test): a row marked done is still visible after navigating away and back, not just in the instance that checked it off', async () => {
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+    const { stub, getRef } = createStubStd({ journalDate: '2026-07-29' });
+
+    const items = journalTodoDatabaseSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stub, model }) : items;
+    await (
+      resolvedItems.find(i => i.name === 'Journal Todo') as unknown as {
+        action: () => Promise<void>;
+      }
+    ).action();
+    await wait();
+
+    const ref = getRef()!;
+    const canonicalModel = doc.getBlock(ref.refBlockId)
+      ?.model as DatabaseBlockModel;
+    const refEl = document.querySelector(
+      'affine-database-view-ref'
+    ) as DatabaseViewRefBlockComponent;
+    const refModel = refEl.model;
+    const override = createLocalViewOverride(refModel);
+    const viewId = refModel.props.views[0].id;
+
+    // First "rendered instance" (e.g. the tab the user checked the row off
+    // in) sees it.
+    const firstDataSource = new DatabaseBlockDataSource(canonicalModel, ds => {
+      ds.serviceSet(DatabaseViewLocalOverrideProvider, override);
+    });
+    const rowId = firstDataSource.rowAddAsTodoList('end');
+    firstDataSource.setTaskStatusChecked(rowId, true);
+    const firstView = firstDataSource.viewManager.viewGet(viewId)!;
+    expect(firstView.rows$.value.map(r => r.rowId)).toContain(rowId);
+
+    // A brand-new `DatabaseBlockDataSource` instance over the exact same,
+    // already-persisted view/filter — this is what happens on every page
+    // navigation/reload (see `database-view-ref-block.ts`'s own
+    // per-render `dataSource` lazy field). The row must *still* be
+    // visible: the grace window is a property of the persisted filter
+    // itself (this reference's own `referenceCreatedAtMs` literal, still
+    // in the past relative to the row's Done date), not of any in-memory
+    // state a fresh instance wouldn't have. A previous design (tried and
+    // reverted this same story) moved the grace behavior into ephemeral,
+    // non-persisted state instead — it broke exactly this: going back to
+    // an old journal day no longer showed that day's own completed tasks,
+    // only the still-undone ones, which is the live regression this test
+    // guards against.
+    const secondDataSource = new DatabaseBlockDataSource(
+      canonicalModel,
+      ds => {
+        ds.serviceSet(DatabaseViewLocalOverrideProvider, override);
+      }
+    );
+    const secondView = secondDataSource.viewManager.viewGet(viewId)!;
+    expect(secondView.rows$.value.map(r => r.rowId)).toContain(rowId);
+  });
+
+  test('Story 2.11 (live bug report — regression test): duplicating a database-view-ref (journal-template → new daily journal, or plain "Duplicate doc") refreshes its frozen grace-clause literal on the copy, without touching the source', async () => {
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+    const { stub, getRef } = createStubStd({ journalDate: '2026-07-29' });
+
+    const items = journalTodoDatabaseSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stub, model }) : items;
+    await (
+      resolvedItems.find(i => i.name === 'Journal Todo') as unknown as {
+        action: () => Promise<void>;
+      }
+    ).action();
+    await wait();
+
+    const ref = getRef()!;
+    const canonicalModel = doc.getBlock(ref.refBlockId)
+      ?.model as DatabaseBlockModel;
+    const sourceRefEl = document.querySelector(
+      'affine-database-view-ref'
+    ) as DatabaseViewRefBlockComponent;
+    const sourceRefModel = sourceRefEl.model;
+    const sourceNoteModel = doc.getModelById(noteId)!;
+
+    // Day 1: a row gets checked off "today". This must remain visible in
+    // day 1's own reference forever after (see the previous test) — the
+    // point of *this* test is that a fresh COPY of this reference,
+    // produced later, must NOT show it, without ever touching day 1's own
+    // filter.
+    const sourceOverride = createLocalViewOverride(sourceRefModel);
+    const sourceDataSource = new DatabaseBlockDataSource(
+      canonicalModel,
+      ds => {
+        ds.serviceSet(DatabaseViewLocalOverrideProvider, sourceOverride);
+      }
+    );
+    const rowId = sourceDataSource.rowAddAsTodoList('end');
+    sourceDataSource.setTaskStatusChecked(rowId, true);
+    const viewId = sourceRefModel.props.views[0].id;
+    const sourceView = sourceDataSource.viewManager.viewGet(viewId)!;
+    expect(sourceView.rows$.value.map(r => r.rowId)).toContain(rowId);
+
+    const sourceLiteralBefore = (
+      sourceRefModel.props.views[0] as unknown as {
+        filter: { conditions: { args: { value: number }[] }[] };
+      }
+    ).filter.conditions[1].args[0].value;
+
+    // Day 2: duplicate the note containing this reference into a brand
+    // new doc — the exact same `Slice`/`Transformer` mechanism
+    // `DocsService.duplicateFromTemplate`/`.duplicate()` use in
+    // `packages/frontend/core`, with the same middleware wired in. Force
+    // "now" to be well after the row was checked off, so the assertions
+    // below can't flake on millisecond-level timing.
+    const duplicatedAtMs = Date.now() + 100_000;
+    const dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(duplicatedAtMs);
+    try {
+      const targetDoc = collection
+        .createDoc(
+          `doc:journal-todo-duplicate-target-${Math.random().toString(16).slice(2, 8)}`
+        )
+        .getStore();
+      targetDoc.load(() => {
+        const rootId = targetDoc.addBlock('affine:page', {
+          title: new Text(),
+        });
+        targetDoc.addBlock('affine:surface', {}, rootId);
+      });
+
+      const transformer = new Transformer({
+        schema: new Schema().register(AffineSchemas),
+        blobCRUD: collection.blobSync,
+        docCRUD: {
+          create: (id: string) => collection.createDoc(id).getStore({ id }),
+          get: (id: string) => collection.getDoc(id)?.getStore({ id }) ?? null,
+          delete: (id: string) => collection.removeDoc(id),
+        },
+        middlewares: [
+          replaceIdMiddleware(collection.idGenerator),
+          refreshJournalTodoGraceLiteralMiddleware(),
+        ],
+      });
+      const slice = Slice.fromModels(doc, [sourceNoteModel]);
+      const snapshot = transformer.sliceToSnapshot(slice);
+      if (!snapshot) throw new Error('Failed to create snapshot');
+      await transformer.snapshotToSlice(
+        snapshot,
+        targetDoc,
+        targetDoc.root?.id
+      );
+
+      const duplicatedRefEl = targetDoc.getBlocksByFlavour(
+        'affine:database-view-ref'
+      )[0];
+      const duplicatedRefModel =
+        duplicatedRefEl.model as unknown as typeof sourceRefModel;
+
+      // Still points at the exact same shared canonical — duplication
+      // never touches `refBlockId`/`refDocId` (no `replaceIdMiddleware`
+      // case for this block flavour, by design — see that middleware's
+      // own comment).
+      expect(duplicatedRefModel.props.refBlockId).toBe(
+        sourceRefModel.props.refBlockId
+      );
+
+      const duplicatedLiteral = (
+        duplicatedRefModel.props.views[0] as unknown as {
+          filter: { conditions: { args: { value: number }[] }[] };
+        }
+      ).filter.conditions[1].args[0].value;
+      expect(duplicatedLiteral).toBe(duplicatedAtMs - 1);
+      expect(duplicatedLiteral).not.toBe(sourceLiteralBefore);
+
+      // The copy's own view now excludes the row done "yesterday" — a
+      // fresh `DatabaseBlockDataSource` scoped to the copy's own local
+      // view override.
+      const duplicatedOverride = createLocalViewOverride(duplicatedRefModel);
+      const duplicatedDataSource = new DatabaseBlockDataSource(
+        canonicalModel,
+        ds => {
+          ds.serviceSet(DatabaseViewLocalOverrideProvider, duplicatedOverride);
+        }
+      );
+      const duplicatedView =
+        duplicatedDataSource.viewManager.viewGet(viewId)!;
+      expect(duplicatedView.rows$.value.map(r => r.rowId)).not.toContain(
+        rowId
+      );
+
+      // The source's own filter/view (day 1's own reference) was never
+      // touched by duplicating a copy of it.
+      expect(
+        (
+          sourceRefModel.props.views[0] as unknown as {
+            filter: { conditions: { args: { value: number }[] }[] };
+          }
+        ).filter.conditions[1].args[0].value
+      ).toBe(sourceLiteralBefore);
+      const sourceViewAfter = sourceDataSource.viewManager.viewGet(viewId)!;
+      expect(sourceViewAfter.rows$.value.map(r => r.rowId)).toContain(rowId);
+    } finally {
+      dateNowSpy.mockRestore();
+    }
   });
 
   test('the seeded list view hides Hierarchy/Parent/Ancestor and Done date columns; a table view added afterwards keeps Done date visible', async () => {

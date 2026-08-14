@@ -7,6 +7,7 @@ import type {
   NoteRefBlockModel,
 } from '@blocksuite/affine/model';
 import { NoteDisplayMode } from '@blocksuite/affine/model';
+import { refreshJournalTodoGraceLiteralMiddleware } from '@blocksuite/affine/blocks/database-view-ref';
 import { replaceIdMiddleware } from '@blocksuite/affine/shared/adapters';
 import type { AffineTextAttributes } from '@blocksuite/affine/shared/types';
 import {
@@ -266,7 +267,16 @@ export class DocsService extends Service {
           get: (id: string) => collection.getDoc(id)?.getStore({ id }) ?? null,
           delete: (id: string) => collection.removeDoc(id),
         },
-        middlewares: [replaceIdMiddleware(collection.idGenerator)],
+        middlewares: [
+          replaceIdMiddleware(collection.idGenerator),
+          // Story 2.11: refreshes the Journal Todo grace clause's frozen
+          // `Date.now()` filter literal on every duplicated
+          // `affine:database-view-ref` block — see that middleware's own
+          // comment for the full "why". Registered here (not just inside
+          // `duplicateFromTemplate` below) so plain "Duplicate doc" gets
+          // the same fix, not only journal-template duplication.
+          refreshJournalTodoGraceLiteralMiddleware(),
+        ],
       });
       const slice = Slice.fromModels(sourceBsDoc, [
         ...(sourceBsDoc.root?.children ?? []),
@@ -911,7 +921,16 @@ export class DocsService extends Service {
           get: (id: string) => collection.getDoc(id)?.getStore({ id }) ?? null,
           delete: (id: string) => collection.removeDoc(id),
         },
-        middlewares: [replaceIdMiddleware(collection.idGenerator)],
+        middlewares: [
+          replaceIdMiddleware(collection.idGenerator),
+          // Story 2.11: refreshes the Journal Todo grace clause's frozen
+          // `Date.now()` filter literal on every duplicated
+          // `affine:database-view-ref` block — see that middleware's own
+          // comment for the full "why". Also registered in `duplicate`
+          // above, so plain "Duplicate doc" gets the same fix, not just
+          // journal-template duplication.
+          refreshJournalTodoGraceLiteralMiddleware(),
+        ],
       });
       const slice = Slice.fromModels(sourceBsDoc, [
         ...(sourceBsDoc.root?.children ?? []),
