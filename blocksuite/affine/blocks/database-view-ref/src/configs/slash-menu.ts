@@ -211,20 +211,55 @@ export const journalTodoDatabaseSlashMenuConfig: SlashMenuConfig = {
             );
             if (statusColumnId && doneOption) {
               const doneDateColumnId = dataSource.ensureDoneDateColumn();
-              // A task done *after this specific reference was inserted*
-              // stays visible in this reference — it's only excluded once
-              // a later reference (a fresh `database-view-ref`, inserted
-              // later in real wall-clock time) is created. Deliberately
-              // NOT based on the journal's own date: a journal can be
-              // dated in the future or the past, but "was this marked
-              // done since I opened this particular list" is always a
-              // real-time question, regardless of which day the journal
-              // page itself represents — otherwise checking a box in a
-              // future- or past-dated journal would immediately hide the
-              // row instead of just marking it done. Live re-evaluation of
-              // a plain "not done" filter would otherwise hide a row the
-              // instant it's marked done, even from the very same
-              // reference it was just checked off in.
+              // A task done *after this specific reference was created*
+              // stays visible in *this* reference — it's only excluded
+              // once a *later* reference (a fresh `database-view-ref`,
+              // created later in real wall-clock time) comes along. This
+              // is a literal `Date.now()` baked into the stored filter at
+              // insertion time, deliberately NOT based on the journal's
+              // own date — a journal can be dated in the future or the
+              // past, but "was this marked done since I opened this
+              // particular list" is always a real-time question. Live
+              // re-evaluation of a plain "not done" filter would otherwise
+              // hide a row the instant it's marked done, even from the
+              // very reference it was just checked off in.
+              //
+              // Story 2.11 (live bug, twice-revisited — read this before
+              // changing this clause again): the data-view filter engine
+              // has no "relative to now" comparison, only literals, so
+              // this literal is fundamentally frozen from the moment it's
+              // written. Two things were tried and reverted here: (1)
+              // omitting the clause when `isTemplateDoc` was true at
+              // insertion time — missed the case where a doc becomes a
+              // template *after* insertion, and made template-sourced and
+              // manually-inserted references behave differently, which
+              // the user rejected; (2) moving the "stays visible after
+              // check-off" behavior entirely into ephemeral, in-memory,
+              // non-persisted state on `DatabaseBlockDataSource` — this
+              // fixed the template/manual inconsistency, but broke a more
+              // important, pre-existing guarantee: going back to an old
+              // journal day must still show *that day's own* completed
+              // tasks, which requires this to be persisted (ephemeral
+              // state doesn't survive navigating away and back — a fresh
+              // `DatabaseBlockDataSource` is constructed per render, with
+              // an empty grace set).
+              //
+              // Resolved fix: keep this clause as a real, persisted
+              // literal (below) — unconditionally, the same for every
+              // insertion — and instead fix the actual root cause of the
+              // "frozen forever" problem at its source: block duplication.
+              // A dedicated `TransformerMiddleware`
+              // (`refreshJournalTodoGraceLiteralMiddleware`, this
+              // package's own `duplicate-middleware.ts`) runs on every
+              // `affine:database-view-ref` copy produced by template
+              // duplication *or* plain "Duplicate doc" (wired into both
+              // `DocsService.duplicateFromTemplate` and `.duplicate()`)
+              // and rewrites this exact clause's literal to the
+              // duplication moment on the COPY only — the original
+              // reference (e.g. yesterday's journal page) keeps its own
+              // original literal untouched, so its own history stays
+              // intact. See that middleware's own comment for the full
+              // mechanism.
               const referenceCreatedAtMs = Date.now();
               initialFilter = {
                 type: 'group',
