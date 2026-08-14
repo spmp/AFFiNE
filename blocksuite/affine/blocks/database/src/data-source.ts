@@ -1414,7 +1414,22 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       for (const row of this._model.children) {
         Object.assign(
           doneFlags,
-          this.recomputeParentStatusesFromChildren(row.id, column.id, 'auto')
+          // `descendantDemotedFromDone: true` — this is a full-tree
+          // recompute (every row treated as "changed"), so the
+          // demote-a-stale-'done'-ancestor branch inside
+          // `recomputeParentStatusesFromChildren` must always be eligible
+          // to run here, not just when a single specific row's demotion
+          // triggered this call. Without this, that branch is gated on
+          // `context?.descendantDemotedFromDone`, which defaulted to
+          // `undefined` (falsy) at this call site — silently turning every
+          // full recompute (both the "a descendant demoted from done"
+          // cascade in `cellValueChange` and the `setTaskStatusInheritance`
+          // settings-change path) into promote-only. The `autoDemoteAutoDone`
+          // setting and manual-lock protection below still gate the actual
+          // demotion, so this doesn't force anything unwanted through.
+          this.recomputeParentStatusesFromChildren(row.id, column.id, 'auto', {
+            descendantDemotedFromDone: true,
+          })
         );
       }
     }
@@ -2092,7 +2107,20 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       dataSource: this,
       newValue: value,
       setValue: newValue => {
-        if (this._model.props.columns$.value.some(v => v.id === propertyId)) {
+        // `columns`, not `columns$` — `columns$` is not a real reactive
+        // signal this schema defines (confirmed: not referenced anywhere
+        // else in this codebase); accessing it returns something that
+        // is neither an empty array nor the actual column list, so
+        // `.some(...)` here always evaluated false, silently dropping
+        // every cell write that went through this fallback `setValue`
+        // path (the default for any property type without its own custom
+        // `rawValue.setValue`, e.g. the 'select' status column task
+        // completion depends on) — which in turn meant status changes
+        // were never persisted, and every downstream parent/ancestor
+        // status-propagation and demotion computation kept operating on
+        // stale 'no_status' reads. Every other column-existence check in
+        // this file already uses the plain `columns` array.
+        if (this._model.props.columns.some(v => v.id === propertyId)) {
           updateCell(this._model, rowId, {
             columnId: propertyId,
             value: newValue,
