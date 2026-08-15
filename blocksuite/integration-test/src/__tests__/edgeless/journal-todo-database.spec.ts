@@ -908,17 +908,59 @@ describe('journal todo database slash-menu command', () => {
     expect(doc.getBlock(rowId)).toBeTruthy();
     expect(dataSource.getTaskStatusInfo(rowId)?.checked).toBe(true);
 
-    // Marking done also stamps the hidden "Done date" column (kept for its
-    // own sake as a real, user-visible property — see `ensureDoneDateColumn`'s
-    // own comment) and, separately, records the row in this
-    // `DatabaseBlockDataSource` instance's own ephemeral grace set — see the
-    // next two tests for the actual visibility behavior that produces.
+    // Marking done also stamps the hidden "Done date" column — the piece
+    // the seeded OR-filter relies on to keep the row visible in *this*
+    // reference while still excluding it from a later reference (see the
+    // next two tests for the actual visibility behavior that produces).
     const doneDateColumnId = dataSource.ensureDoneDateColumn();
     expect(doneDateColumnId).toBeTruthy();
     const doneDateValue = doneDateColumnId
       ? getCell(canonicalModel, rowId, doneDateColumnId)?.value
       : undefined;
     expect(typeof doneDateValue).toBe('number');
+  });
+
+  test('clicking the Journal Todo row checkbox plays the same check animation as a normal todo list', async () => {
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+    const { stub, getRef } = createStubStd({ journalDate: '2026-07-29' });
+
+    const items = journalTodoDatabaseSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stub, model }) : items;
+    await (
+      resolvedItems.find(i => i.name === 'Journal Todo') as unknown as {
+        action: () => Promise<void>;
+      }
+    ).action();
+    await wait();
+
+    const ref = getRef()!;
+    const canonicalModel = doc.getBlock(ref.refBlockId)
+      ?.model as DatabaseBlockModel;
+    const dataSource = new DatabaseBlockDataSource(canonicalModel);
+    dataSource.rowAddAsTodoList('end');
+    await wait();
+
+    // Real DOM click on the actual rendered checkbox — not calling
+    // `setTaskStatusChecked` directly — so this exercises the exact same
+    // `onClick` handler wiring (`HeaderAreaTextCell.renderTaskStatusCheckbox`
+    // in `properties/title/text.ts`) a real user interaction goes through.
+    const checkbox = document.querySelector(
+      '[data-testid="task-status-checkbox"]'
+    ) as HTMLElement;
+    expect(checkbox).toBeTruthy();
+    expect(document.querySelector('.affine-check-animation')).toBeFalsy();
+
+    checkbox.click();
+
+    // `playCheckAnimation` (`@blocksuite/affine-components/icons`, the same
+    // utility `affine:list`'s own todo checkbox uses) synchronously appends
+    // its spark-burst element before its first `await` — present
+    // immediately after the click, even though the animation itself
+    // finishes and removes it a few hundred ms later.
+    expect(document.querySelector('.affine-check-animation')).toBeTruthy();
   });
 
   test.each([
