@@ -9,7 +9,7 @@ import {
   insertDatabaseViewRefBlockCommand,
   journalTodoDatabaseSlashMenuConfig,
   journalTodoSourceSlashMenuConfig,
-  refreshJournalTodoGraceLiteralMiddleware,
+  refreshJournalTodoOnDuplicateMiddleware,
 } from '@blocksuite/affine/blocks/database-view-ref';
 import type { DatabaseViewRefBlockComponent } from '@blocksuite/affine/blocks/database-view-ref';
 import { AffineSchemas } from '@blocksuite/affine/schemas';
@@ -304,7 +304,7 @@ describe('journal todo database slash-menu command', () => {
     // insertion, template-sourced or not, always seeds the same grace-clause
     // filter — `OR(isNotOneOf(done), after(doneDate, referenceCreatedAtMs))`.
     // The literal's "frozen forever" problem is fixed at the actual root
-    // (block duplication, via `refreshJournalTodoGraceLiteralMiddleware`),
+    // (block duplication, via `refreshJournalTodoOnDuplicateMiddleware`),
     // not by omitting the clause here.
     const seededView = refEl.model.props.views[0] as unknown as {
       filter?: { op: string; conditions: unknown[] };
@@ -1167,7 +1167,7 @@ describe('journal todo database slash-menu command', () => {
         },
         middlewares: [
           replaceIdMiddleware(collection.idGenerator),
-          refreshJournalTodoGraceLiteralMiddleware(),
+          refreshJournalTodoOnDuplicateMiddleware(),
         ],
       });
       const slice = Slice.fromModels(doc, [sourceNoteModel]);
@@ -1231,6 +1231,153 @@ describe('journal todo database slash-menu command', () => {
     } finally {
       dateNowSpy.mockRestore();
     }
+  });
+
+  test('Story 2.11 (live bug report — regression test): "Note color" gets hidden in any reference that touches it, even if the column already exists from a different reference', async () => {
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+    const { stub, getRef } = createStubStd({ journalDate: '2026-07-29' });
+
+    const items = journalTodoDatabaseSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stub, model }) : items;
+    await (
+      resolvedItems.find(i => i.name === 'Journal Todo') as unknown as {
+        action: () => Promise<void>;
+      }
+    ).action();
+    await wait();
+
+    const ref = getRef()!;
+    const canonicalModel = doc.getBlock(ref.refBlockId)
+      ?.model as DatabaseBlockModel;
+    const refEl = document.querySelector(
+      'affine-database-view-ref'
+    ) as DatabaseViewRefBlockComponent;
+    const refModel = refEl.model;
+
+    const findHide = (viewModel: unknown, columnId: string) => {
+      const view = viewModel as { columns?: { id: string; hide?: boolean }[] };
+      return view.columns?.find(c => c.id === columnId)?.hide;
+    };
+
+    // Simulate "Note color" already existing globally, created via some
+    // other, unrelated reference/context (the canonical's own default,
+    // un-overridden view here) that never touched *this* reference's own
+    // view — this reference's own view genuinely has no hide entry for it
+    // yet, matching the live bug's starting state.
+    const noteColorColumnId = new DatabaseBlockDataSource(
+      canonicalModel
+    ).ensureNoteColorColumn()!;
+    expect(noteColorColumnId).toBeTruthy();
+    expect(findHide(refModel.props.views[0], noteColorColumnId)).not.toBe(
+      true
+    );
+
+    // *This* reference's own dataSource, scoped via its local view
+    // override — the real code path `createNoteForRow`/
+    // `attachExistingNoteForRow`/`setNoteColor` use — calling
+    // `ensureNoteColorColumn()` through it must self-correct the hide
+    // state for its own view, even though the column already existed.
+    const refScopedDataSource = new DatabaseBlockDataSource(
+      canonicalModel,
+      ds => {
+        ds.serviceSet(
+          DatabaseViewLocalOverrideProvider,
+          createLocalViewOverride(refModel)
+        );
+      }
+    );
+    refScopedDataSource.ensureNoteColorColumn();
+
+    expect(findHide(refModel.props.views[0], noteColorColumnId)).toBe(true);
+  });
+
+  test('Story 2.11 (live bug report — regression test): duplicating a database-view-ref also hides "Note color" on the copy, without touching the source', async () => {
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+    const { stub, getRef } = createStubStd({ journalDate: '2026-07-29' });
+
+    const items = journalTodoDatabaseSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stub, model }) : items;
+    await (
+      resolvedItems.find(i => i.name === 'Journal Todo') as unknown as {
+        action: () => Promise<void>;
+      }
+    ).action();
+    await wait();
+
+    const ref = getRef()!;
+    const canonicalModel = doc.getBlock(ref.refBlockId)
+      ?.model as DatabaseBlockModel;
+    const sourceRefEl = document.querySelector(
+      'affine-database-view-ref'
+    ) as DatabaseViewRefBlockComponent;
+    const sourceRefModel = sourceRefEl.model;
+    const sourceNoteModel = doc.getModelById(noteId)!;
+
+    const findHide = (viewModel: unknown, columnId: string) => {
+      const view = viewModel as { columns?: { id: string; hide?: boolean }[] };
+      return view.columns?.find(c => c.id === columnId)?.hide;
+    };
+
+    // "Note color" comes into existence *after* this source reference's
+    // own view was already created — matches a real journal template,
+    // whose own view is seeded long before any note is ever attached to
+    // any of its rows. The source's own view genuinely never got the
+    // hide, matching the live bug's actual starting state.
+    const noteColorColumnId = new DatabaseBlockDataSource(
+      canonicalModel
+    ).ensureNoteColorColumn()!;
+    expect(
+      findHide(sourceRefModel.props.views[0], noteColorColumnId)
+    ).not.toBe(true);
+
+    const targetDoc = collection
+      .createDoc(
+        `doc:journal-todo-duplicate-note-color-${Math.random().toString(16).slice(2, 8)}`
+      )
+      .getStore();
+    targetDoc.load(() => {
+      const rootId = targetDoc.addBlock('affine:page', { title: new Text() });
+      targetDoc.addBlock('affine:surface', {}, rootId);
+    });
+
+    const transformer = new Transformer({
+      schema: new Schema().register(AffineSchemas),
+      blobCRUD: collection.blobSync,
+      docCRUD: {
+        create: (id: string) => collection.createDoc(id).getStore({ id }),
+        get: (id: string) => collection.getDoc(id)?.getStore({ id }) ?? null,
+        delete: (id: string) => collection.removeDoc(id),
+      },
+      middlewares: [
+        replaceIdMiddleware(collection.idGenerator),
+        refreshJournalTodoOnDuplicateMiddleware(),
+      ],
+    });
+    const slice = Slice.fromModels(doc, [sourceNoteModel]);
+    const snapshot = transformer.sliceToSnapshot(slice);
+    if (!snapshot) throw new Error('Failed to create snapshot');
+    await transformer.snapshotToSlice(snapshot, targetDoc, targetDoc.root?.id);
+
+    const duplicatedRefEl = targetDoc.getBlocksByFlavour(
+      'affine:database-view-ref'
+    )[0];
+    const duplicatedRefModel =
+      duplicatedRefEl.model as unknown as typeof sourceRefModel;
+
+    // The copy gets it hidden...
+    expect(
+      findHide(duplicatedRefModel.props.views[0], noteColorColumnId)
+    ).toBe(true);
+    // ...without the source's own (still-not-hidden) view being touched.
+    expect(
+      findHide(sourceRefModel.props.views[0], noteColorColumnId)
+    ).not.toBe(true);
   });
 
   test('the seeded list view hides Hierarchy/Parent/Ancestor and Done date columns; a table view added afterwards keeps Done date visible', async () => {
