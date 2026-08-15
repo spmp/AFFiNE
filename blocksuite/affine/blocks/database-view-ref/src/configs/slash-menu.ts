@@ -249,7 +249,7 @@ export const journalTodoDatabaseSlashMenuConfig: SlashMenuConfig = {
               // insertion — and instead fix the actual root cause of the
               // "frozen forever" problem at its source: block duplication.
               // A dedicated `TransformerMiddleware`
-              // (`refreshJournalTodoGraceLiteralMiddleware`, this
+              // (`refreshJournalTodoOnDuplicateMiddleware`, this
               // package's own `duplicate-middleware.ts`) runs on every
               // `affine:database-view-ref` copy produced by template
               // duplication *or* plain "Duplicate doc" (wired into both

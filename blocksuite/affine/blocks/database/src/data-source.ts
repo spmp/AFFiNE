@@ -1055,19 +1055,37 @@ export class DatabaseBlockDataSource extends DataSourceBase {
    * no-`viewIds`-filter form of `hidePropertyInViews`, the same call
    * `ensureTaskHierarchyColumns`'s own `getOrAdd` already uses to hide a
    * column everywhere) — unlike Done date, which stays visible in table.
+   *
+   * Unlike Note/Due date/Done date/Status (all eagerly ensured on *every*
+   * `/Journal Todo` invocation in `slash-menu.ts`, so `hideDefaultHidden
+   * ColumnsForNewView` always sees them already existing by the time each
+   * reference's own view is created), this column only ever comes into
+   * existence lazily, the first time *any* row anywhere gets a note
+   * attached — there's no equivalent eager-ensure call for it, since
+   * creating it before any note exists would be pointless plumbing.
+   * Previously the `hidePropertyInViews` call below only ran inside the
+   * "just created it" branch, so only the *one* reference whose own note
+   * -attach action happened to be the very first one ever, globally, got
+   * it hidden in its own view — every other reference (a different
+   * manually-created table, or the same table's own view on a different
+   * day) that later attached a note to one of *its* rows found the column
+   * already existing and skipped straight past the hide entirely, leaving
+   * it visible there. Re-running the hide unconditionally, every time any
+   * reference calls this, fixes that: cheap (a handful of already-hidden
+   * no-op writes) and correct regardless of which reference happens to
+   * create the column first.
    */
   ensureNoteColorColumn(): string | undefined {
     const existing = this.getNoteColorColumn();
-    if (existing) {
-      return existing.id;
-    }
-    const columnId = addProperty(
-      this._model,
-      'end',
-      databaseBlockProperties.richTextColumnConfig.create(
-        TASK_NOTE_COLOR_COLUMN_NAME
-      )
-    );
+    const columnId =
+      existing?.id ??
+      addProperty(
+        this._model,
+        'end',
+        databaseBlockProperties.richTextColumnConfig.create(
+          TASK_NOTE_COLOR_COLUMN_NAME
+        )
+      );
     this.hidePropertyInViews(columnId);
     return columnId;
   }

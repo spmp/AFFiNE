@@ -7,7 +7,7 @@ import type {
   NoteRefBlockModel,
 } from '@blocksuite/affine/model';
 import { NoteDisplayMode } from '@blocksuite/affine/model';
-import { refreshJournalTodoGraceLiteralMiddleware } from '@blocksuite/affine/blocks/database-view-ref';
+import { refreshJournalTodoOnDuplicateMiddleware } from '@blocksuite/affine/blocks/database-view-ref';
 import { replaceIdMiddleware } from '@blocksuite/affine/shared/adapters';
 import type { AffineTextAttributes } from '@blocksuite/affine/shared/types';
 import {
@@ -275,7 +275,7 @@ export class DocsService extends Service {
           // comment for the full "why". Registered here (not just inside
           // `duplicateFromTemplate` below) so plain "Duplicate doc" gets
           // the same fix, not only journal-template duplication.
-          refreshJournalTodoGraceLiteralMiddleware(),
+          refreshJournalTodoOnDuplicateMiddleware(),
         ],
       });
       const slice = Slice.fromModels(sourceBsDoc, [
@@ -929,7 +929,7 @@ export class DocsService extends Service {
           // comment for the full "why". Also registered in `duplicate`
           // above, so plain "Duplicate doc" gets the same fix, not just
           // journal-template duplication.
-          refreshJournalTodoGraceLiteralMiddleware(),
+          refreshJournalTodoOnDuplicateMiddleware(),
         ],
       });
       const slice = Slice.fromModels(sourceBsDoc, [
