@@ -129,4 +129,73 @@ describe('Story 2.7: calendar entry click navigates to the journal page', () => 
     const [pageRef] = peek.mock.calls[0] as [{ docId: string }];
     expect(pageRef.docId).toBe(doc.id);
   });
+
+  // Live bug report: creating a brand-new row from a calendar view of the
+  // journal-todo canonical (the "New row" button, empty-month state) hits
+  // the exact same `detailPanelConfig.openDetailPanel` code path as
+  // clicking an *existing* row's entry (tested above) — which, for the
+  // journal-todo canonical, always navigates to the row's journal-page
+  // appearance instead of opening the row detail panel. A brand-new row
+  // has no Done date yet, so `resolveJournalTodoNavigationDate` resolves
+  // it to *today* regardless of which day was actually clicked on the
+  // calendar — the user ends up peeking today's journal page (which, if
+  // they're already working in it, looks exactly like "the note I'm
+  // already in") with no way to set a title, closing that peek leaves an
+  // "Untitled" calendar entry behind.
+  test('creating a new row from the calendar (empty-month "New row" button) must NOT navigate to the journal page — it has no title to set there', async () => {
+    const todayDate = todayLocalDate();
+    markJournal(doc.id, todayDate);
+
+    const noteId = addNote(doc);
+    const canonicalDbId = doc.addBlock(
+      'affine:database',
+      { title: new Text('Journal Todo') },
+      noteId
+    );
+    const canonicalModel = doc.getModelById(canonicalDbId) as
+      | DatabaseBlockModel
+      | undefined;
+    if (!canonicalModel) throw new Error('canonical database not found');
+    const canonicalDataSource = new DatabaseBlockDataSource(canonicalModel);
+    canonicalDataSource.ensureTaskStatusColumn();
+    // Due date column must exist for the calendar to auto-select it as its
+    // date axis (`CalendarSingleView.dateMapping$`'s own `getDueDateColumn`
+    // fallback) — no row needs one set yet; the empty-month hint is
+    // exactly the state a fresh calendar view starts in.
+    canonicalDataSource.ensureDueDateColumn(editor.std);
+
+    journalTodoRef = { refDocId: doc.id, refBlockId: canonicalDbId };
+
+    const calendarViewId = canonicalDataSource.viewManager.viewAdd('calendar');
+    doc.updateBlock(canonicalModel, { currentViewId: calendarViewId });
+    await wait(300);
+
+    const newRowButton = document.querySelector(
+      '.calendar-empty-month-hint-action'
+    ) as HTMLElement | null;
+    expect(newRowButton).toBeTruthy();
+
+    const rowCountBefore = canonicalDataSource.rows$.value.length;
+
+    await userEvent.click(newRowButton!);
+    await wait(200);
+
+    // `peekViewService.peek()` is called either way — once for navigating
+    // to a *doc* (`{docId, ...}`, the buggy behavior: today's journal
+    // page, with no title field for the new row), and once for the
+    // generic row detail panel (`{target, template}`, rendering this
+    // row's own editable title) — so the call itself isn't the signal,
+    // the *payload shape* is. The actual bug: this currently gets called
+    // with a `docId` (today's journal page) instead of a `template`
+    // (the row detail panel the user actually needs to set a title).
+    expect(peek).toHaveBeenCalledTimes(1);
+    const [payload] = peek.mock.calls[0] as [Record<string, unknown>];
+    expect(payload).not.toHaveProperty('docId');
+    expect(payload).toHaveProperty('template');
+
+    // The row itself is created regardless of which UI opens afterward —
+    // confirms it's not literally missing from the underlying data, just
+    // stuck with no way to title it.
+    expect(canonicalDataSource.rows$.value.length).toBe(rowCountBefore + 1);
+  });
 });
