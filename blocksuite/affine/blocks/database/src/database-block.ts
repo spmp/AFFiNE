@@ -708,7 +708,18 @@ export class DatabaseBlockComponent extends CaptionedBlockComponent<DatabaseBloc
               // comment. Falls through to the generic behavior below if the
               // target journal page doesn't exist yet (never silently
               // no-ops, never auto-creates a page as a click side effect).
-              if (data.view.type === 'calendar') {
+              //
+              // Live bug: `data.isNewRow` skips this entirely — a row the
+              // calendar's own "New row" button just created has no Done
+              // date yet, so `resolveJournalTodoNavigationDate` always
+              // resolves it to *today*, regardless of which day was
+              // actually clicked on the calendar. Following that
+              // navigation for a brand-new row peeked today's journal
+              // page — which has no title field for the new row at all —
+              // instead of the row detail panel the user actually needs
+              // to fill it in, leaving the row permanently "Untitled"
+              // once that peek is closed.
+              if (data.view.type === 'calendar' && !data.isNewRow) {
                 const journalTodo = this.std.getOptional(
                   JournalTodoDatabaseProvider
                 );
