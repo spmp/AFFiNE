@@ -1,3 +1,4 @@
+import { playCheckAnimation } from '@blocksuite/affine-components/icons';
 import { DefaultInlineManagerExtension } from '@blocksuite/affine-inline-preset';
 import type { RichText } from '@blocksuite/affine-rich-text';
 import {
@@ -332,12 +333,27 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
       if (this.readonly) {
         return;
       }
-      setChecked(!checked);
+      const next = !checked;
+      setChecked(next);
+      // Mirrors `affine:list` todo's own `playCheckAnimation` call in
+      // `list-block.ts` — same shared spark-burst utility, only played on
+      // the unchecked→checked transition, never on uncheck. This is the
+      // one shared checkbox render path for every view type (list/table/
+      // kanban), so this also covers Journal Todo (which is just a list
+      // view over this same component) without any view-specific code.
+      if (next) {
+        const target = event.currentTarget as HTMLElement;
+        const { width } = target.getBoundingClientRect();
+        playCheckAnimation(target, { size: width || undefined }).catch(
+          console.error
+        );
+      }
     };
 
     return html`<div
       contenteditable="false"
       class=${`${titleTaskCheckboxStyle} ${this.readonly ? 'readonly' : ''}`}
+      data-testid="task-status-checkbox"
       @click=${onClick}
     >
       ${checked
