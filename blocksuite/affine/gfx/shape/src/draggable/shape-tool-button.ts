@@ -120,9 +120,9 @@ export class EdgelessShapeToolButton extends EdgelessToolbarToolMixin(
 
     // Handle shape selection
     panel.addEventListener('shapeselect', ((e: CustomEvent) => {
-      const { shapeName, stencilName } = e.detail;
+      const { shapeName, stencilName, stencilData } = e.detail;
       this._syncShapeColors(shapeName, stencilName);
-      this.setEdgelessTool(this.type, { shapeName, stencilName });
+      this.setEdgelessTool(this.type, { shapeName, stencilName, stencilData });
       this._updateOverlay();
       this._closeBrowser();
     }) as EventListener);

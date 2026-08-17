@@ -28,7 +28,10 @@ import { Bound } from '@blocksuite/global/gfx';
 import { deltaInsertsToChunks } from '@blocksuite/std/inline';
 
 import { DRAWIO_STENCIL_SHAPE_MAP } from '../../drawio/stencil-map.js';
-import { getStencilShapeData } from '../../drawio/stencil-utils.js';
+import {
+  getStencilShapeData,
+  loadStencilShapeData,
+} from '../../drawio/stencil-utils.js';
 import { actor } from './actor.js';
 import { cloud } from './cloud.js';
 import { cube } from './cube.js';
@@ -72,8 +75,29 @@ const shapeRenderers: Record<
       rc: RoughCanvas,
       colors: Colors
     ) => {
-      const stencilName = (model as ShapeElementModel).stencilName;
-      const stencil = stencilName ? getStencilShapeData(stencilName) : null;
+      const shapeModel = model as ShapeElementModel;
+      const stencilName = shapeModel.stencilName;
+      // Fast path: embedded geometry, no drawio library dependency at all.
+      const stencil =
+        shapeModel.stencilData ??
+        (stencilName ? getStencilShapeData(stencilName) : null);
+      if (!stencil && stencilName) {
+        // Legacy shape (created before stencilData existed) with nothing
+        // resolved yet: draw a fallback this frame, and kick off a load.
+        // Setting stencilData on resolve triggers a repaint via the
+        // existing elementUpdated -> refresh({type:'element'}) pipeline
+        // (CanvasRenderer._watchSurface) and backfills so every render
+        // after this one is a fast-path hit, for this shape specifically.
+        loadStencilShapeData(stencilName)
+          .then(data => {
+            if (data && !shapeModel.stencilData) {
+              shapeModel.stencilData = data;
+            }
+          })
+          .catch(() => {
+            // best-effort — shape keeps rendering as the plain fallback
+          });
+      }
       const render = stencil ? createStencilShapeRenderer(stencil) : rect;
       render(model, ctx, matrix, renderer, rc, colors);
     };

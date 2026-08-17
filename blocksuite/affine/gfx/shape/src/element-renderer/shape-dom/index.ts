@@ -11,6 +11,7 @@ import { DRAWIO_STENCIL_SHAPE_MAP } from '../../drawio/stencil-map.js';
 import {
   buildPathFromStencil,
   getStencilShapeData,
+  loadStencilShapeData,
 } from '../../drawio/stencil-utils.js';
 import { getTextFlipCompensation } from '../shape/index.js';
 import {
@@ -354,7 +355,28 @@ export const shapeDomRenderer = (
         : model.shapeType === 'drawioStencil'
           ? model.stencilName
           : DRAWIO_STENCIL_SHAPE_MAP[model.shapeType];
-    const stencil = stencilName ? getStencilShapeData(stencilName) : null;
+    // Fast path: embedded geometry, no drawio library dependency at all.
+    const stencil =
+      model.shapeType === 'drawioStencil' && model.stencilData
+        ? model.stencilData
+        : stencilName
+          ? getStencilShapeData(stencilName)
+          : null;
+    if (!stencil && stencilName && model.shapeType === 'drawioStencil') {
+      // Legacy shape with nothing resolved yet: this frame renders without
+      // a path (see the `if (stencil)` guard below), and the resolve
+      // callback backfills stencilData, which triggers a repaint via the
+      // existing elementUpdated -> refresh pipeline (DomRenderer._watchSurface).
+      loadStencilShapeData(stencilName)
+        .then(data => {
+          if (data && !model.stencilData) {
+            model.stencilData = data;
+          }
+        })
+        .catch(() => {
+          // best-effort — shape keeps rendering without a path this frame
+        });
+    }
 
     if (stencil) {
       const isLibraryStencil = model.shapeType === 'drawioStencil';
