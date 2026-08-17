@@ -4,7 +4,11 @@ import {
   EXCLUDING_MOUSE_OUT_CLASS_LIST,
   type SurfaceBlockComponent,
 } from '@blocksuite/affine-block-surface';
-import type { ShapeElementModel, ShapeName } from '@blocksuite/affine-model';
+import type {
+  ShapeElementModel,
+  ShapeName,
+  ShapeStencilData,
+} from '@blocksuite/affine-model';
 import {
   COLLAPSIBLE_CONTAINER_SHAPES,
   DefaultTheme,
@@ -34,6 +38,11 @@ import { ShapeOverlay } from './overlay/shape-overlay.js';
 export type ShapeToolOption = {
   shapeName: ShapeName;
   stencilName?: string;
+  // Already-resolved geometry for the selected library shape, if any —
+  // set by the shape-browser panel (which has it in hand synchronously at
+  // selection time). Embedded directly onto the new element so rendering
+  // never needs to load the drawio library for this instance.
+  stencilData?: ShapeStencilData;
 };
 
 export class ShapeTool extends BaseTool<ShapeToolOption> {
@@ -67,7 +76,7 @@ export class ShapeTool extends BaseTool<ShapeToolOption> {
     height: number
   ): string {
     const { viewport } = this.gfx;
-    const { shapeName, stencilName } = this.activatedOption;
+    const { shapeName, stencilName, stencilData } = this.activatedOption;
     const propsStore = this.std.get(EditPropsStore);
     const attributes =
       propsStore.lastProps$.value[`shape:${shapeName}`] ??
@@ -115,6 +124,7 @@ export class ShapeTool extends BaseTool<ShapeToolOption> {
       flipY: false,
       radius: isMindmapSubTopic ? 0.5 : attributes.radius,
       stencilName,
+      stencilData,
       filled: isMindmapBranch
         ? false
         : shapeName === ShapeType.DrawioStencil

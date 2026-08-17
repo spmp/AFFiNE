@@ -17,7 +17,7 @@ import {
 } from '@blocksuite/affine-shared/utils';
 import { WithDisposable } from '@blocksuite/global/lit';
 import type { BlockComponent } from '@blocksuite/std';
-import { css, html, LitElement, unsafeCSS } from 'lit';
+import { css, html, LitElement, nothing, unsafeCSS } from 'lit';
 import { property, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import { styleMap } from 'lit/directives/style-map.js';
@@ -26,6 +26,7 @@ import { drawioLibraryCatalog } from '../drawio/library-catalog';
 import {
   buildPathFromStencil,
   getStencilShapeData,
+  loadAllLibraryStencilPartitions,
 } from '../drawio/stencil-utils';
 import { AllShapeConfig } from '../toolbar/shape-menu-config';
 
@@ -255,14 +256,22 @@ function getShapeBrowserLayout(viewportWidth: number, itemCount: number) {
   return { columns, panelWidth };
 }
 
-const renderStencilIcon = (stencilName?: string) => {
+const renderStencilIcon = (stencilName?: string, isLibraryShape = false) => {
   if (!stencilName) return html``;
-  return html`<canvas
-    class="stencil-icon-canvas"
-    width="${ICON_SIZE}"
-    height="${ICON_SIZE}"
-    data-stencil="${stencilName}"
-  ></canvas>`;
+  // Only drawio-library shapes are lazily loaded (see stencil-utils.ts) —
+  // built-in stencils (DRAWIO_STENCIL_SHAPE_MAP) are always resolved
+  // synchronously, so they never show a spinner.
+  const pending = isLibraryShape && !getStencilShapeData(stencilName);
+  return html`<span class="stencil-icon-wrapper">
+    <canvas
+      class="stencil-icon-canvas"
+      width="${ICON_SIZE}"
+      height="${ICON_SIZE}"
+      data-stencil="${stencilName}"
+      style="${pending ? 'visibility: hidden' : ''}"
+    ></canvas>
+    ${pending ? html`<span class="stencil-icon-spinner"></span>` : nothing}
+  </span>`;
 };
 
 const buildIconPaths = (stencilName: string) => {
@@ -488,6 +497,33 @@ export class EdgelessShapeBrowserPanel extends WithDisposable(LitElement) {
       z-index: 1;
     }
 
+    .stencil-icon-wrapper {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: ${ICON_SIZE}px;
+      height: ${ICON_SIZE}px;
+    }
+
+    .stencil-icon-spinner {
+      position: absolute;
+      inset: 0;
+      margin: auto;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 2px solid var(--affine-black-10);
+      border-top-color: var(--affine-icon-color);
+      animation: affine-stencil-icon-spin 0.8s linear infinite;
+    }
+
+    @keyframes affine-stencil-icon-spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
     .shape-item:hover::after {
       content: '';
       position: absolute;
@@ -545,6 +581,13 @@ export class EdgelessShapeBrowserPanel extends WithDisposable(LitElement) {
   private accessor _viewportWidth =
     typeof window === 'undefined' ? 1440 : window.innerWidth;
 
+  // The drawio library is loaded lazily (see stencil-utils.ts) — it isn't
+  // guaranteed to be resolved yet when this panel first renders. This flips
+  // once loaded purely to force Lit to re-render with the now-available
+  // data (getStencilShapeData itself doesn't push updates).
+  @state()
+  private accessor _libraryStencilsLoaded = false;
+
   @property({ attribute: false })
   accessor edgeless!: BlockComponent;
 
@@ -564,9 +607,16 @@ export class EdgelessShapeBrowserPanel extends WithDisposable(LitElement) {
   private _onSelect(value: ShapeName, stencilName?: string) {
     this.selectedShape = value;
     this.selectedStencilName = stencilName;
+    // Resolved synchronously from cache: by the time a shape is selectable
+    // here, its icon thumbnail has already rendered via the same lookup, so
+    // this is a cache hit, not a fresh load. Embedding it now means the
+    // placed shape never needs the drawio library to render itself.
+    const stencilData = stencilName
+      ? (getStencilShapeData(stencilName) ?? undefined)
+      : undefined;
     this.dispatchEvent(
       new CustomEvent('shapeselect', {
-        detail: { shapeName: value, stencilName },
+        detail: { shapeName: value, stencilName, stencilData },
       })
     );
   }
@@ -689,6 +739,14 @@ export class EdgelessShapeBrowserPanel extends WithDisposable(LitElement) {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    loadAllLibraryStencilPartitions()
+      .then(() => {
+        this._libraryStencilsLoaded = true;
+      })
+      .catch(() => {
+        // best-effort — built-in shapes and any already-cached library
+        // shapes still work; browsing the drawio library just stays empty
+      });
     this.addEventListener('keydown', this._stopNonEscapeKeydown, true);
     this.addEventListener('keydown', this._stopNonEscapeKeydown, false);
     this._disposables.addFromEvent(this, 'click', stopPropagation);
@@ -897,7 +955,10 @@ export class EdgelessShapeBrowserPanel extends WithDisposable(LitElement) {
                         }}
                       >
                         ${stencilName
-                          ? renderStencilIcon(stencilName)
+                          ? renderStencilIcon(
+                              stencilName,
+                              name === ShapeType.DrawioStencil
+                            )
                           : generalIcon}
                         <span class="shape-name">${tooltip}</span>
                       </div>

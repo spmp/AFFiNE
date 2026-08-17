@@ -86,18 +86,6 @@ export class StencilShape extends Shape {
         stroke: 'transparent',
         fill: fillColor,
       };
-      if (typeof window !== 'undefined') {
-        const seen = ((window as any).__AFFINE_DRAWIO_DEBUG_SEEN ??= new Set());
-        if (!seen.has(`canvas:${this.type}`)) {
-          seen.add(`canvas:${this.type}`);
-          console.log('[drawio-canvas]', {
-            type: this.type,
-            width: this._stencil.width,
-            height: this._stencil.height,
-            basePaths,
-          });
-        }
-      }
       drawStencilPaths(
         ctx,
         rc,
