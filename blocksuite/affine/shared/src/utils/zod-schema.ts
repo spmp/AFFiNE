@@ -1,6 +1,7 @@
 import {
   ColorSchema,
   ConnectorMode,
+  DEFAULT_CONNECTOR_CORNER_RADIUS,
   DEFAULT_CONNECTOR_MODE,
   DEFAULT_FRONT_ENDPOINT_STYLE,
   DEFAULT_HIGHLIGHTER_LINE_WIDTH,
@@ -55,6 +56,7 @@ export const ConnectorSchema = z
     strokeWidth: LineWidthSchema,
     rough: z.boolean(),
     mode: ConnectorModeSchema,
+    cornerRadius: z.number(),
     labelStyle: z.object({
       color: ColorSchema,
       fontSize: z.number(),
@@ -72,6 +74,7 @@ export const ConnectorSchema = z
     strokeWidth: LineWidth.Two,
     rough: false,
     mode: DEFAULT_CONNECTOR_MODE,
+    cornerRadius: DEFAULT_CONNECTOR_CORNER_RADIUS,
     labelStyle: {
       color: DefaultTheme.black,
       fontSize: 16,
