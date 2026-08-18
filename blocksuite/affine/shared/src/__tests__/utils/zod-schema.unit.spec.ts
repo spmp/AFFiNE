@@ -13,7 +13,7 @@ describe('ConnectorSchema', () => {
     const { cornerRadius: _cornerRadius, ...withoutCornerRadius } =
       ConnectorSchema.parse(undefined);
     expect(() =>
-      ConnectorSchema._def.innerType.parse(withoutCornerRadius)
+      ConnectorSchema.removeDefault().parse(withoutCornerRadius)
     ).toThrow();
   });
 });
