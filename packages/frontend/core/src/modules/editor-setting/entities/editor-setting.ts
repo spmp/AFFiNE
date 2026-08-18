@@ -7,6 +7,7 @@ import { Entity, LiveData } from '@toeverything/infra';
 import { isObject, merge } from 'lodash-es';
 import type { Observable } from 'rxjs';
 import { map } from 'rxjs';
+import type { z } from 'zod';
 
 import type { EditorSettingProvider } from '../provider/editor-setting-provider';
 import { EditorSettingSchema } from '../schema';
@@ -17,6 +18,27 @@ type SettingItem<T> = {
 
   $: LiveData<T>;
 };
+
+/**
+ * Parses a persisted setting value, backfilling missing fields from the
+ * schema's defaults instead of discarding the whole entry when the schema
+ * has gained a field since the value was persisted. Falls back to the
+ * schema's full default only when the merged result still doesn't validate
+ * (e.g. a genuinely corrupted or incompatible stored value).
+ */
+export function parseSettingWithFallback<Schema extends z.ZodTypeAny>(
+  schema: Schema,
+  raw: unknown
+): z.infer<Schema> {
+  const parsed = schema.safeParse(raw);
+  if (parsed.success) {
+    return parsed.data;
+  }
+  const backfilled = isObject(raw)
+    ? schema.safeParse(merge(schema.parse(undefined), raw))
+    : { success: false as const };
+  return backfilled.success ? backfilled.data : schema.parse(undefined);
+}
 
 export class EditorSetting extends Entity {
   constructor(public readonly provider: EditorSettingProvider) {
@@ -75,14 +97,8 @@ export class EditorSetting extends Entity {
           Object.fromEntries(
             Object.entries(EditorSettingSchema.shape).map(([key, schema]) => {
               const value = all[key];
-              const parsed = schema.safeParse(
-                value ? JSON.parse(value) : undefined
-              );
-              return [
-                key,
-                // if parsing fails, return the default value
-                parsed.success ? parsed.data : schema.parse(undefined),
-              ];
+              const raw = value ? JSON.parse(value) : undefined;
+              return [key, parseSettingWithFallback(schema, raw)];
             })
           ) as EditorSettingSchema
       )
