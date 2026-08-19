@@ -90,6 +90,7 @@ RUN yarn install --inline-builds
 
 # Build ALL components in the right order
 ENV BUILD_TYPE=${BUILD_TYPE}
+ENV PUBLIC_PATH=/
 ENV NODE_OPTIONS="--max_old_space_size=4096"
 
 # Build core dependencies first
