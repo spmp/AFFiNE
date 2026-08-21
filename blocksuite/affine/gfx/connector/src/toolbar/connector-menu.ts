@@ -142,6 +142,15 @@ export class EdgelessConnectorMenu extends EdgelessToolbarToolMixin(
 
   private _activeColorKey: string | undefined;
 
+  // Tracks which workspace's palettes are currently loaded into `_palettes`.
+  // Needed because `this.edgeless.store.workspace.id` isn't reliably
+  // available yet at `connectedCallback` time (the edgeless surface/
+  // workspace context can still be wiring up) — without this, the menu can
+  // render with an uninitialized/empty palette (the "empty pill" symptom)
+  // before the workspace becomes available. `_ensureWorkspacePalettesLoaded`
+  // (called from render()) uses this to retry the load once it is.
+  private _loadedWorkspaceId: string | undefined;
+
   private _palettes = filterShapePalettes(shapePalettes, 'line');
 
   private readonly _props$ = computed(() => {
@@ -158,6 +167,11 @@ export class EdgelessConnectorMenu extends EdgelessToolbarToolMixin(
     super.connectedCallback();
     const memory = getToolPaletteMemory(this._memoryKey);
     this._reloadPalettes();
+    // The workspace id is often not yet available on the same tick as
+    // connectedCallback; retry once microtasks (including whatever sets up
+    // the workspace context) have flushed, so the palette doesn't stay
+    // stuck on the pre-workspace default.
+    queueMicrotask(() => this._reloadPalettes());
     this._paletteIndex = memory.index % this._paletteCount;
     this._activeColorKey = memory.activeKey;
 
@@ -182,19 +196,36 @@ export class EdgelessConnectorMenu extends EdgelessToolbarToolMixin(
   }
 
   private readonly _onStorage = (event: StorageEvent) => {
-    if (
-      event.key === getShapePalettesStorageKey(this.edgeless.store.workspace.id)
-    ) {
+    const workspaceId = this.edgeless?.store?.workspace?.id;
+    if (!workspaceId) return;
+    if (event.key === getShapePalettesStorageKey(workspaceId)) {
       this._reloadPalettes();
     }
   };
 
   private readonly _reloadPalettes = () => {
-    const stored = readStoredShapePalettes(this.edgeless.store.workspace.id);
+    const workspaceId = this.edgeless?.store?.workspace?.id;
+    if (!workspaceId) {
+      this._palettes = filterShapePalettes(shapePalettes, 'line');
+      this._paletteIndex = this._paletteIndex % this._paletteCount;
+      this.requestUpdate();
+      return;
+    }
+
+    this._loadedWorkspaceId = workspaceId;
+
+    const stored = readStoredShapePalettes(workspaceId);
     this._palettes = filterShapePalettes(stored ?? shapePalettes, 'line');
     this._paletteIndex = this._paletteIndex % this._paletteCount;
     this.requestUpdate();
   };
+
+  private _ensureWorkspacePalettesLoaded() {
+    const workspaceId = this.edgeless?.store?.workspace?.id;
+    if (workspaceId && workspaceId !== this._loadedWorkspaceId) {
+      this._reloadPalettes();
+    }
+  }
 
   private readonly _togglePalette = () => {
     this._paletteIndex = (this._paletteIndex + 1) % this._paletteCount;
@@ -219,6 +250,7 @@ export class EdgelessConnectorMenu extends EdgelessToolbarToolMixin(
   override type = ConnectorTool;
 
   override render() {
+    this._ensureWorkspacePalettesLoaded();
     const { stroke, strokeWidth, mode } = this._props$.value;
     const { strokePalettes } = getShapePaletteDataFrom(
       this._palettes,

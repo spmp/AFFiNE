@@ -186,7 +186,9 @@ export class EdgelessShapeMenu extends SignalWatcher(
 
   private _getShapeLastPropsKey(shapeName: ShapeName) {
     const normalized =
-      shapeName === ShapeType.Rect || shapeName === ShapeType.Ellipse
+      shapeName === ShapeType.Rect ||
+      shapeName === ShapeType.Ellipse ||
+      shapeName === 'roundedRect'
         ? shapeName
         : ShapeType.Triangle;
 
