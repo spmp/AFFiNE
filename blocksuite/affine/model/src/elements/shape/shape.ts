@@ -322,12 +322,6 @@ export class LocalShapeElementModel extends GfxLocalElementModel {
   accessor filled: boolean = false;
 
   @prop()
-  accessor flipX: boolean = false;
-
-  @prop()
-  accessor flipY: boolean = false;
-
-  @prop()
   accessor fontFamily: string = FontFamily.Inter;
 
   @prop()
