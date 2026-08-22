@@ -2464,6 +2464,7 @@ __metadata:
     "@types/lodash-es": "npm:^4.17.12"
     lit: "npm:^3.2.0"
     lodash-es: "npm:^4.17.23"
+    vitest: "npm:^4.1.8"
     yjs: "npm:^13.6.27"
   languageName: unknown
   linkType: soft

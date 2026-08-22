@@ -1,6 +1,7 @@
 import { AStarRunner, Overlay } from '@blocksuite/affine-block-surface';
 import {
   type Connection,
+  type ConnectorElementModel,
   ConnectorMode,
   GroupElementModel,
   type LocalConnectorElementModel,
@@ -1026,21 +1027,41 @@ export class PathGenerator {
     expandStartBound && expandBlocks.push(expandStartBound.clone());
     expandEndBound && expandBlocks.push(expandEndBound.clone());
 
-    if (
-      startBound &&
-      endBound &&
-      startBound.isPointInBound(endPoint) &&
-      endBound.isPointInBound(startPoint)
-    ) {
-      return getDirectPath(startPoint, endPoint);
-    }
+    // nextStartPoint/lastEndPoint differ from the raw startPoint/endPoint
+    // exactly when that end is anchored to a specific bound edge and needs
+    // to exit perpendicular to it (see getNextPoint) -- e.g. a connector
+    // pinned to a shape's west-face midpoint. The three shortcuts below
+    // return a bare straight line between the *raw* points, skipping both
+    // anchors entirely: correct when neither end actually needs one, but
+    // wrong once a real anchor exists -- confirmed live: two shapes
+    // connected west-face-to-west-face collapse to a straight vertical
+    // connector instead of keeping the perpendicular "staple" shape once
+    // they're dragged close enough to trigger one of these shortcuts. Only
+    // take the shortcut when both ends are already anchor-free.
+    const noStartAnchor =
+      almostEqual(nextStartPoint[0], startPoint[0], 0.02) &&
+      almostEqual(nextStartPoint[1], startPoint[1], 0.02);
+    const noEndAnchor =
+      almostEqual(lastEndPoint[0], endPoint[0], 0.02) &&
+      almostEqual(lastEndPoint[1], endPoint[1], 0.02);
 
-    if (startBound && expandStartBound?.isPointInBound(endPoint, 0)) {
-      return getDirectPath(startPoint, endPoint);
-    }
+    if (noStartAnchor && noEndAnchor) {
+      if (
+        startBound &&
+        endBound &&
+        startBound.isPointInBound(endPoint) &&
+        endBound.isPointInBound(startPoint)
+      ) {
+        return getDirectPath(startPoint, endPoint);
+      }
 
-    if (endBound && expandEndBound?.isPointInBound(startPoint, 0)) {
-      return getDirectPath(startPoint, endPoint);
+      if (startBound && expandStartBound?.isPointInBound(endPoint, 0)) {
+        return getDirectPath(startPoint, endPoint);
+      }
+
+      if (endBound && expandEndBound?.isPointInBound(startPoint, 0)) {
+        return getDirectPath(startPoint, endPoint);
+      }
     }
 
     const points = computePoints(
