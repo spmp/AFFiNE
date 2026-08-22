@@ -136,13 +136,30 @@ export function updateConnectorJumps(
         const pt = lineIntersection(p0, p1, p2, p3);
 
         if (pt) {
-          // Filter out intersections too close to segment endpoints
+          // Filter out intersections too close to either segment's own
+          // endpoints — both this connector's (p0/p1) AND the other
+          // connector's (p2/p3). Checking only p0/p1 misses the common case
+          // of two connectors running coincident for a stretch then
+          // diverging at a shared point: that divergence point is
+          // mathematically a real line/line intersection (t and u both
+          // land in [0,1]), but u lands exactly at 0 or 1 — it's the other
+          // connector's own corner/turn vertex, not a genuine pass-through
+          // crossing, and must not be drawn as a jump.
           const distToP0Sq =
             Math.pow(pt.x - p0[0], 2) + Math.pow(pt.y - p0[1], 2);
           const distToP1Sq =
             Math.pow(pt.x - p1[0], 2) + Math.pow(pt.y - p1[1], 2);
+          const distToP2Sq =
+            Math.pow(pt.x - p2[0], 2) + Math.pow(pt.y - p2[1], 2);
+          const distToP3Sq =
+            Math.pow(pt.x - p3[0], 2) + Math.pow(pt.y - p3[1], 2);
 
-          if (distToP0Sq > thresh * thresh && distToP1Sq > thresh * thresh) {
+          if (
+            distToP0Sq > thresh * thresh &&
+            distToP1Sq > thresh * thresh &&
+            distToP2Sq > thresh * thresh &&
+            distToP3Sq > thresh * thresh
+          ) {
             intersections.push({
               x: pt.x,
               y: pt.y,
