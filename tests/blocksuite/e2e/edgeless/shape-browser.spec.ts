@@ -171,21 +171,14 @@ test.describe('shape browser', () => {
     await edgelessCommonSetup(page);
     const browserPanel = await openShapeBrowser(page);
 
-    const frameId = await page.evaluate(async () => {
+    const frameId = await page.evaluate(() => {
       const root = document.querySelector('affine-edgeless-root') as any;
       if (!root) throw new Error('edgeless root not found');
-      const { Bound } =
-        await import('/@fs/workspace/AFFiNE/blocksuite/framework/global/src/gfx/model/bound.ts');
-      const { EdgelessFrameManagerIdentifier } =
-        await import('/@fs/workspace/AFFiNE/blocksuite/affine/blocks/frame/src/frame-manager.ts');
-      const frameManager = root.service.std.getOptional(
-        EdgelessFrameManagerIdentifier
+      return root.service.crud.addBlock(
+        'affine:frame',
+        { xywh: '[100,100,300,200]' },
+        root.service.surface.id
       );
-      if (!frameManager) throw new Error('frame manager not found');
-      const frame = frameManager.createFrameOnBound(
-        new Bound(100, 100, 300, 200)
-      );
-      return frame?.id;
     });
     await expect(
       page.locator(`affine-frame-title[data-id="${frameId}"]`)
@@ -237,21 +230,14 @@ test.describe('shape browser', () => {
   test('peek mode shape search inserts actor shape', async ({ page }) => {
     await edgelessCommonSetup(page);
 
-    const frameId = await page.evaluate(async () => {
+    const frameId = await page.evaluate(() => {
       const root = document.querySelector('affine-edgeless-root') as any;
       if (!root) throw new Error('edgeless root not found');
-      const { Bound } =
-        await import('/@fs/workspace/AFFiNE/blocksuite/framework/global/src/gfx/model/bound.ts');
-      const { EdgelessFrameManagerIdentifier } =
-        await import('/@fs/workspace/AFFiNE/blocksuite/affine/blocks/frame/src/frame-manager.ts');
-      const frameManager = root.service.std.getOptional(
-        EdgelessFrameManagerIdentifier
+      return root.service.crud.addBlock(
+        'affine:frame',
+        { xywh: '[100,100,420,280]' },
+        root.service.surface.id
       );
-      if (!frameManager) throw new Error('frame manager not found');
-      const frame = frameManager.createFrameOnBound(
-        new Bound(100, 100, 420, 280)
-      );
-      return frame?.id;
     });
 
     const frameTitle = getFrameTitle(page, frameId);
