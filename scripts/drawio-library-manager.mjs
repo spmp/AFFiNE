@@ -25,7 +25,7 @@ for (let i = 1; i < argv.length; i += 1) {
   if (value !== 'true') i += 1;
 }
 
-const getArg = (name, fallback = undefined) => args.get(name) ?? fallback;
+const getArg = (name, fallback) => args.get(name) ?? fallback;
 const hasArg = name => args.has(name);
 
 const resolveDrawioRoot = async () => {
