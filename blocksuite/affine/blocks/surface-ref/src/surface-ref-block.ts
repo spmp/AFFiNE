@@ -306,7 +306,7 @@ export class SurfaceRefBlockComponent extends BlockComponent<SurfaceRefBlockMode
     const applyRenderOptions = (
       host: HTMLElement,
       surfaceModels: readonly GfxPrimitiveElementModel[],
-      referenceElement: GfxPrimitiveElementModel
+      referenceElement: GfxModel
     ) => {
       const { showInnerFrames, showGrid, showNotes } = getRenderOptions();
       const hiddenFrameIds = new Set<string>();
@@ -432,8 +432,12 @@ export class SurfaceRefBlockComponent extends BlockComponent<SurfaceRefBlockMode
         );
 
         _disposable.add(
-          this.std.store.slots.blockUpdated.subscribe(({ id, props }) => {
-            if (id !== referenceId || !('frameRenderOptions' in props)) {
+          this.std.store.slots.blockUpdated.subscribe(payload => {
+            if (
+              payload.id !== referenceId ||
+              payload.type !== 'update' ||
+              payload.props.key !== 'frameRenderOptions'
+            ) {
               return;
             }
             applyRenderOptions(

@@ -1,3 +1,5 @@
+import type { SurfaceRefBlockModel } from '@blocksuite/affine-model';
+import type { BlockModel } from '@blocksuite/store';
 import { expect, type Page } from '@playwright/test';
 
 import {
@@ -14,7 +16,7 @@ async function createSurfaceRefFromFrame(page: Page) {
   await page.evaluate(id => {
     const doc = window.doc;
     const notes = doc.getBlocksByFlavour?.('affine:note') ?? [];
-    let note = notes[0]?.model ?? notes[0] ?? null;
+    let note: BlockModel | null = notes[0]?.model ?? null;
     if (!note) {
       const rootId = doc.root?.id;
       if (!rootId) throw new Error('doc root not found');
@@ -74,7 +76,9 @@ test.describe('frame sizing', () => {
         window.doc.getBlocksByFlavour?.('affine:surface-ref') ?? [];
       const block = blocks[0];
       const blockId = block?.id ?? block?.model?.id;
-      const model = blockId ? window.doc.getModelById(blockId) : null;
+      const model = blockId
+        ? window.doc.getModelById<SurfaceRefBlockModel>(blockId)
+        : null;
       if (!model) return null;
       if (model.props?.pageSizeScale !== 2) {
         window.doc.updateBlock(model, {
@@ -97,7 +101,9 @@ test.describe('frame sizing', () => {
         window.doc.getBlocksByFlavour?.('affine:surface-ref') ?? [];
       const block = blocks[0];
       const blockId = block?.id ?? block?.model?.id;
-      const model = blockId ? window.doc.getModelById(blockId) : null;
+      const model = blockId
+        ? window.doc.getModelById<SurfaceRefBlockModel>(blockId)
+        : null;
       return model?.props?.pageSizeScale ?? null;
     });
     expect(sizeScale).toBe(2);
