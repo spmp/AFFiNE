@@ -612,7 +612,7 @@ describe('database (Table) appearing more than once on a page', () => {
     ) as DatabaseRefBlockComponent;
     const liveDatabaseEl = refElBeforeSwitch.querySelector(
       'affine-database'
-    ) as HTMLElement & {
+    ) as unknown as HTMLElement & {
       dataSource: {
         value: {
           viewManager: {

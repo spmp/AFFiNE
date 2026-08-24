@@ -6,6 +6,7 @@ import type {
   DatabaseBlockModel,
   ListBlockModel,
   ParagraphBlockModel,
+  ViewBasicDataType,
 } from '@blocksuite/affine-model';
 import { resolveColor } from '@blocksuite/affine-model';
 import { getSelectedModelsCommand } from '@blocksuite/affine-shared/commands';
@@ -75,6 +76,15 @@ import {
   databaseBlockViewMap,
   databaseBlockViews,
 } from './views/index.js';
+
+// `columns` lives on each concrete view subtype (table/kanban/...), not on
+// the generic `ViewBasicDataType`/`DataViewDataType` base every
+// `updateView`/`viewDataUpdate` call is typed against by default — used as
+// an explicit type argument at call sites below that only ever touch
+// `columns`, regardless of which concrete view mode they're running against.
+type ViewDataWithColumns = ViewBasicDataType & {
+  columns?: Array<{ id: string; width?: number; hide?: boolean }>;
+};
 
 /**
  * Local-time `YYYY-MM-DD` formatter — deliberately not `Date#toISOString`
@@ -548,7 +558,7 @@ export class DatabaseBlockDataSource extends DataSourceBase {
   }
 
   getTodoListRowChecked(rowId: string): boolean | undefined {
-    const model = this.getModelById(rowId);
+    const model = this.getModelById(rowId) as ListBlockModel | null;
     if (model?.flavour !== 'affine:list' || model.props.type !== 'todo') {
       return undefined;
     }
@@ -565,7 +575,7 @@ export class DatabaseBlockDataSource extends DataSourceBase {
   }
 
   setTodoListRowChecked(rowId: string, checked: boolean) {
-    const model = this.getModelById(rowId);
+    const model = this.getModelById(rowId) as ListBlockModel | null;
     if (model?.flavour !== 'affine:list' || model.props.type !== 'todo') {
       return;
     }
@@ -675,13 +685,8 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     columnId: string
   ) {
     if (viewMode === 'table') {
-      this.viewDataUpdate(viewId, data => {
-        const columns = ((data as { columns?: unknown[] }).columns ??
-          []) as Array<{
-          id: string;
-          width: number;
-          hide?: boolean;
-        }>;
+      this.viewDataUpdate<ViewDataWithColumns>(viewId, data => {
+        const columns = data.columns ?? [];
         const idx = columns.findIndex(column => column.id === columnId);
         if (idx >= 0) {
           const current = columns[idx];
@@ -697,12 +702,8 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       return;
     }
 
-    this.viewDataUpdate(viewId, data => {
-      const columns = ((data as { columns?: unknown[] }).columns ??
-        []) as Array<{
-        id: string;
-        hide?: boolean;
-      }>;
+    this.viewDataUpdate<ViewDataWithColumns>(viewId, data => {
+      const columns = data.columns ?? [];
       const idx = columns.findIndex(column => column.id === columnId);
       if (idx >= 0) {
         const current = columns[idx];
@@ -718,7 +719,7 @@ export class DatabaseBlockDataSource extends DataSourceBase {
   ensureTaskHierarchyColumns() {
     const getOrAdd = (
       name: string,
-      create: () => ColumnDataType
+      create: () => Omit<ColumnDataType, 'id'>
     ): string | undefined => {
       const existing = this._model.props.columns.find(
         column => column.name === name
@@ -1029,7 +1030,7 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       if (!columns.some(c => c.id === columnId)) {
         continue;
       }
-      this.viewDataUpdate(view.id, () => ({
+      this.viewDataUpdate<ViewDataWithColumns>(view.id, () => ({
         columns: columns.filter(c => c.id !== columnId),
       }));
     }
@@ -2614,7 +2615,7 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       return false;
     }
     if (model.flavour === 'affine:list') {
-      return model.props.type === 'todo';
+      return (model as ListBlockModel).props.type === 'todo';
     }
     if (model.flavour !== 'affine:paragraph') {
       return false;
@@ -3048,7 +3049,10 @@ export const convertToDatabase = (host: EditorHost, viewType: string) => {
         if (visited.has(node.id)) return;
         visited.add(node.id);
 
-        if (node.flavour === 'affine:list' && node.props.type === 'todo') {
+        if (
+          node.flavour === 'affine:list' &&
+          (node as ListBlockModel).props.type === 'todo'
+        ) {
           result.push(node as ListBlockModel);
         }
 
@@ -3074,7 +3078,9 @@ export const convertToDatabase = (host: EditorHost, viewType: string) => {
         .taskWorkflowDefaults ?? {}
     );
     const isTodoSelection = orderedSelectedModels.every(
-      model => model.flavour === 'affine:list' && model.props.type === 'todo'
+      model =>
+        model.flavour === 'affine:list' &&
+        (model as ListBlockModel).props.type === 'todo'
     );
     if (!isTodoSelection) {
       const selectedIds = new Set(orderedSelectedModels.map(model => model.id));
@@ -3495,11 +3501,8 @@ export const convertToDatabase = (host: EditorHost, viewType: string) => {
     const hideColumnByDefaultInViews = (columnId: string) => {
       for (const view of databaseModel.props.views) {
         if (view.mode === 'kanban') {
-          updateView(databaseModel, view.id, data => {
-            const columns = (data.columns ?? []) as Array<{
-              id: string;
-              hide?: boolean;
-            }>;
+          updateView<ViewDataWithColumns>(databaseModel, view.id, data => {
+            const columns = data.columns ?? [];
             const idx = columns.findIndex(column => column.id === columnId);
             if (idx >= 0) {
               const current = columns[idx];
@@ -3513,12 +3516,8 @@ export const convertToDatabase = (host: EditorHost, viewType: string) => {
         }
 
         if (view.mode === 'table') {
-          updateView(databaseModel, view.id, data => {
-            const columns = (data.columns ?? []) as Array<{
-              id: string;
-              width: number;
-              hide?: boolean;
-            }>;
+          updateView<ViewDataWithColumns>(databaseModel, view.id, data => {
+            const columns = data.columns ?? [];
             const idx = columns.findIndex(column => column.id === columnId);
             if (idx >= 0) {
               const current = columns[idx];

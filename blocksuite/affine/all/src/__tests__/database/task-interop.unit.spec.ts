@@ -63,7 +63,6 @@ describe('database task interop', () => {
       docId: 'interop-doc',
       blockId: 'todo-1',
       databaseId: 'db-1',
-      databaseRowId: rowA,
     });
 
     dataSource.setTaskInteropLink(rowA, link);

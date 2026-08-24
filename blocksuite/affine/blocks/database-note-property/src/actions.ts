@@ -1,10 +1,17 @@
+import type {
+  DatabaseBlockDataSource,
+  NoteRefValue,
+} from '@blocksuite/affine-block-database';
 import {
   createReusableNoteAndInsertRefCommand,
   insertNoteRefBlockCommand,
 } from '@blocksuite/affine-block-note-ref';
 import { toast } from '@blocksuite/affine-components/toast';
-import type { DatabaseBlockDataSource, NoteRefValue } from '@blocksuite/affine-block-database';
-import { DefaultTheme, type Color, type NoteBlockModel } from '@blocksuite/affine-model';
+import {
+  type Color,
+  DefaultTheme,
+  type NoteBlockModel,
+} from '@blocksuite/affine-model';
 import { CrossDocReferenceProvider } from '@blocksuite/affine-shared/services';
 import { getLastNoteBlock } from '@blocksuite/affine-shared/utils';
 import { BlockSelection, type BlockStdScope } from '@blocksuite/std';
@@ -66,7 +73,14 @@ export function pickNoteColor(
   // in this one last-resort path would contradict that same rule; falling
   // back to "whatever the palette's own first entry is" doesn't.
   const fallback = Object.values(DefaultTheme.NoteBackgroundColorMap)[0];
-  return fallback ?? DefaultTheme.NoteBackgroundColorMap.White;
+  if (fallback) return fallback;
+
+  // `White` is a hardcoded key on the literal `NoteBackgroundColorMap`
+  // object (`themes/default.ts`) — always present at runtime. This
+  // package's own `noUncheckedIndexedAccess` override can't see that
+  // guarantee through the wider `Record<string, Color>` shape `Theme`'s
+  // schema gives it.
+  return DefaultTheme.NoteBackgroundColorMap.White as Color;
 }
 
 /**
@@ -86,7 +100,8 @@ function resolveEndOfPageAnchor(std: BlockStdScope) {
   let note = getLastNoteBlock(store);
   if (!note) {
     const noteId = store.addBlock('affine:note', {}, store.root.id);
-    note = (store.getBlock(noteId)?.model as NoteBlockModel | undefined) ?? null;
+    note =
+      (store.getBlock(noteId)?.model as NoteBlockModel | undefined) ?? null;
   }
   if (!note) return undefined;
 
@@ -344,10 +359,7 @@ export async function attachExistingNoteForRow(
   const canonicalStore = resolveCanonicalStore(std, candidate.docId);
   const canonical = canonicalStore?.getBlock(candidate.blockId)?.model;
   if (!canonical || !canonicalStore) {
-    toast(
-      std.host,
-      'Note was attached but could not be finished setting up.'
-    );
+    toast(std.host, 'Note was attached but could not be finished setting up.');
     return;
   }
 

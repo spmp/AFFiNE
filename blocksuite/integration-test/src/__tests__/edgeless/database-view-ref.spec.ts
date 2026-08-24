@@ -1,25 +1,39 @@
-import {
-  genericDatabaseViewRefSlashMenuConfig,
-  insertDatabaseViewRefBlockCommand,
-} from '@blocksuite/affine/blocks/database-view-ref';
-import type { DatabaseViewRefBlockComponent } from '@blocksuite/affine/blocks/database-view-ref';
+import type { DatabaseRefBlockComponent } from '@blocksuite/affine/blocks/database-ref';
 import {
   insertDatabaseRefBlockCommand,
   moveIntoHiddenNote,
 } from '@blocksuite/affine/blocks/database-ref';
-import type { DatabaseRefBlockComponent } from '@blocksuite/affine/blocks/database-ref';
+import type { DatabaseViewRefBlockComponent } from '@blocksuite/affine/blocks/database-view-ref';
+import {
+  genericDatabaseViewRefSlashMenuConfig,
+  insertDatabaseViewRefBlockCommand,
+} from '@blocksuite/affine/blocks/database-view-ref';
 import type {
   DatabaseViewRefBlockModel,
   NoteBlockModel,
 } from '@blocksuite/affine/model';
 import { NoteDisplayMode } from '@blocksuite/affine/model';
 import { CrossDocReferenceProvider } from '@blocksuite/affine/shared/services';
-import { Store, Text } from '@blocksuite/store';
+import { Text } from '@blocksuite/store';
 import { beforeEach, describe, expect, test } from 'vitest';
 
 import { wait } from '../utils/common.js';
 import { addNote } from '../utils/edgeless.js';
 import { setupEditor } from '../utils/setup.js';
+
+// Shared by the cross-doc suites below (Story 2.2's own cross-doc suite and
+// Story 2.5's generic-reference suite) — both need a second, independently
+// loaded doc in the same `collection` to reference across.
+function createSecondDoc() {
+  const secondDoc = collection
+    .createDoc(`doc:second-${Math.random().toString(16).slice(2, 8)}`)
+    .getStore();
+  secondDoc.load(() => {
+    const rootId = secondDoc.addBlock('affine:page', { title: new Text() });
+    secondDoc.addBlock('affine:surface', {}, rootId);
+  });
+  return secondDoc;
+}
 
 // Story 2.2: a database reference that carries its *own* view/filter
 // configuration, independent of the canonical table's shared `views` — the
@@ -394,17 +408,6 @@ describe('database-view-ref referenced across pages (cross-doc)', () => {
     return cleanup;
   });
 
-  function createSecondDoc() {
-    const secondDoc = collection
-      .createDoc(`doc:second-${Math.random().toString(16).slice(2, 8)}`)
-      .getStore();
-    secondDoc.load(() => {
-      const rootId = secondDoc.addBlock('affine:page', { title: new Text() });
-      secondDoc.addBlock('affine:surface', {}, rootId);
-    });
-    return secondDoc;
-  }
-
   test('a database in another doc renders live through a cross-doc view-ref, and the reference survives the source moving and its doc being renamed', async () => {
     const secondDoc = createSecondDoc();
     const firstNoteId = addNote(secondDoc);
@@ -542,17 +545,6 @@ describe('database-view-ref: generic reference slash-menu items (Story 2.5)', ()
     const cleanup = await setupEditor('page');
     return cleanup;
   });
-
-  function createSecondDoc() {
-    const secondDoc = collection
-      .createDoc(`doc:second-${Math.random().toString(16).slice(2, 8)}`)
-      .getStore();
-    secondDoc.load(() => {
-      const rootId = secondDoc.addBlock('affine:page', { title: new Text() });
-      secondDoc.addBlock('affine:surface', {}, rootId);
-    });
-    return secondDoc;
-  }
 
   test('offers a same-doc "Table (own view)" item per existing database, and it inserts a database-view-ref with a plain default view', async () => {
     const noteId = addNote(doc);

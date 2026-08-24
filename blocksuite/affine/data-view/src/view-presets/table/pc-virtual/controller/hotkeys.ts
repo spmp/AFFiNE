@@ -25,7 +25,7 @@ export class TableHotkeysController implements ReactiveController {
       return null;
     }
     const groupKey =
-      cell.closest('data-view-table-row').dataset.groupKey ?? undefined;
+      cell.closest('data-view-table-row')?.dataset.groupKey ?? undefined;
     return { rowId, groupKey };
   }
 
@@ -46,7 +46,7 @@ export class TableHotkeysController implements ReactiveController {
         continue;
       }
       const groupKey =
-        cell.closest('data-view-table-row').dataset.groupKey ?? undefined;
+        cell.closest('data-view-table-row')?.dataset.groupKey ?? undefined;
       return { rowId, groupKey };
     }
     const fromEvent = this.getRowInfoFromEventTarget(raw.target);

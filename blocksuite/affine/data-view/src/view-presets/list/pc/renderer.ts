@@ -9,9 +9,9 @@ import { SignalWatcher, WithDisposable } from '@blocksuite/global/lit';
 import { DateTimeIcon, PageIcon, PlusIcon } from '@blocksuite/icons/lit';
 import type { BlockStdScope } from '@blocksuite/std';
 import { ShadowlessElement } from '@blocksuite/std';
-import { signal } from '@preact/signals-core';
 import { flip, offset } from '@floating-ui/dom';
-import { css, html, nothing } from 'lit';
+import { signal } from '@preact/signals-core';
+import { css, html, nothing, type TemplateResult } from 'lit';
 import { customElement, eventOptions, property } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 
@@ -611,7 +611,7 @@ export class ListViewRenderer extends SignalWatcher(
     }
   }
 
-  override render() {
+  override render(): TemplateResult | typeof nothing {
     if (!this.logic) {
       return nothing;
     }

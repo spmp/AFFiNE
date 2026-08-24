@@ -1,7 +1,7 @@
-import type { InsertToPosition } from '@blocksuite/affine-shared/utils';
-import { insertPositionToIndex } from '@blocksuite/affine-shared/utils';
 import type { DatabaseViewLocalOverride } from '@blocksuite/affine-block-database';
 import type { DatabaseViewRefBlockModel } from '@blocksuite/affine-model';
+import type { InsertToPosition } from '@blocksuite/affine-shared/utils';
+import { insertPositionToIndex } from '@blocksuite/affine-shared/utils';
 import type { DataViewDataType } from '@blocksuite/data-view';
 import { computed } from '@preact/signals-core';
 

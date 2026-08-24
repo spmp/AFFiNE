@@ -225,17 +225,20 @@ export class ListViewUILogic extends DataViewUILogicBase<ListSingleView> {
     navigateToSubPage: (title: string, getItems: () => MenuConfig[]) => void,
     goBack: () => void
   ): MenuConfig[] {
+    const layoutOptions: [string, string][] = [
+      ['inline', 'Inline'],
+      ['aligned', 'Aligned'],
+      ['right', 'Right'],
+    ];
     const getLayoutItems = (): MenuConfig[] =>
-      [
-        ['inline', 'Inline'],
-        ['aligned', 'Aligned'],
-        ['right', 'Right'],
-      ].map(([layout, label]) =>
+      layoutOptions.map(([layout, label]) =>
         menu.action({
           name: label,
           closeOnSelect: false,
           postfix:
-            this.view.fieldLayout$.value === layout ? html`<span>✓</span>` : '',
+            this.view.fieldLayout$.value === layout
+              ? html`<span>✓</span>`
+              : undefined,
           select: () => {
             this.view.setFieldLayout(layout as 'inline' | 'aligned' | 'right');
             goBack();

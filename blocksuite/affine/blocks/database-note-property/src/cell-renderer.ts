@@ -1,7 +1,7 @@
 import {
+  type DatabaseBlockDataSource,
   EditorHostKey,
   notePropertyModelConfig,
-  type DatabaseBlockDataSource,
   type NoteRefValue,
 } from '@blocksuite/affine-block-database';
 import {

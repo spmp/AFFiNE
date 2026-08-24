@@ -1,6 +1,6 @@
-import { createIdentifier } from '@blocksuite/global/di';
 import type { InsertToPosition } from '@blocksuite/affine-shared/utils';
 import type { DataViewDataType } from '@blocksuite/data-view';
+import { createIdentifier } from '@blocksuite/global/di';
 import type { ReadonlySignal } from '@preact/signals-core';
 
 /**

@@ -1,13 +1,13 @@
 import { DatabaseBlockDataSource } from '@blocksuite/affine/blocks/database';
+import {
+  PeekViewExtension,
+  type PeekViewService,
+} from '@blocksuite/affine/components/peek';
 import type { DatabaseBlockModel } from '@blocksuite/affine/model';
 import {
   JournalTodoDatabaseExtension,
   type JournalTodoDatabaseRef,
 } from '@blocksuite/affine/shared/services';
-import {
-  PeekViewExtension,
-  type PeekViewService,
-} from '@blocksuite/affine/components/peek';
 import { Text } from '@blocksuite/store';
 import { userEvent } from '@vitest/browser/context';
 import { beforeEach, describe, expect, test, vi } from 'vitest';

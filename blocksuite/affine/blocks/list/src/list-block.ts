@@ -70,15 +70,17 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
     model: ListBlockModel,
     changedModelChecked?: boolean
   ) {
-    let parent = this.store.getParent(model);
+    let parent = this.store.getParent(model) as ListBlockModel | null;
     while (parent) {
       if (parent.flavour !== 'affine:list' || parent.props.type !== 'todo') {
-        parent = this.store.getParent(parent);
+        parent = this.store.getParent(parent) as ListBlockModel | null;
         continue;
       }
 
       const todoChildren = parent.children.filter(
-        child => child.flavour === 'affine:list' && child.props.type === 'todo'
+        child =>
+          child.flavour === 'affine:list' &&
+          (child as ListBlockModel).props.type === 'todo'
       ) as ListBlockModel[];
       const parentChecked = computeTodoParentCheckedFromChildModels(
         todoChildren.map(child => ({
@@ -94,7 +96,7 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
         this.store.updateBlock(parent, { checked: parentChecked });
         this.dispatchTaskInteropCheckedUpdated(parent);
       }
-      parent = this.store.getParent(parent);
+      parent = this.store.getParent(parent) as ListBlockModel | null;
     }
   }
 
@@ -134,10 +136,10 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
 
   private getTodoListRoot(model: ListBlockModel) {
     let current: ListBlockModel = model;
-    let parent = this.store.getParent(current);
+    let parent = this.store.getParent(current) as ListBlockModel | null;
     while (parent?.flavour === 'affine:list' && parent.props.type === 'todo') {
       current = parent as ListBlockModel;
-      parent = this.store.getParent(current);
+      parent = this.store.getParent(current) as ListBlockModel | null;
     }
     return current;
   }
@@ -150,7 +152,7 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
     if (rootIndex < 0) return [root];
 
     for (let i = rootIndex; i >= 0; i--) {
-      const model = siblingModels[i];
+      const model = siblingModels[i] as ListBlockModel | undefined;
       if (
         !model ||
         model.flavour !== 'affine:list' ||
@@ -158,10 +160,10 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
       ) {
         break;
       }
-      group.unshift(model as ListBlockModel);
+      group.unshift(model);
     }
     for (let i = rootIndex + 1; i < siblingModels.length; i++) {
-      const model = siblingModels[i];
+      const model = siblingModels[i] as ListBlockModel | undefined;
       if (
         !model ||
         model.flavour !== 'affine:list' ||
@@ -169,7 +171,7 @@ export class ListBlockComponent extends CaptionedBlockComponent<ListBlockModel> 
       ) {
         break;
       }
-      group.push(model as ListBlockModel);
+      group.push(model);
     }
     return group.length > 0 ? group : [root];
   }

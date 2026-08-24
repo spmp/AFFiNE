@@ -699,6 +699,15 @@ describe('list view preset', () => {
       return host;
     };
 
+    // Shared by the drag-completion and Escape-cancellation tests below —
+    // both need a `rowGetOrCreate` stub that records `move()` calls the
+    // same way.
+    const createRowGetOrCreate = (calls: string[]) => (rowId: string) => ({
+      move: (position: unknown) => {
+        calls.push(`move(${rowId}, ${JSON.stringify(position)})`);
+      },
+    });
+
     test('getInsertPosition: zero horizontal offset keeps the moved row a sibling of the reference row', () => {
       const rowA = createRow('row-a', { top: 0, bottom: 30 }, 20);
       const host = createHost([rowA]);
@@ -782,11 +791,7 @@ describe('list view preset', () => {
           calls.push(`setPendingHierarchyLevel(${rowId}, ${level})`);
         },
       };
-      const rowGetOrCreate = (rowId: string) => ({
-        move: (position: unknown) => {
-          calls.push(`move(${rowId}, ${JSON.stringify(position)})`);
-        },
-      });
+      const rowGetOrCreate = createRowGetOrCreate(calls);
       const logic = {
         view: {
           propertiesRaw$: { value: [hierarchyProperty(levels)] },
@@ -835,11 +840,7 @@ describe('list view preset', () => {
           calls.push(`setPendingHierarchyLevel(${rowId}, ${level})`);
         },
       };
-      const rowGetOrCreate = (rowId: string) => ({
-        move: (position: unknown) => {
-          calls.push(`move(${rowId}, ${JSON.stringify(position)})`);
-        },
-      });
+      const rowGetOrCreate = createRowGetOrCreate(calls);
       const logic = {
         view: {
           propertiesRaw$: { value: [hierarchyProperty(levels)] },

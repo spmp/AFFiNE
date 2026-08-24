@@ -1,5 +1,6 @@
 import { DebugLogger } from '@affine/debug';
 import { Unreachable } from '@affine/env/constant';
+import { refreshJournalTodoOnDuplicateMiddleware } from '@blocksuite/affine/blocks/database-view-ref';
 import type {
   DatabaseRefBlockModel,
   DatabaseViewRefBlockModel,
@@ -7,7 +8,6 @@ import type {
   NoteRefBlockModel,
 } from '@blocksuite/affine/model';
 import { NoteDisplayMode } from '@blocksuite/affine/model';
-import { refreshJournalTodoOnDuplicateMiddleware } from '@blocksuite/affine/blocks/database-view-ref';
 import { replaceIdMiddleware } from '@blocksuite/affine/shared/adapters';
 import type { AffineTextAttributes } from '@blocksuite/affine/shared/types';
 import {
@@ -782,7 +782,8 @@ export class DocsService extends Service {
         middlewares: [],
       });
 
-      const modelsToMove = isHiddenNoteParent ? [parent!] : [databaseModel];
+      const modelsToMove =
+        isHiddenNoteParent && parent ? [parent] : [databaseModel];
       const slice = Slice.fromModels(sourceBsDoc, modelsToMove);
       const snapshot = transformer.sliceToSnapshot(slice);
       if (!snapshot) {
@@ -807,10 +808,13 @@ export class DocsService extends Service {
         // (`EditorSettingDocCreateMiddleware.beforeCreate`) — see
         // `note-model.ts`'s own comment on why the explicit value beats the
         // `isPageBlock()` fallback.
+        if (!destinationBsDoc.root) {
+          throw new Error('Destination doc has no root block');
+        }
         insertionParentId = destinationBsDoc.addBlock(
           'affine:note',
           { pageBorder: false },
-          destinationBsDoc.root!.id
+          destinationBsDoc.root.id
         );
       }
 
@@ -858,8 +862,8 @@ export class DocsService extends Service {
       // Unlike the delete-rescue path (which only runs when the source doc
       // is about to be destroyed anyway), this is a live, in-place move —
       // the original must be removed so it doesn't end up duplicated.
-      if (isHiddenNoteParent) {
-        sourceBsDoc.deleteBlock(parent!);
+      if (isHiddenNoteParent && parent) {
+        sourceBsDoc.deleteBlock(parent);
       } else {
         sourceBsDoc.deleteBlock(databaseModel);
       }

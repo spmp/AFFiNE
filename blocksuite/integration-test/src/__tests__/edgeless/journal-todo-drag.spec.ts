@@ -3,11 +3,11 @@ import {
   getCell,
   updateCell,
 } from '@blocksuite/affine/blocks/database';
-import type { DatabaseBlockModel } from '@blocksuite/affine/model';
 import {
   journalTodoDatabaseSlashMenuConfig,
   journalTodoSourceSlashMenuConfig,
 } from '@blocksuite/affine/blocks/database-view-ref';
+import type { DatabaseBlockModel } from '@blocksuite/affine/model';
 import { JournalTodoDatabaseProvider } from '@blocksuite/affine/shared/services';
 import { beforeEach, describe, expect, test } from 'vitest';
 

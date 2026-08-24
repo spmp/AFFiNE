@@ -1,7 +1,7 @@
 import {
   addProperty,
-  databaseBlockProperties,
   DatabaseBlockDataSource,
+  databaseBlockProperties,
   getCell,
   updateCell,
 } from '@blocksuite/affine/blocks/database';
@@ -101,8 +101,13 @@ describe('task status parent/child cascade (real editor document)', () => {
   }
 
   test('parent auto-completes once every child is marked done, through a real rendered document', () => {
-    const { databaseModel, dataSource, statusColumnId, parentIdentityColumnId, rowIds } =
-      setupHierarchy(3);
+    const {
+      databaseModel,
+      dataSource,
+      statusColumnId,
+      parentIdentityColumnId,
+      rowIds,
+    } = setupHierarchy(3);
     const [parent, childA, childB] = rowIds;
 
     linkParent(databaseModel, parentIdentityColumnId, childA!, parent!);
@@ -122,8 +127,13 @@ describe('task status parent/child cascade (real editor document)', () => {
   });
 
   test('parent demotes back once a child is un-done again, through a real rendered document', () => {
-    const { databaseModel, dataSource, statusColumnId, parentIdentityColumnId, rowIds } =
-      setupHierarchy(3);
+    const {
+      databaseModel,
+      dataSource,
+      statusColumnId,
+      parentIdentityColumnId,
+      rowIds,
+    } = setupHierarchy(3);
     const [parent, childA, childB] = rowIds;
 
     linkParent(databaseModel, parentIdentityColumnId, childA!, parent!);
@@ -145,21 +155,26 @@ describe('task status parent/child cascade (real editor document)', () => {
   });
 
   test('parent becomes in-progress as soon as any sibling starts, through a real rendered document', () => {
-    const { databaseModel, dataSource, statusColumnId, parentIdentityColumnId, rowIds } =
-      setupHierarchy(3);
+    const {
+      databaseModel,
+      dataSource,
+      statusColumnId,
+      parentIdentityColumnId,
+      rowIds,
+    } = setupHierarchy(3);
     const [parent, childA, childB] = rowIds;
 
     linkParent(databaseModel, parentIdentityColumnId, childA!, parent!);
     linkParent(databaseModel, parentIdentityColumnId, childB!, parent!);
 
     // Neither child started — parent has no status yet.
-    expect(getCell(databaseModel, parent!, statusColumnId!)?.value).toBeUndefined();
+    expect(
+      getCell(databaseModel, parent!, statusColumnId!)?.value
+    ).toBeUndefined();
 
     // One sibling starts (WIP) — parent must reflect "in progress" even
     // though the other sibling hasn't started and this one isn't done.
     dataSource.cellValueChange(childA!, statusColumnId!, 'wip');
-    expect(getCell(databaseModel, parent!, statusColumnId!)?.value).toBe(
-      'wip'
-    );
+    expect(getCell(databaseModel, parent!, statusColumnId!)?.value).toBe('wip');
   });
 });

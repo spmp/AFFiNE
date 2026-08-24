@@ -427,7 +427,7 @@ const configureTodoList = {
         const todoRootGroup: ListBlockModel[] = [];
         if (rootIndex >= 0) {
           for (let i = rootIndex; i >= 0; i--) {
-            const model = siblingModels[i];
+            const model = siblingModels[i] as ListBlockModel | undefined;
             if (
               !model ||
               model.flavour !== 'affine:list' ||
@@ -435,10 +435,10 @@ const configureTodoList = {
             ) {
               break;
             }
-            todoRootGroup.unshift(model as ListBlockModel);
+            todoRootGroup.unshift(model);
           }
           for (let i = rootIndex + 1; i < siblingModels.length; i++) {
-            const model = siblingModels[i];
+            const model = siblingModels[i] as ListBlockModel | undefined;
             if (
               !model ||
               model.flavour !== 'affine:list' ||
@@ -446,7 +446,7 @@ const configureTodoList = {
             ) {
               break;
             }
-            todoRootGroup.push(model as ListBlockModel);
+            todoRootGroup.push(model);
           }
         }
         if (todoRootGroup.length === 0) {

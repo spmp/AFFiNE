@@ -17,6 +17,7 @@ import {
   type ColumnDataType,
   type DatabaseBlockModel,
   DatabaseBlockSchemaExtension,
+  type ListBlockModel,
   ListBlockSchemaExtension,
   NoteBlockSchemaExtension,
   ParagraphBlockSchemaExtension,
@@ -676,7 +677,7 @@ describe('DatabaseManager', () => {
     const dataSource = new DatabaseBlockDataSource(db);
 
     const rowId = dataSource.rowAddAsTodoList('end');
-    const row = doc.getModelById(rowId);
+    const row = doc.getModelById(rowId) as ListBlockModel | null;
 
     expect(row?.flavour).toBe('affine:list');
     expect(row?.props.type).toBe('todo');
@@ -779,7 +780,7 @@ describe('DatabaseManager', () => {
     const doneDateColumn = dataSource.getDoneDateColumn()!;
     expect(doneDateColumn).toBeTruthy();
     const masterColumnIds = db.props.columns.map(c => c.id);
-    expect(masterColumnIds.indexOf(dueDateColumnId)).toBe(
+    expect(masterColumnIds.indexOf(dueDateColumnId!)).toBe(
       masterColumnIds.indexOf(doneDateColumn.id) + 1
     );
 
@@ -1135,7 +1136,7 @@ describe('DatabaseManager', () => {
 
     expect(dataSource.ensureRowAsTodoList(emptyRowId)).toBe(true);
 
-    const row = doc.getModelById(emptyRowId);
+    const row = doc.getModelById(emptyRowId) as ListBlockModel | null;
     expect(row?.id).toBe(emptyRowId);
     expect(row?.flavour).toBe('affine:list');
     expect(row?.props.type).toBe('todo');
@@ -1169,9 +1170,15 @@ describe('DatabaseManager', () => {
     expect(dataSource.ensureRowAsTodoList(emptyRowId)).toBe(true);
 
     expect(doc.getModelById(p1)?.flavour).toBe('affine:paragraph');
-    expect(doc.getModelById(bulletRowId)?.props.type).toBe('bulleted');
-    expect(doc.getModelById(numberedRowId)?.props.type).toBe('numbered');
-    expect(doc.getModelById(todoRowId)?.props.type).toBe('todo');
+    expect(
+      (doc.getModelById(bulletRowId) as ListBlockModel | null)?.props.type
+    ).toBe('bulleted');
+    expect(
+      (doc.getModelById(numberedRowId) as ListBlockModel | null)?.props.type
+    ).toBe('numbered');
+    expect(
+      (doc.getModelById(todoRowId) as ListBlockModel | null)?.props.type
+    ).toBe('todo');
   });
 
   test('does not infer task status from arbitrary Status select column name', () => {
@@ -1255,7 +1262,7 @@ describe('DatabaseManager', () => {
 
     HeaderAreaTextCell.prototype['ensureTodoListRowWhenMounted'].call(cell);
 
-    const row = doc.getModelById(emptyRowId);
+    const row = doc.getModelById(emptyRowId) as ListBlockModel | null;
     expect(row?.flavour).toBe('affine:list');
     expect(row?.props.type).toBe('todo');
     expect(dataSource.getTaskStatusColumn()).toBeTruthy();
@@ -1318,7 +1325,7 @@ describe('DatabaseManager', () => {
         ) as DatabaseBlockModel | undefined;
 
       expect(
-        convertedDatabase?.children.map(child => child.props.text.toString())
+        convertedDatabase?.children.map(child => child.text?.toString())
       ).toEqual([expectedText]);
     }
   );
@@ -1370,7 +1377,7 @@ describe('DatabaseManager', () => {
       ) as DatabaseBlockModel | undefined;
 
     expect(
-      convertedDatabase?.children.map(child => child.props.text.toString())
+      convertedDatabase?.children.map(child => child.text?.toString())
     ).toEqual(['Todo row', 'Plain row']);
     expect(
       convertedDatabase?.props.columns.map(column => column.name)
@@ -1441,7 +1448,7 @@ describe('DatabaseManager', () => {
     );
 
     expect(
-      convertedDatabase?.children.map(child => child.props.text.toString())
+      convertedDatabase?.children.map(child => child.text?.toString())
     ).toEqual([
       'Plain row',
       'Bullet parent',
@@ -1534,7 +1541,7 @@ describe('DatabaseManager', () => {
       ) as DatabaseBlockModel | undefined;
 
     expect(
-      convertedDatabase?.children.map(child => child.props.text.toString())
+      convertedDatabase?.children.map(child => child.text?.toString())
     ).toEqual([
       'Parent 1',
       'Child 1.1',
@@ -1814,11 +1821,17 @@ describe('DatabaseManager', () => {
     expect(tagsColumn?.type).toBe('multi-select');
     expect(progressColumn?.type).toBe('progress');
     expect(dueColumn?.type).toBe('date');
+    const ownerOptions = ownerColumn?.data.options as
+      | { id: string }[]
+      | undefined;
+    const tagsOptions = tagsColumn?.data.options as
+      | { id: string }[]
+      | undefined;
     expect(getCell(convertedDatabase!, todo, ownerColumn!.id)?.value).toEqual(
-      ownerColumn?.data.options[0]?.id
+      ownerOptions?.[0]?.id
     );
     expect(getCell(convertedDatabase!, todo, tagsColumn!.id)?.value).toEqual(
-      tagsColumn?.data.options.map(option => option.id)
+      tagsOptions?.map(option => option.id)
     );
     expect(getCell(convertedDatabase!, todo, progressColumn!.id)?.value).toBe(
       75

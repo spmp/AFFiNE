@@ -1,9 +1,9 @@
 import { DatabaseBlockDataSource } from '@blocksuite/affine/blocks/database';
+import type { DatabaseRefBlockComponent } from '@blocksuite/affine/blocks/database-ref';
 import {
   insertDatabaseRefBlockCommand,
   moveIntoHiddenNote,
 } from '@blocksuite/affine/blocks/database-ref';
-import type { DatabaseRefBlockComponent } from '@blocksuite/affine/blocks/database-ref';
 import { Text } from '@blocksuite/store';
 import { beforeEach, describe, expect, test } from 'vitest';
 
