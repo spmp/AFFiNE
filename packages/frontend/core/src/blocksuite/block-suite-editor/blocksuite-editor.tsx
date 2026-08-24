@@ -14,6 +14,7 @@ import track from '@affine/track';
 import { appendParagraphCommand } from '@blocksuite/affine/blocks/paragraph';
 import type { DocTitle } from '@blocksuite/affine/fragments/doc-title';
 import { DisposableGroup } from '@blocksuite/affine/global/disposable';
+import { IS_LINUX } from '@blocksuite/affine/global/env';
 import type { DocMode, RootBlockModel } from '@blocksuite/affine/model';
 import {
   customImageProxyMiddleware,
@@ -44,6 +45,28 @@ export interface AffineEditorContainer extends HTMLElement {
   mode: DocMode;
   origin: HTMLDivElement;
   std: BlockStdScope;
+}
+
+/**
+ * Whether a middle-click (button 1) on the editor should have its default,
+ * native browser behavior (X11 PRIMARY-selection paste, on Linux) blocked.
+ *
+ * Regression guard: this used to be inlined directly in the event handler,
+ * and a refactor once deleted the whole condition (keeping only the
+ * unrelated reference/link early-return), silently turning native
+ * middle-click paste permanently on regardless of the user's
+ * `enableMiddleClickPaste` setting. Native middle-click paste inserts at
+ * whatever the raw DOM caret happens to be, bypassing BlockSuite's own
+ * cursor-position-aware paste routing entirely — e.g. landing in the main
+ * page document instead of a Note on the edgeless canvas that was merely
+ * selected (not yet caret-focused) when the middle click happened.
+ */
+export function shouldSuppressMiddleClickPaste(
+  enableMiddleClickPaste: boolean,
+  isLinux: boolean,
+  button: number
+): boolean {
+  return !enableMiddleClickPaste && isLinux && button === 1;
 }
 
 export interface EditorProps extends HTMLAttributes<HTMLDivElement> {
@@ -185,12 +208,27 @@ const BlockSuiteEditorImpl = ({
         ) {
           return;
         }
+        if (
+          shouldSuppressMiddleClickPaste(
+            enableMiddleClickPaste,
+            IS_LINUX,
+            e.button
+          )
+        ) {
+          e.preventDefault();
+        }
       };
+      editorContainer.addEventListener('pointerup', handleMiddleClick, {
+        capture: true,
+      });
       editorContainer.addEventListener('auxclick', handleMiddleClick, {
         capture: true,
       });
 
       return () => {
+        editorContainer?.removeEventListener('pointerup', handleMiddleClick, {
+          capture: true,
+        });
         editorContainer?.removeEventListener('auxclick', handleMiddleClick, {
           capture: true,
         });
