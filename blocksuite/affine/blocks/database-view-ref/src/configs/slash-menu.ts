@@ -1,7 +1,7 @@
-import { toast } from '@blocksuite/affine-components/toast';
 import { DatabaseBlockDataSource } from '@blocksuite/affine-block-database';
-import { DatabaseBlockSchema, NoteDisplayMode } from '@blocksuite/affine-model';
+import { toast } from '@blocksuite/affine-components/toast';
 import type { DatabaseBlockModel } from '@blocksuite/affine-model';
+import { DatabaseBlockSchema, NoteDisplayMode } from '@blocksuite/affine-model';
 import {
   CrossDocReferenceProvider,
   JournalTodoDatabaseProvider,
@@ -10,13 +10,13 @@ import {
   ensureDocLoaded,
   waitForBlockInDoc,
 } from '@blocksuite/affine-shared/utils';
-import type { FilterGroup } from '@blocksuite/data-view';
 import {
   type SlashMenuActionItem,
   type SlashMenuConfig,
-  type SlashMenuItem,
   SlashMenuConfigExtension,
+  type SlashMenuItem,
 } from '@blocksuite/affine-widget-slash-menu';
+import type { FilterGroup } from '@blocksuite/data-view';
 import {
   DatabaseListViewIcon,
   DatabaseTableViewIcon,
@@ -76,254 +76,258 @@ export const journalTodoDatabaseSlashMenuConfig: SlashMenuConfig = {
         searchAlias: ['todo', 'journal', 'tasks'],
         icon: DatabaseListViewIcon(),
         group: '7_Database@2',
-        action: async () => {
-          const store = std.store;
+        action: () => {
+          (async () => {
+            const store = std.store;
 
-          let ref = journalTodo.getJournalTodoDatabaseRef();
-          let justCreatedCanonical:
-            | { hiddenNoteId: string; databaseId: string }
-            | undefined;
-          if (!ref && safeIsTemplateDoc(journalTodo, store.id)) {
-            // Story 2.11: refuse rather than silently create — a canonical
-            // created inside a template doc would get deep-copied fresh
-            // into every future daily journal (template duplication has no
-            // ID-remapping awareness of this block's ref props at all, see
-            // `replace-id.ts`), permanently forking the "single source of
-            // truth" database once per day. Point the user at explicit
-            // setup instead (`journalTodoSourceSlashMenuConfig`, run from a
-            // non-template doc).
-            toast(
-              std.host,
-              'This doc is a template, so a new Journal Todo table can’t be created here. Set up your Journal Todo table from a regular page first, then it can be referenced here.'
-            );
-            return;
-          }
-          if (!ref) {
-            // First-ever use: create a fresh canonical database, pre-
-            // promoted into its own hidden note (mirrors
-            // `database-ref/src/commands.ts`'s `moveIntoHiddenNote` shape,
-            // constructed directly here since there's nothing to promote
-            // yet — this *is* the first reference).
-            store.captureSync();
-            const hiddenNoteId = store.addBlock(
-              'affine:note',
-              {
-                displayMode: NoteDisplayMode.EdgelessOnly,
-                xywh: '[-10000, -10000, 800, 480]',
-              },
-              store.root!.id
-            );
-            const databaseId = store.addBlock(
-              'affine:database',
-              { title: new Text('Journal Todo') },
-              hiddenNoteId
-            );
-            const databaseModel = store.getBlock(databaseId)
-              ?.model as DatabaseBlockModel;
-            new DatabaseBlockDataSource(databaseModel).ensureTaskStatusColumn();
-
-            ref = { refDocId: store.id, refBlockId: databaseId };
-            justCreatedCanonical = { hiddenNoteId, databaseId };
-            journalTodo.setJournalTodoDatabaseRef(ref);
-          }
-
-          // Resolve the Status column/"done" option off whichever
-          // canonical we're pointing at (freshly created or previously
-          // established) to build the "not done" filter — reuses the same
-          // accessors `ensureTaskStatusColumn`/task-status resolution
-          // already use elsewhere, rather than a second Status-finding
-          // mechanism.
-          //
-          // Cross-doc reuse (every day after the first, since the canonical
-          // lives wherever it was first created, essentially never today's
-          // doc): the target doc may not be loaded locally yet, so this
-          // must wait for it the same way `insertDatabaseViewRefBlockCommand`'s
-          // own cross-doc branch does — resolving `canonicalModel`
-          // synchronously here would silently skip filter construction
-          // whenever the doc hadn't finished loading, seeding a view with
-          // no filter at all (showing every task, done or not).
-          const isCrossDoc = ref.refDocId !== store.id;
-          let canonicalStore = isCrossDoc ? undefined : store;
-          if (isCrossDoc) {
-            const refDoc = std.workspace.getDoc(ref.refDocId);
-            if (refDoc) {
-              ensureDocLoaded(refDoc);
-              const found = await waitForBlockInDoc(refDoc, ref.refBlockId);
-              canonicalStore = found
-                ? refDoc.getStore({ id: refDoc.id })
-                : undefined;
+            let ref = journalTodo.getJournalTodoDatabaseRef();
+            let justCreatedCanonical:
+              | { hiddenNoteId: string; databaseId: string }
+              | undefined;
+            if (!ref && safeIsTemplateDoc(journalTodo, store.id)) {
+              // Story 2.11: refuse rather than silently create — a canonical
+              // created inside a template doc would get deep-copied fresh
+              // into every future daily journal (template duplication has no
+              // ID-remapping awareness of this block's ref props at all, see
+              // `replace-id.ts`), permanently forking the "single source of
+              // truth" database once per day. Point the user at explicit
+              // setup instead (`journalTodoSourceSlashMenuConfig`, run from a
+              // non-template doc).
+              toast(
+                std.host,
+                'This doc is a template, so a new Journal Todo table can’t be created here. Set up your Journal Todo table from a regular page first, then it can be referenced here.'
+              );
+              return;
             }
-          }
-          const canonicalModel = canonicalStore?.getBlock(ref.refBlockId)
-            ?.model as DatabaseBlockModel | undefined;
+            if (!ref) {
+              // First-ever use: create a fresh canonical database, pre-
+              // promoted into its own hidden note (mirrors
+              // `database-ref/src/commands.ts`'s `moveIntoHiddenNote` shape,
+              // constructed directly here since there's nothing to promote
+              // yet — this *is* the first reference).
+              store.captureSync();
+              const hiddenNoteId = store.addBlock(
+                'affine:note',
+                {
+                  displayMode: NoteDisplayMode.EdgelessOnly,
+                  xywh: '[-10000, -10000, 800, 480]',
+                },
+                store.root!.id
+              );
+              const databaseId = store.addBlock(
+                'affine:database',
+                { title: new Text('Journal Todo') },
+                hiddenNoteId
+              );
+              const databaseModel = store.getBlock(databaseId)
+                ?.model as DatabaseBlockModel;
+              new DatabaseBlockDataSource(
+                databaseModel
+              ).ensureTaskStatusColumn();
 
-          if (!canonicalModel && safeIsTemplateDoc(journalTodo, store.id)) {
-            // Story 2.11 (post-review): a *stale* ref (pointing at a
-            // deleted/never-resolving canonical) bypasses the `!ref`-only
-            // guard above, since `ref` itself is still set. Falling through
-            // to `insertDatabaseViewRefBlockCommand` below with a ref that's
-            // already known (via the resolution just above) not to resolve
-            // would leave a broken, unseeded `database-view-ref` sitting in
-            // this template doc — that command's cross-doc branch inserts
-            // optimistically and only discovers a missing target
-            // asynchronously afterward, without rolling back (a deliberate,
-            // established pattern mirrored from `database-ref`'s identical
-            // command; not something to change there, since it's shared by
-            // several other stories and every other caller relies on it).
-            // A broken block left inside a template gets deep-copied into
-            // every future daily journal, so refuse here instead, same as
-            // the no-ref case above.
-            toast(
-              std.host,
-              'Your Journal Todo source no longer exists. Set up your Journal Todo table from a regular page first, then it can be referenced here.'
-            );
-            return;
-          }
+              ref = { refDocId: store.id, refBlockId: databaseId };
+              justCreatedCanonical = { hiddenNoteId, databaseId };
+              journalTodo.setJournalTodoDatabaseRef(ref);
+            }
 
-          let initialFilter: FilterGroup | undefined;
-          if (canonicalModel) {
-            const dataSource = new DatabaseBlockDataSource(canonicalModel);
-            const statusColumnId = dataSource.ensureTaskStatusColumn();
-            // Story 2.6: guarantees the "Note" column exists on this
-            // canonical every time `/Journal Todo` resolves against it —
-            // not just on rows created after this fix — mirroring the
-            // exact same eager-ensure pattern used for Status/Done date
-            // right here. Without this, `ensureNoteColumn()` (only
-            // otherwise called lazily from inside the cell's own
-            // create/reveal/attach actions) never runs for a canonical
-            // whose existing rows were all created before this story
-            // shipped, so the column — and therefore the whole feature —
-            // silently never appears.
-            dataSource.ensureNoteColumn();
-            // Story 2.7: guarantees the "Due date" column exists on this
-            // canonical every time `/Journal Todo` resolves against it —
-            // same eager-ensure reasoning as Note above. Without this, a
-            // Calendar view added later via the database's own normal
-            // view-switcher (no Journal-Todo-specific insert command,
-            // per direct user correction) would have no Due date column
-            // to fall back to yet, and would ask the user to set one up
-            // even though this database has always been task-workflow-
-            // capable.
-            dataSource.ensureDueDateColumn(std);
-            const doneOption = dataSource.getTaskStatusTargetOption(
-              'done',
-              statusColumnId
-            );
-            if (statusColumnId && doneOption) {
-              const doneDateColumnId = dataSource.ensureDoneDateColumn();
-              // A task done *after this specific reference was created*
-              // stays visible in *this* reference — it's only excluded
-              // once a *later* reference (a fresh `database-view-ref`,
-              // created later in real wall-clock time) comes along. This
-              // is a literal `Date.now()` baked into the stored filter at
-              // insertion time, deliberately NOT based on the journal's
-              // own date — a journal can be dated in the future or the
-              // past, but "was this marked done since I opened this
-              // particular list" is always a real-time question. Live
-              // re-evaluation of a plain "not done" filter would otherwise
-              // hide a row the instant it's marked done, even from the
-              // very reference it was just checked off in.
-              //
-              // Story 2.11 (live bug, twice-revisited — read this before
-              // changing this clause again): the data-view filter engine
-              // has no "relative to now" comparison, only literals, so
-              // this literal is fundamentally frozen from the moment it's
-              // written. Two things were tried and reverted here: (1)
-              // omitting the clause when `isTemplateDoc` was true at
-              // insertion time — missed the case where a doc becomes a
-              // template *after* insertion, and made template-sourced and
-              // manually-inserted references behave differently, which
-              // the user rejected; (2) moving the "stays visible after
-              // check-off" behavior entirely into ephemeral, in-memory,
-              // non-persisted state on `DatabaseBlockDataSource` — this
-              // fixed the template/manual inconsistency, but broke a more
-              // important, pre-existing guarantee: going back to an old
-              // journal day must still show *that day's own* completed
-              // tasks, which requires this to be persisted (ephemeral
-              // state doesn't survive navigating away and back — a fresh
-              // `DatabaseBlockDataSource` is constructed per render, with
-              // an empty grace set).
-              //
-              // Resolved fix: keep this clause as a real, persisted
-              // literal (below) — unconditionally, the same for every
-              // insertion — and instead fix the actual root cause of the
-              // "frozen forever" problem at its source: block duplication.
-              // A dedicated `TransformerMiddleware`
-              // (`refreshJournalTodoOnDuplicateMiddleware`, this
-              // package's own `duplicate-middleware.ts`) runs on every
-              // `affine:database-view-ref` copy produced by template
-              // duplication *or* plain "Duplicate doc" (wired into both
-              // `DocsService.duplicateFromTemplate` and `.duplicate()`)
-              // and rewrites this exact clause's literal to the
-              // duplication moment on the COPY only — the original
-              // reference (e.g. yesterday's journal page) keeps its own
-              // original literal untouched, so its own history stays
-              // intact. See that middleware's own comment for the full
-              // mechanism.
-              const referenceCreatedAtMs = Date.now();
-              initialFilter = {
-                type: 'group',
-                op: 'or',
-                conditions: [
-                  {
-                    type: 'filter',
-                    left: { type: 'ref', name: statusColumnId },
-                    function: 'isNotOneOf',
-                    args: [{ type: 'literal', value: [doneOption.id] }],
-                  },
-                  ...(doneDateColumnId
-                    ? [
-                        {
-                          type: 'filter' as const,
-                          left: {
-                            type: 'ref' as const,
-                            name: doneDateColumnId,
-                          },
-                          function: 'after',
-                          args: [
-                            {
-                              type: 'literal' as const,
-                              value: referenceCreatedAtMs - 1,
+            // Resolve the Status column/"done" option off whichever
+            // canonical we're pointing at (freshly created or previously
+            // established) to build the "not done" filter — reuses the same
+            // accessors `ensureTaskStatusColumn`/task-status resolution
+            // already use elsewhere, rather than a second Status-finding
+            // mechanism.
+            //
+            // Cross-doc reuse (every day after the first, since the canonical
+            // lives wherever it was first created, essentially never today's
+            // doc): the target doc may not be loaded locally yet, so this
+            // must wait for it the same way `insertDatabaseViewRefBlockCommand`'s
+            // own cross-doc branch does — resolving `canonicalModel`
+            // synchronously here would silently skip filter construction
+            // whenever the doc hadn't finished loading, seeding a view with
+            // no filter at all (showing every task, done or not).
+            const isCrossDoc = ref.refDocId !== store.id;
+            let canonicalStore = isCrossDoc ? undefined : store;
+            if (isCrossDoc) {
+              const refDoc = std.workspace.getDoc(ref.refDocId);
+              if (refDoc) {
+                ensureDocLoaded(refDoc);
+                const found = await waitForBlockInDoc(refDoc, ref.refBlockId);
+                canonicalStore = found
+                  ? refDoc.getStore({ id: refDoc.id })
+                  : undefined;
+              }
+            }
+            const canonicalModel = canonicalStore?.getBlock(ref.refBlockId)
+              ?.model as DatabaseBlockModel | undefined;
+
+            if (!canonicalModel && safeIsTemplateDoc(journalTodo, store.id)) {
+              // Story 2.11 (post-review): a *stale* ref (pointing at a
+              // deleted/never-resolving canonical) bypasses the `!ref`-only
+              // guard above, since `ref` itself is still set. Falling through
+              // to `insertDatabaseViewRefBlockCommand` below with a ref that's
+              // already known (via the resolution just above) not to resolve
+              // would leave a broken, unseeded `database-view-ref` sitting in
+              // this template doc — that command's cross-doc branch inserts
+              // optimistically and only discovers a missing target
+              // asynchronously afterward, without rolling back (a deliberate,
+              // established pattern mirrored from `database-ref`'s identical
+              // command; not something to change there, since it's shared by
+              // several other stories and every other caller relies on it).
+              // A broken block left inside a template gets deep-copied into
+              // every future daily journal, so refuse here instead, same as
+              // the no-ref case above.
+              toast(
+                std.host,
+                'Your Journal Todo source no longer exists. Set up your Journal Todo table from a regular page first, then it can be referenced here.'
+              );
+              return;
+            }
+
+            let initialFilter: FilterGroup | undefined;
+            if (canonicalModel) {
+              const dataSource = new DatabaseBlockDataSource(canonicalModel);
+              const statusColumnId = dataSource.ensureTaskStatusColumn();
+              // Story 2.6: guarantees the "Note" column exists on this
+              // canonical every time `/Journal Todo` resolves against it —
+              // not just on rows created after this fix — mirroring the
+              // exact same eager-ensure pattern used for Status/Done date
+              // right here. Without this, `ensureNoteColumn()` (only
+              // otherwise called lazily from inside the cell's own
+              // create/reveal/attach actions) never runs for a canonical
+              // whose existing rows were all created before this story
+              // shipped, so the column — and therefore the whole feature —
+              // silently never appears.
+              dataSource.ensureNoteColumn();
+              // Story 2.7: guarantees the "Due date" column exists on this
+              // canonical every time `/Journal Todo` resolves against it —
+              // same eager-ensure reasoning as Note above. Without this, a
+              // Calendar view added later via the database's own normal
+              // view-switcher (no Journal-Todo-specific insert command,
+              // per direct user correction) would have no Due date column
+              // to fall back to yet, and would ask the user to set one up
+              // even though this database has always been task-workflow-
+              // capable.
+              dataSource.ensureDueDateColumn(std);
+              const doneOption = dataSource.getTaskStatusTargetOption(
+                'done',
+                statusColumnId
+              );
+              if (statusColumnId && doneOption) {
+                const doneDateColumnId = dataSource.ensureDoneDateColumn();
+                // A task done *after this specific reference was created*
+                // stays visible in *this* reference — it's only excluded
+                // once a *later* reference (a fresh `database-view-ref`,
+                // created later in real wall-clock time) comes along. This
+                // is a literal `Date.now()` baked into the stored filter at
+                // insertion time, deliberately NOT based on the journal's
+                // own date — a journal can be dated in the future or the
+                // past, but "was this marked done since I opened this
+                // particular list" is always a real-time question. Live
+                // re-evaluation of a plain "not done" filter would otherwise
+                // hide a row the instant it's marked done, even from the
+                // very reference it was just checked off in.
+                //
+                // Story 2.11 (live bug, twice-revisited — read this before
+                // changing this clause again): the data-view filter engine
+                // has no "relative to now" comparison, only literals, so
+                // this literal is fundamentally frozen from the moment it's
+                // written. Two things were tried and reverted here: (1)
+                // omitting the clause when `isTemplateDoc` was true at
+                // insertion time — missed the case where a doc becomes a
+                // template *after* insertion, and made template-sourced and
+                // manually-inserted references behave differently, which
+                // the user rejected; (2) moving the "stays visible after
+                // check-off" behavior entirely into ephemeral, in-memory,
+                // non-persisted state on `DatabaseBlockDataSource` — this
+                // fixed the template/manual inconsistency, but broke a more
+                // important, pre-existing guarantee: going back to an old
+                // journal day must still show *that day's own* completed
+                // tasks, which requires this to be persisted (ephemeral
+                // state doesn't survive navigating away and back — a fresh
+                // `DatabaseBlockDataSource` is constructed per render, with
+                // an empty grace set).
+                //
+                // Resolved fix: keep this clause as a real, persisted
+                // literal (below) — unconditionally, the same for every
+                // insertion — and instead fix the actual root cause of the
+                // "frozen forever" problem at its source: block duplication.
+                // A dedicated `TransformerMiddleware`
+                // (`refreshJournalTodoOnDuplicateMiddleware`, this
+                // package's own `duplicate-middleware.ts`) runs on every
+                // `affine:database-view-ref` copy produced by template
+                // duplication *or* plain "Duplicate doc" (wired into both
+                // `DocsService.duplicateFromTemplate` and `.duplicate()`)
+                // and rewrites this exact clause's literal to the
+                // duplication moment on the COPY only — the original
+                // reference (e.g. yesterday's journal page) keeps its own
+                // original literal untouched, so its own history stays
+                // intact. See that middleware's own comment for the full
+                // mechanism.
+                const referenceCreatedAtMs = Date.now();
+                initialFilter = {
+                  type: 'group',
+                  op: 'or',
+                  conditions: [
+                    {
+                      type: 'filter',
+                      left: { type: 'ref', name: statusColumnId },
+                      function: 'isNotOneOf',
+                      args: [{ type: 'literal', value: [doneOption.id] }],
+                    },
+                    ...(doneDateColumnId
+                      ? [
+                          {
+                            type: 'filter' as const,
+                            left: {
+                              type: 'ref' as const,
+                              name: doneDateColumnId,
                             },
-                          ],
-                        },
-                      ]
-                    : []),
-                ],
-              };
+                            function: 'after',
+                            args: [
+                              {
+                                type: 'literal' as const,
+                                value: referenceCreatedAtMs - 1,
+                              },
+                            ],
+                          },
+                        ]
+                      : []),
+                  ],
+                };
+              }
             }
-          }
 
-          const [_, result] = std.command.exec(
-            insertDatabaseViewRefBlockCommand,
-            {
-              refBlockId: ref.refBlockId,
-              refDocId: ref.refDocId,
-              place: 'after',
-              removeEmptyLine: true,
-              selectedModels: [model],
-              initialView: { viewType: 'list', initialFilter },
+            const [_, result] = std.command.exec(
+              insertDatabaseViewRefBlockCommand,
+              {
+                refBlockId: ref.refBlockId,
+                refDocId: ref.refDocId,
+                place: 'after',
+                removeEmptyLine: true,
+                selectedModels: [model],
+                initialView: { viewType: 'list', initialFilter },
+              }
+            );
+            if (!result.insertedDatabaseViewRefBlockId) {
+              // If this invocation just created the canonical (first-ever
+              // use) and insertion still failed, roll it back rather than
+              // leaving an orphaned database + a permanent workspace pointer
+              // with no visible reference anywhere — every future invocation
+              // would otherwise silently reuse this empty, ref-less canonical.
+              if (justCreatedCanonical) {
+                store.deleteBlock(justCreatedCanonical.databaseId);
+                store.deleteBlock(justCreatedCanonical.hiddenNoteId);
+                journalTodo.setJournalTodoDatabaseRef(undefined);
+              }
+              toast(std.host, 'Could not insert the journal todo list.');
+              return;
             }
-          );
-          if (!result.insertedDatabaseViewRefBlockId) {
-            // If this invocation just created the canonical (first-ever
-            // use) and insertion still failed, roll it back rather than
-            // leaving an orphaned database + a permanent workspace pointer
-            // with no visible reference anywhere — every future invocation
-            // would otherwise silently reuse this empty, ref-less canonical.
-            if (justCreatedCanonical) {
-              store.deleteBlock(justCreatedCanonical.databaseId);
-              store.deleteBlock(justCreatedCanonical.hiddenNoteId);
-              journalTodo.setJournalTodoDatabaseRef(undefined);
-            }
-            toast(std.host, 'Could not insert the journal todo list.');
-            return;
-          }
-          std.selection.set([
-            std.selection.create(BlockSelection, {
-              blockId: result.insertedDatabaseViewRefBlockId,
-            }),
-          ]);
+            std.selection.set([
+              std.selection.create(BlockSelection, {
+                blockId: result.insertedDatabaseViewRefBlockId,
+              }),
+            ]);
+          })().catch(console.error);
         },
       },
     ];
@@ -401,50 +405,52 @@ export const genericDatabaseViewRefSlashMenuConfig: SlashMenuConfig = {
         'Reference a table from a different doc with an independent view/filter',
       icon: LinkIcon(),
       group: `7_Database@${index++}`,
-      action: async () => {
-        const crossDocReference = std.getOptional(CrossDocReferenceProvider);
-        if (!crossDocReference) {
-          toast(std.host, 'Cross-doc referencing is not available.');
-          return;
-        }
-
-        const candidate = await crossDocReference.openCrossDocReferencePicker(
-          std.store.id,
-          ['affine:database']
-        );
-        // A `null` candidate means the user cancelled the picker — not a
-        // failure, so no toast here.
-        if (!candidate) return;
-        // Defensive: don't trust that passing `['affine:database']` as
-        // `allowedFlavours` guarantees the picker only ever returns that
-        // flavour — a misconfigured/future provider implementation could
-        // still return something else, which must not be silently
-        // inserted as if it were a database.
-        if (candidate.flavour !== 'affine:database') {
-          toast(std.host, 'Could not insert that reference.');
-          return;
-        }
-
-        const [_, result] = std.command.exec(
-          insertDatabaseViewRefBlockCommand,
-          {
-            refBlockId: candidate.blockId,
-            refDocId: candidate.docId,
-            place: 'after',
-            removeEmptyLine: true,
-            selectedModels: [model],
+      action: () => {
+        (async () => {
+          const crossDocReference = std.getOptional(CrossDocReferenceProvider);
+          if (!crossDocReference) {
+            toast(std.host, 'Cross-doc referencing is not available.');
+            return;
           }
-        );
-        if (!result.insertedDatabaseViewRefBlockId) {
-          toast(std.host, 'Could not insert that reference.');
-          return;
-        }
 
-        std.selection.set([
-          std.selection.create(BlockSelection, {
-            blockId: result.insertedDatabaseViewRefBlockId,
-          }),
-        ]);
+          const candidate = await crossDocReference.openCrossDocReferencePicker(
+            std.store.id,
+            ['affine:database']
+          );
+          // A `null` candidate means the user cancelled the picker — not a
+          // failure, so no toast here.
+          if (!candidate) return;
+          // Defensive: don't trust that passing `['affine:database']` as
+          // `allowedFlavours` guarantees the picker only ever returns that
+          // flavour — a misconfigured/future provider implementation could
+          // still return something else, which must not be silently
+          // inserted as if it were a database.
+          if (candidate.flavour !== 'affine:database') {
+            toast(std.host, 'Could not insert that reference.');
+            return;
+          }
+
+          const [_, result] = std.command.exec(
+            insertDatabaseViewRefBlockCommand,
+            {
+              refBlockId: candidate.blockId,
+              refDocId: candidate.docId,
+              place: 'after',
+              removeEmptyLine: true,
+              selectedModels: [model],
+            }
+          );
+          if (!result.insertedDatabaseViewRefBlockId) {
+            toast(std.host, 'Could not insert that reference.');
+            return;
+          }
+
+          std.selection.set([
+            std.selection.create(BlockSelection, {
+              blockId: result.insertedDatabaseViewRefBlockId,
+            }),
+          ]);
+        })().catch(console.error);
       },
     };
 
@@ -496,67 +502,72 @@ export const journalTodoSourceSlashMenuConfig: SlashMenuConfig = {
       description: 'Choose which table is your Journal Todo source',
       icon: LinkIcon(),
       group: `7_Database@${index++}`,
-      action: async () => {
-        const crossDocReference = std.getOptional(CrossDocReferenceProvider);
-        if (!crossDocReference) {
-          toast(std.host, 'Cross-doc referencing is not available.');
-          return;
-        }
+      action: () => {
+        (async () => {
+          const crossDocReference = std.getOptional(CrossDocReferenceProvider);
+          if (!crossDocReference) {
+            toast(std.host, 'Cross-doc referencing is not available.');
+            return;
+          }
 
-        // `null` excludes nothing, so the current doc's own tables are
-        // browsable/searchable in the same picker as every other doc's —
-        // one entry point instead of a separate same-doc-only mechanism.
-        const candidate = await crossDocReference.openCrossDocReferencePicker(
-          null,
-          ['affine:database']
-        );
-        // A `null` candidate means the user cancelled the picker — not a
-        // failure, so no toast here.
-        if (!candidate) return;
-        if (candidate.flavour !== 'affine:database') {
-          toast(std.host, 'Could not set that as your Journal Todo source.');
-          return;
-        }
-        // Story 2.11 (post-review): guards the *invoking* doc against being
-        // a template, but a picked candidate can itself live inside a
-        // template doc regardless of where this command was run from (e.g.
-        // a database manually added to a template via `/Table`) — refuse
-        // that pick too, for the same reason: the canonical would then live
-        // inside a template, and every future daily journal duplication
-        // would carry a dead copy of it while the real pointer stayed
-        // pinned to the template forever.
-        if (safeIsTemplateDoc(journalTodo, candidate.docId)) {
+          // `null` excludes nothing, so the current doc's own tables are
+          // browsable/searchable in the same picker as every other doc's —
+          // one entry point instead of a separate same-doc-only mechanism.
+          const candidate = await crossDocReference.openCrossDocReferencePicker(
+            null,
+            ['affine:database']
+          );
+          // A `null` candidate means the user cancelled the picker — not a
+          // failure, so no toast here.
+          if (!candidate) return;
+          if (candidate.flavour !== 'affine:database') {
+            toast(std.host, 'Could not set that as your Journal Todo source.');
+            return;
+          }
+          // Story 2.11 (post-review): guards the *invoking* doc against being
+          // a template, but a picked candidate can itself live inside a
+          // template doc regardless of where this command was run from (e.g.
+          // a database manually added to a template via `/Table`) — refuse
+          // that pick too, for the same reason: the canonical would then live
+          // inside a template, and every future daily journal duplication
+          // would carry a dead copy of it while the real pointer stayed
+          // pinned to the template forever.
+          if (safeIsTemplateDoc(journalTodo, candidate.docId)) {
+            toast(
+              std.host,
+              'That table lives inside a template doc and can’t be used as your Journal Todo source. Move it to a regular page first.'
+            );
+            return;
+          }
+
+          journalTodo.setJournalTodoDatabaseRef({
+            refDocId: candidate.docId,
+            refBlockId: candidate.blockId,
+          });
+
+          // Resolve the picked table's own title for the confirmation toast
+          // — the picker already confirmed it exists, so no wait/retry
+          // needed here, just a direct read (mirrors
+          // `journalTodoDatabaseSlashMenuConfig`'s own cross-doc resolution
+          // shape, minus the load-wait since we just picked this candidate
+          // from an already-loaded picker result).
+          const isCrossDoc = candidate.docId !== std.store.id;
+          const candidateStore = isCrossDoc
+            ? std.workspace.getDoc(candidate.docId)?.getStore({
+                id: candidate.docId,
+              })
+            : std.store;
+          const candidateTitle =
+            (
+              candidateStore?.getBlock(candidate.blockId)?.model as
+                | DatabaseBlockModel
+                | undefined
+            )?.props.title.toString() || '(untitled)';
           toast(
             std.host,
-            'That table lives inside a template doc and can’t be used as your Journal Todo source. Move it to a regular page first.'
+            `"${candidateTitle}" is now your Journal Todo source.`
           );
-          return;
-        }
-
-        journalTodo.setJournalTodoDatabaseRef({
-          refDocId: candidate.docId,
-          refBlockId: candidate.blockId,
-        });
-
-        // Resolve the picked table's own title for the confirmation toast
-        // — the picker already confirmed it exists, so no wait/retry
-        // needed here, just a direct read (mirrors
-        // `journalTodoDatabaseSlashMenuConfig`'s own cross-doc resolution
-        // shape, minus the load-wait since we just picked this candidate
-        // from an already-loaded picker result).
-        const isCrossDoc = candidate.docId !== std.store.id;
-        const candidateStore = isCrossDoc
-          ? std.workspace.getDoc(candidate.docId)?.getStore({
-              id: candidate.docId,
-            })
-          : std.store;
-        const candidateTitle =
-          (
-            candidateStore?.getBlock(candidate.blockId)?.model as
-              | DatabaseBlockModel
-              | undefined
-          )?.props.title.toString() || '(untitled)';
-        toast(std.host, `"${candidateTitle}" is now your Journal Todo source.`);
+        })().catch(console.error);
       },
     };
 

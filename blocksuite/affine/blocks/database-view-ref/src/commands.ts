@@ -1,9 +1,9 @@
-import { toast } from '@blocksuite/affine-components/toast';
 import {
   DatabaseBlockDataSource,
   DatabaseViewLocalOverrideProvider,
 } from '@blocksuite/affine-block-database';
 import { ensurePromoted } from '@blocksuite/affine-block-database-ref';
+import { toast } from '@blocksuite/affine-components/toast';
 import type {
   DatabaseBlockModel,
   DatabaseViewRefBlockModel,
@@ -13,13 +13,13 @@ import {
   ensureDocLoaded,
   waitForBlockInDoc,
 } from '@blocksuite/affine-shared/utils';
-import type { BlockStdScope, Command } from '@blocksuite/std';
-import type { BlockModel } from '@blocksuite/store';
 import {
   type BasicViewDataType,
   EditorHostKey,
   type FilterGroup,
 } from '@blocksuite/data-view';
+import type { BlockStdScope, Command } from '@blocksuite/std';
+import type { BlockModel } from '@blocksuite/store';
 
 import { createLocalViewOverride } from './view-override.js';
 

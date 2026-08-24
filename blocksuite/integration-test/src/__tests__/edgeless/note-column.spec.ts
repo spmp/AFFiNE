@@ -1,11 +1,11 @@
+import { DatabaseBlockDataSource } from '@blocksuite/affine/blocks/database';
+import type { DatabaseBlockModel } from '@blocksuite/affine/model';
+import { CrossDocReferenceProvider } from '@blocksuite/affine/shared/services';
 import {
   attachExistingNoteForRow,
   createNoteForRow,
-  DatabaseBlockDataSource,
   revealOrInsertNoteForRow,
-} from '@blocksuite/affine/blocks/database';
-import type { DatabaseBlockModel } from '@blocksuite/affine/model';
-import { CrossDocReferenceProvider } from '@blocksuite/affine/shared/services';
+} from '@blocksuite/affine-block-database-note-property';
 import { Text } from '@blocksuite/store';
 import { beforeEach, describe, expect, test } from 'vitest';
 

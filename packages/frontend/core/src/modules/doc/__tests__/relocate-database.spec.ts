@@ -58,17 +58,20 @@ function createTestDocsService(collection: TestWorkspace) {
   const extensions = new StoreExtensionManager(
     getInternalStoreExtensions()
   ).get('store');
-  const service = Object.create(DocsService.prototype) as DocsService & {
-    store: {
-      getBlocksuiteCollection: () => TestWorkspace;
-      getBlockSuiteDoc: (id: string) => Store | null;
-    };
-  };
-  service.store = {
+  // `store` is a `private readonly` constructor param property on
+  // `DocsService` — intersecting the class type with a redeclared `store`
+  // field (as this used to) collapses the *whole* intersection to `never`
+  // (the private member conflicts with the public redeclaration), so the
+  // stub is written through a separately-typed `Record<string, unknown>`
+  // view instead (mirrors `note-ref.spec.ts`'s own fix for this exact
+  // TypeScript quirk).
+  const service = Object.create(DocsService.prototype) as DocsService;
+  const serviceInternals = service as unknown as Record<string, unknown>;
+  serviceInternals.store = {
     getBlocksuiteCollection: () => collection,
     getBlockSuiteDoc: (id: string) =>
       collection.getDoc(id)?.getStore({ extensions }) ?? null,
-  } as never;
+  };
   return service;
 }
 

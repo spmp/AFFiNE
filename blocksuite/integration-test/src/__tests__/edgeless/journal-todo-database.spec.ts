@@ -3,7 +3,7 @@ import {
   DatabaseViewLocalOverrideProvider,
   getCell,
 } from '@blocksuite/affine/blocks/database';
-import type { DatabaseBlockModel } from '@blocksuite/affine/model';
+import type { DatabaseViewRefBlockComponent } from '@blocksuite/affine/blocks/database-view-ref';
 import {
   createLocalViewOverride,
   insertDatabaseViewRefBlockCommand,
@@ -11,7 +11,7 @@ import {
   journalTodoSourceSlashMenuConfig,
   refreshJournalTodoOnDuplicateMiddleware,
 } from '@blocksuite/affine/blocks/database-view-ref';
-import type { DatabaseViewRefBlockComponent } from '@blocksuite/affine/blocks/database-view-ref';
+import type { DatabaseBlockModel } from '@blocksuite/affine/model';
 import { AffineSchemas } from '@blocksuite/affine/schemas';
 import { replaceIdMiddleware } from '@blocksuite/affine/shared/adapters';
 import {
@@ -21,8 +21,9 @@ import {
   JournalTodoDatabaseProvider,
   TaskWorkflowDefaultsSchema,
 } from '@blocksuite/affine/shared/services';
-import { signal } from '@preact/signals-core';
+import type { GeneralServiceIdentifier } from '@blocksuite/global/di';
 import { Schema, Slice, Text, Transformer } from '@blocksuite/store';
+import { signal } from '@preact/signals-core';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { wait } from '../utils/common.js';
@@ -436,7 +437,7 @@ describe('journal todo database slash-menu command', () => {
       const canonicalModel = doc.getBlock(refEl.model.props.refBlockId)
         ?.model as DatabaseBlockModel;
       const dataSource = new DatabaseBlockDataSource(canonicalModel);
-      const rowId = dataSource.rowAddAsTodoList('end');
+      dataSource.rowAddAsTodoList('end');
       await wait();
 
       // The row-level detail-fields container only renders at all when
@@ -967,7 +968,7 @@ describe('journal todo database slash-menu command', () => {
     ['a manually-inserted (non-template) reference', false, '2026-07-29'],
     ['a template-sourced reference', true, undefined],
   ] as const)(
-    'Story 2.11: a row marked done stays visible in %s\'s own filtered view (the persisted OR grace clause, identical for both)',
+    "Story 2.11: a row marked done stays visible in %s's own filtered view (the persisted OR grace clause, identical for both)",
     async (_label, isTemplateDoc, journalDate) => {
       const noteId = addNote(doc);
       const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
@@ -1077,12 +1078,9 @@ describe('journal todo database slash-menu command', () => {
     // an old journal day no longer showed that day's own completed tasks,
     // only the still-undone ones, which is the live regression this test
     // guards against.
-    const secondDataSource = new DatabaseBlockDataSource(
-      canonicalModel,
-      ds => {
-        ds.serviceSet(DatabaseViewLocalOverrideProvider, override);
-      }
-    );
+    const secondDataSource = new DatabaseBlockDataSource(canonicalModel, ds => {
+      ds.serviceSet(DatabaseViewLocalOverrideProvider, override);
+    });
     const secondView = secondDataSource.viewManager.viewGet(viewId)!;
     expect(secondView.rows$.value.map(r => r.rowId)).toContain(rowId);
   });
@@ -1118,12 +1116,9 @@ describe('journal todo database slash-menu command', () => {
     // produced later, must NOT show it, without ever touching day 1's own
     // filter.
     const sourceOverride = createLocalViewOverride(sourceRefModel);
-    const sourceDataSource = new DatabaseBlockDataSource(
-      canonicalModel,
-      ds => {
-        ds.serviceSet(DatabaseViewLocalOverrideProvider, sourceOverride);
-      }
-    );
+    const sourceDataSource = new DatabaseBlockDataSource(canonicalModel, ds => {
+      ds.serviceSet(DatabaseViewLocalOverrideProvider, sourceOverride);
+    });
     const rowId = sourceDataSource.rowAddAsTodoList('end');
     sourceDataSource.setTaskStatusChecked(rowId, true);
     const viewId = sourceRefModel.props.views[0].id;
@@ -1211,11 +1206,8 @@ describe('journal todo database slash-menu command', () => {
           ds.serviceSet(DatabaseViewLocalOverrideProvider, duplicatedOverride);
         }
       );
-      const duplicatedView =
-        duplicatedDataSource.viewManager.viewGet(viewId)!;
-      expect(duplicatedView.rows$.value.map(r => r.rowId)).not.toContain(
-        rowId
-      );
+      const duplicatedView = duplicatedDataSource.viewManager.viewGet(viewId)!;
+      expect(duplicatedView.rows$.value.map(r => r.rowId)).not.toContain(rowId);
 
       // The source's own filter/view (day 1's own reference) was never
       // touched by duplicating a copy of it.
@@ -1271,9 +1263,7 @@ describe('journal todo database slash-menu command', () => {
       canonicalModel
     ).ensureNoteColorColumn()!;
     expect(noteColorColumnId).toBeTruthy();
-    expect(findHide(refModel.props.views[0], noteColorColumnId)).not.toBe(
-      true
-    );
+    expect(findHide(refModel.props.views[0], noteColorColumnId)).not.toBe(true);
 
     // *This* reference's own dataSource, scoped via its local view
     // override — the real code path `createNoteForRow`/
@@ -1332,9 +1322,9 @@ describe('journal todo database slash-menu command', () => {
     const noteColorColumnId = new DatabaseBlockDataSource(
       canonicalModel
     ).ensureNoteColorColumn()!;
-    expect(
-      findHide(sourceRefModel.props.views[0], noteColorColumnId)
-    ).not.toBe(true);
+    expect(findHide(sourceRefModel.props.views[0], noteColorColumnId)).not.toBe(
+      true
+    );
 
     const targetDoc = collection
       .createDoc(
@@ -1371,13 +1361,13 @@ describe('journal todo database slash-menu command', () => {
       duplicatedRefEl.model as unknown as typeof sourceRefModel;
 
     // The copy gets it hidden...
-    expect(
-      findHide(duplicatedRefModel.props.views[0], noteColorColumnId)
-    ).toBe(true);
+    expect(findHide(duplicatedRefModel.props.views[0], noteColorColumnId)).toBe(
+      true
+    );
     // ...without the source's own (still-not-hidden) view being touched.
-    expect(
-      findHide(sourceRefModel.props.views[0], noteColorColumnId)
-    ).not.toBe(true);
+    expect(findHide(sourceRefModel.props.views[0], noteColorColumnId)).not.toBe(
+      true
+    );
   });
 
   test('the seeded list view hides Hierarchy/Parent/Ancestor and Done date columns; a table view added afterwards keeps Done date visible', async () => {
@@ -1646,7 +1636,11 @@ describe('journal todo source selection (Story 2.5.5)', () => {
                 flavour: 'affine:database',
               });
             }
-            return Reflect.get(target, 'getOptional', receiver)(identifier);
+            return Reflect.get(
+              target,
+              'getOptional',
+              receiver
+            )(identifier as GeneralServiceIdentifier<unknown>);
           };
         }
         return Reflect.get(target, prop, receiver);
@@ -1731,7 +1725,11 @@ describe('journal todo source selection (Story 2.5.5)', () => {
                 }
               );
             }
-            return Reflect.get(target, 'getOptional', receiver)(identifier);
+            return Reflect.get(
+              target,
+              'getOptional',
+              receiver
+            )(identifier as GeneralServiceIdentifier<unknown>);
           };
         }
         return Reflect.get(target, prop, receiver);

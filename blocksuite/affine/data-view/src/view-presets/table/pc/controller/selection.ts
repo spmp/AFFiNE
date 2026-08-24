@@ -507,7 +507,7 @@ export class TableSelectionController implements ReactiveController {
   }
 
   getRow(groupKey: string | undefined, rowId: string) {
-    return this.getGroup(groupKey)?.querySelector(
+    return this.getGroup(groupKey)?.querySelector<TableRowView>(
       `data-view-table-row[data-row-id='${rowId}']`
     );
   }
@@ -579,11 +579,15 @@ export class TableSelectionController implements ReactiveController {
     if (!rows) {
       return false;
     }
+    const docId = this.view.manager.dataSource.doc?.id;
+    if (!docId) {
+      return false;
+    }
     const rowIds = [...rows].map(row => row.rowId);
     const result = computeIndentMutation({
       rowIds,
       rowId,
-      docId: this.view.manager.dataSource.doc.id,
+      docId,
       properties: this.view.propertiesRaw$.value,
     });
     if (!result) {
@@ -612,7 +616,7 @@ export class TableSelectionController implements ReactiveController {
         {
           rowIds,
           rowId,
-          docId: this.view.manager.dataSource.doc.id,
+          docId,
           properties: this.view.propertiesRaw$.value,
         },
         result
@@ -655,11 +659,15 @@ export class TableSelectionController implements ReactiveController {
     if (!rows) {
       return false;
     }
+    const docId = this.view.manager.dataSource.doc?.id;
+    if (!docId) {
+      return false;
+    }
     const rowIds = [...rows].map(row => row.rowId);
     const result = computeUnindentMutation({
       rowIds,
       rowId,
-      docId: this.view.manager.dataSource.doc.id,
+      docId,
       properties: this.view.propertiesRaw$.value,
     });
     if (!result) {
@@ -688,7 +696,7 @@ export class TableSelectionController implements ReactiveController {
         {
           rowIds,
           rowId,
-          docId: this.view.manager.dataSource.doc.id,
+          docId,
           properties: this.view.propertiesRaw$.value,
         },
         result

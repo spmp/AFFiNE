@@ -71,10 +71,10 @@ export const popCardMenu = (
   const hierarchyLevelProperty = view.propertiesRaw$.value.find(
     p => p.name$.value === TASK_HIERARCHY_LEVEL_COLUMN_NAME
   );
-  const taskIdentity = createTaskIdentity({
-    docId: view.manager.dataSource.doc.id,
-    blockId: rowId,
-  });
+  const docId = view.manager.dataSource.doc?.id;
+  const taskIdentity = docId
+    ? createTaskIdentity({ docId, blockId: rowId })
+    : undefined;
 
   const groups = (selection.view.groupTrait.groupsDataList$.value ?? []).filter(
     (v): v is NonNullable<typeof v> => v != null

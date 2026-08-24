@@ -268,6 +268,11 @@ export class DatabaseViewRefBlockComponent extends BlockComponent<DatabaseViewRe
   }
 
   private _excludeSubtreeFromOuterRangeQueries(node: Element) {
+    // `node` comes from a MutationObserver callback and is only ever a base
+    // `Element` — `.dataset` is `HTMLElement`-only, so `hasAttribute` (not
+    // the usually-preferred `dataset`) is the only option that's actually
+    // typesafe here.
+    // oxlint-disable-next-line unicorn/prefer-dom-node-dataset
     if (node.hasAttribute('data-block-id')) {
       node.setAttribute(RANGE_QUERY_EXCLUDE_ATTR, 'true');
     }

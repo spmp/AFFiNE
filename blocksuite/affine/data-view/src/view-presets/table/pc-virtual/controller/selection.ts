@@ -577,11 +577,15 @@ export class TableSelectionController implements ReactiveController {
     if (!rows) {
       return false;
     }
+    const docId = this.view.manager.dataSource.doc?.id;
+    if (!docId) {
+      return false;
+    }
     const rowIds = rows.map(row => row.rowId);
     const result = computeIndentMutation({
       rowIds,
       rowId,
-      docId: this.view.manager.dataSource.doc.id,
+      docId,
       properties: this.view.propertiesRaw$.value,
     });
     if (!result) {
@@ -591,7 +595,7 @@ export class TableSelectionController implements ReactiveController {
       {
         rowIds,
         rowId,
-        docId: this.view.manager.dataSource.doc.id,
+        docId,
         properties: this.view.propertiesRaw$.value,
       },
       result
@@ -620,11 +624,15 @@ export class TableSelectionController implements ReactiveController {
     if (!rows) {
       return false;
     }
+    const docId = this.view.manager.dataSource.doc?.id;
+    if (!docId) {
+      return false;
+    }
     const rowIds = rows.map(row => row.rowId);
     const result = computeUnindentMutation({
       rowIds,
       rowId,
-      docId: this.view.manager.dataSource.doc.id,
+      docId,
       properties: this.view.propertiesRaw$.value,
     });
     if (!result) {
@@ -670,7 +678,7 @@ export class TableSelectionController implements ReactiveController {
       return false;
     }
     const groupKey =
-      cell.closest('data-view-table-row').dataset.groupKey ?? undefined;
+      cell.closest('data-view-table-row')?.dataset.groupKey ?? undefined;
     return this.indentHierarchyRowByRowId(rowId, groupKey);
   }
 
@@ -684,7 +692,7 @@ export class TableSelectionController implements ReactiveController {
       return false;
     }
     const groupKey =
-      cell.closest('data-view-table-row').dataset.groupKey ?? undefined;
+      cell.closest('data-view-table-row')?.dataset.groupKey ?? undefined;
     return this.unindentHierarchyRowByRowId(rowId, groupKey);
   }
 
