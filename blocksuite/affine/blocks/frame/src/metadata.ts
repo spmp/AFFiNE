@@ -441,7 +441,7 @@ export async function buildFramePngPayload(
   );
   const fileName = buildFrameFileName(renderFrame, 'png', options?.caption);
   return {
-    blob: new Blob([enriched], { type: 'image/png' }),
+    blob: new Blob([new Uint8Array(enriched)], { type: 'image/png' }),
     fileName,
   };
 }

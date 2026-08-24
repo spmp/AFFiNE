@@ -294,7 +294,14 @@ function createNewPresentationIndexes(
       const { data } = BlockSnapshotSchema.safeParse(block);
       return data?.flavour === 'affine:frame';
     })
-    .sort((a, b) => EdgelessFrameManager.framePresentationComparator(a, b));
+    .sort((a, b) =>
+      EdgelessFrameManager.framePresentationComparator(
+        a as unknown as {
+          props: { index: string; presentationIndex?: string };
+        },
+        b as unknown as { props: { index: string; presentationIndex?: string } }
+      )
+    );
 
   const frameMgr = std.get(EdgelessFrameManagerIdentifier);
   let before = frameMgr.generatePresentationIndex();

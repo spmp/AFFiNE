@@ -5,18 +5,18 @@ import { embedPngMetadata, extractPngMetadata } from '../../utils/png-metadata';
 const BASE_PNG =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/xcAAgIB/6v3+QAAAABJRU5ErkJggg==';
 
-function toArrayBuffer(buffer: Buffer) {
+function toArrayBuffer(buffer: Buffer): ArrayBuffer {
   return buffer.buffer.slice(
     buffer.byteOffset,
     buffer.byteOffset + buffer.byteLength
-  );
+  ) as ArrayBuffer;
 }
 
-function toArrayBufferFromUint8(bytes: Uint8Array) {
+function toArrayBufferFromUint8(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(
     bytes.byteOffset,
     bytes.byteOffset + bytes.byteLength
-  );
+  ) as ArrayBuffer;
 }
 
 describe('png metadata', () => {
