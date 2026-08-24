@@ -1,8 +1,8 @@
-import { NoteDisplayMode } from '@blocksuite/affine-model';
 import type {
   DatabaseRefBlockModel,
   NoteBlockModel,
 } from '@blocksuite/affine-model';
+import { NoteDisplayMode } from '@blocksuite/affine-model';
 import { ensureDocLoaded } from '@blocksuite/affine-shared/utils';
 import { Store } from '@blocksuite/store';
 

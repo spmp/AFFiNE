@@ -13,7 +13,6 @@ import {
 } from '../../reactive/index.js';
 import type { Schema } from '../../schema/schema.js';
 import type { Store } from '../store/store.js';
-
 import { BlockModel } from './block-model.js';
 import type { YBlock } from './types.js';
 import { internalPrimitives } from './zod.js';

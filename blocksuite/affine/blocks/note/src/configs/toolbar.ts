@@ -3,8 +3,8 @@ import { toast } from '@blocksuite/affine-components/toast';
 import { NoteBlockModel, NoteDisplayMode } from '@blocksuite/affine-model';
 import {
   ActionPlacement,
-  NotificationProvider,
   NoteMoveProvider,
+  NotificationProvider,
   SidebarExtensionIdentifier,
   type ToolbarAction,
   type ToolbarContext,

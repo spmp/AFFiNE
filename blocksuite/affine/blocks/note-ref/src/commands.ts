@@ -1,6 +1,6 @@
-import { NoteDisplayMode, resolveColor } from '@blocksuite/affine-model';
-import type { NoteProps, NoteRefProps } from '@blocksuite/affine-model';
 import { toast } from '@blocksuite/affine-components/toast';
+import type { NoteProps, NoteRefProps } from '@blocksuite/affine-model';
+import { NoteDisplayMode, resolveColor } from '@blocksuite/affine-model';
 import {
   EditPropsStore,
   ThemeProvider,

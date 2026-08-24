@@ -1,6 +1,5 @@
 import { PageKeyboardManager } from '@blocksuite/affine-block-root';
-import { BlockComponent } from '@blocksuite/std';
-import { BlockViewIdentifier } from '@blocksuite/std';
+import { BlockComponent, BlockViewIdentifier } from '@blocksuite/std';
 import type { ExtensionType } from '@blocksuite/store';
 import { css, html } from 'lit';
 import { literal } from 'lit/static-html.js';

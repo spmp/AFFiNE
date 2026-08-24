@@ -439,7 +439,8 @@ export class DocsService extends Service {
         // its own dedicated to it — move just the block, into a freshly
         // created hidden note in the destination, mirroring what
         // `ensurePromoted` itself would have done.
-        const modelsToMove = isHiddenNoteParent ? [parent!] : [databaseModel];
+        const modelsToMove =
+          isHiddenNoteParent && parent ? [parent] : [databaseModel];
         const slice = Slice.fromModels(sourceBsDoc, modelsToMove);
         const snapshot = transformer.sliceToSnapshot(slice);
         if (!snapshot) {
@@ -448,13 +449,16 @@ export class DocsService extends Service {
 
         let insertionParentId = destinationBsDoc.root?.id;
         if (!isHiddenNoteParent) {
+          if (!destinationBsDoc.root) {
+            throw new Error('Destination doc has no root block');
+          }
           insertionParentId = destinationBsDoc.addBlock(
             'affine:note',
             {
               displayMode: NoteDisplayMode.EdgelessOnly,
               xywh: '[-10000, -10000, 800, 480]',
             },
-            destinationBsDoc.root!.id
+            destinationBsDoc.root.id
           );
         }
 

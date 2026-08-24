@@ -1,6 +1,6 @@
-import type { NoteRefBlockModel } from '@blocksuite/affine-model';
 import { PageClipboard } from '@blocksuite/affine-block-root';
 import { ViewExtensionManagerIdentifier } from '@blocksuite/affine-ext-loader';
+import type { NoteRefBlockModel } from '@blocksuite/affine-model';
 import { ensureDocLoaded } from '@blocksuite/affine-shared/utils';
 import { BlockComponent, BlockStdScope, TextSelection } from '@blocksuite/std';
 import { RANGE_QUERY_EXCLUDE_ATTR } from '@blocksuite/std/inline';
@@ -460,7 +460,7 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
    * has its own entirely separate selection system, so this reactive
    * approach doesn't apply there (see `_observeForCrossDocRangeExclusion`).
    */
-  private _updateRangeQueryExclusion = () => {
+  private readonly _updateRangeQueryExclusion = () => {
     const descendants = Array.from(
       this.querySelectorAll<HTMLElement>('[data-block-id]')
     );
@@ -475,9 +475,7 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
       }
     }
 
-    const descendantIds = new Set(
-      descendants.map(el => el.getAttribute('data-block-id'))
-    );
+    const descendantIds = new Set(descendants.map(el => el.dataset.blockId));
     const allInside =
       referencedBlockIds.size > 0 &&
       Array.from(referencedBlockIds).every(id => descendantIds.has(id));
@@ -535,7 +533,7 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
    * common case: the copy you just clicked/tapped into becomes "the"
    * registered one for as long as you keep working in it.
    */
-  private _reclaimViewRegistration = () => {
+  private readonly _reclaimViewRegistration = () => {
     this.querySelectorAll<BlockComponent>('[data-block-id]').forEach(el => {
       this.std.view.setBlock(el);
     });
@@ -889,6 +887,9 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
     }
     if (this._scrollSnapshot) return;
     const snapshots: { el: Element | Window; top: number }[] = [];
+    // Walking the DOM ancestor chain starting from this element itself,
+    // not a scope-binding workaround.
+    // oxlint-disable-next-line typescript/no-this-alias
     let node: HTMLElement | null = this;
     while (node) {
       if (node.scrollHeight > node.clientHeight) {
@@ -1185,15 +1186,13 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
    * is lifted — which is exactly when the nested std's own internal
    * queries need it lifted to function at all.
    */
-  private _updateCrossDocRangeQueryExclusion = () => {
+  private readonly _updateCrossDocRangeQueryExclusion = () => {
     const descendants = Array.from(
       this.querySelectorAll<HTMLElement>('[data-block-id]')
     );
     if (descendants.length === 0) return;
 
-    const descendantIds = new Set(
-      descendants.map(el => el.getAttribute('data-block-id'))
-    );
+    const descendantIds = new Set(descendants.map(el => el.dataset.blockId));
     const outerBlockIds = new Set<string>();
     for (const sel of this.std.selection.value) {
       outerBlockIds.add(sel.blockId);
@@ -1292,7 +1291,7 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
   // have to be set imperatively, here, on `this`.
   override updated() {
     const { showBorder, backgroundOverride } = this.model.props;
-    this.setAttribute('data-show-border', showBorder ? 'true' : 'false');
+    this.dataset.showBorder = showBorder ? 'true' : 'false';
     this.style.backgroundColor = backgroundOverride || '';
 
     // Re-checked after every re-render, not just from the doc-update

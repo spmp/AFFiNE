@@ -8,11 +8,11 @@
   "include": ["./src"],
   "references": [
     { "path": "../note" },
-    { "path": "../../rich-text" },
     { "path": "../root" },
     { "path": "../../components" },
     { "path": "../../ext-loader" },
     { "path": "../../model" },
+    { "path": "../../rich-text" },
     { "path": "../../shared" },
     { "path": "../../widgets/slash-menu" },
     { "path": "../../../framework/global" },

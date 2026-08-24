@@ -1,9 +1,9 @@
+import type { DatabaseRefBlockComponent } from '@blocksuite/affine/blocks/database-ref';
 import {
   databaseRefSlashMenuConfig,
   insertDatabaseRefBlockCommand,
   moveIntoHiddenNote,
 } from '@blocksuite/affine/blocks/database-ref';
-import type { DatabaseRefBlockComponent } from '@blocksuite/affine/blocks/database-ref';
 import type {
   DatabaseRefBlockModel,
   NoteBlockModel,
@@ -116,8 +116,8 @@ describe('database (Table) appearing more than once on a page', () => {
     ) as DatabaseRefBlockComponent;
     const hiddenNoteContainer = refEl.querySelector(
       '.affine-note-block-container'
-    );
-    expect(hiddenNoteContainer?.getAttribute('data-page-border')).toBe('false');
+    ) as HTMLElement | null;
+    expect(hiddenNoteContainer?.dataset.pageBorder).toBe('false');
   });
 
   test('both reference instances render the same live data', async () => {

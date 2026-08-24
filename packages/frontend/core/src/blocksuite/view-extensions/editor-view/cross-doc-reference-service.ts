@@ -3,8 +3,8 @@ import {
   QuickSearchService,
 } from '@affine/core/modules/quicksearch';
 import {
-  CrossDocReferenceExtension,
   type CrossDocReferenceCandidate,
+  CrossDocReferenceExtension,
 } from '@blocksuite/affine/shared/services';
 import type { FrameworkProvider } from '@toeverything/infra';
 

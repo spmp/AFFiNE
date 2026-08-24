@@ -1,5 +1,5 @@
-import { NoteDisplayMode, resolveColor } from '@blocksuite/affine-model';
 import type { NoteBlockModel } from '@blocksuite/affine-model';
+import { NoteDisplayMode, resolveColor } from '@blocksuite/affine-model';
 import { ThemeProvider } from '@blocksuite/affine-shared/services';
 import { BlockComponent } from '@blocksuite/std';
 import { css, html } from 'lit';

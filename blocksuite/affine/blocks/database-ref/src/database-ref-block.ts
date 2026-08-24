@@ -460,6 +460,11 @@ export class DatabaseRefBlockComponent extends BlockComponent<DatabaseRefBlockMo
   // the nested scope's own reactivity), which are always genuine descendants
   // of this wrapper, never the wrapper itself.
   private _excludeSubtreeFromOuterRangeQueries(node: Element) {
+    // `node` comes from a MutationObserver's addedNodes (narrowed only to
+    // `instanceof Element`, not `HTMLElement`) — `.dataset` isn't available
+    // on the base `Element` type, so this stays on the always-safe
+    // attribute API rather than the `dataset` the lint rule prefers.
+    // oxlint-disable-next-line unicorn/prefer-dom-node-dataset
     if (node.hasAttribute('data-block-id')) {
       node.setAttribute(RANGE_QUERY_EXCLUDE_ATTR, 'true');
     }

@@ -1,14 +1,14 @@
-import { insertSurfaceRefBlockCommand } from '@blocksuite/affine-block-surface-ref';
 import { insertNoteRefBlockCommand } from '@blocksuite/affine-block-note-ref';
+import { insertSurfaceRefBlockCommand } from '@blocksuite/affine-block-surface-ref';
+import { toast } from '@blocksuite/affine-components/toast';
 import type { DatabaseBlockModel } from '@blocksuite/affine-model';
 import { DatabaseBlockSchema } from '@blocksuite/affine-model';
-import { toast } from '@blocksuite/affine-components/toast';
 import { CrossDocReferenceProvider } from '@blocksuite/affine-shared/services';
 import {
   type SlashMenuActionItem,
   type SlashMenuConfig,
-  type SlashMenuItem,
   SlashMenuConfigExtension,
+  type SlashMenuItem,
 } from '@blocksuite/affine-widget-slash-menu';
 import { DatabaseTableViewIcon, LinkIcon } from '@blocksuite/icons/lit';
 import { BlockSelection } from '@blocksuite/std';
@@ -71,60 +71,65 @@ export const databaseRefSlashMenuConfig: SlashMenuConfig = {
       description: 'Reference a frame, table, or note from a different doc',
       icon: LinkIcon(),
       group: `5_Edgeless Element@${index++}`,
-      action: async () => {
-        const crossDocReference = std.getOptional(CrossDocReferenceProvider);
-        if (!crossDocReference) {
-          toast(std.host, 'Cross-doc referencing is not available.');
-          return;
-        }
+      action: () => {
+        (async () => {
+          const crossDocReference = std.getOptional(CrossDocReferenceProvider);
+          if (!crossDocReference) {
+            toast(std.host, 'Cross-doc referencing is not available.');
+            return;
+          }
 
-        const candidate = await crossDocReference.openCrossDocReferencePicker(
-          std.store.id
-        );
-        // A `null` candidate means the user cancelled the picker — not a
-        // failure, so no toast here.
-        if (!candidate) return;
+          const candidate = await crossDocReference.openCrossDocReferencePicker(
+            std.store.id
+          );
+          // A `null` candidate means the user cancelled the picker — not a
+          // failure, so no toast here.
+          if (!candidate) return;
 
-        let insertedBlockId: string | undefined;
-        if (candidate.flavour === 'affine:database') {
-          const [_, result] = std.command.exec(insertDatabaseRefBlockCommand, {
-            refBlockId: candidate.blockId,
-            refDocId: candidate.docId,
-            place: 'after',
-            removeEmptyLine: true,
-            selectedModels: [model],
-          });
-          insertedBlockId = result.insertedDatabaseRefBlockId;
-        } else if (candidate.flavour === 'affine:frame') {
-          const [_, result] = std.command.exec(insertSurfaceRefBlockCommand, {
-            reference: candidate.blockId,
-            refDocId: candidate.docId,
-            refFlavour: candidate.flavour,
-            place: 'after',
-            removeEmptyLine: true,
-            selectedModels: [model],
-          });
-          insertedBlockId = result.insertedSurfaceRefBlockId;
-        } else if (candidate.flavour === 'affine:note') {
-          const [_, result] = std.command.exec(insertNoteRefBlockCommand, {
-            refBlockId: candidate.blockId,
-            refDocId: candidate.docId,
-            place: 'after',
-            removeEmptyLine: true,
-            selectedModels: [model],
-          });
-          insertedBlockId = result.insertedNoteRefBlockId;
-        }
-        if (!insertedBlockId) {
-          toast(std.host, 'Could not insert that reference.');
-          return;
-        }
+          let insertedBlockId: string | undefined;
+          if (candidate.flavour === 'affine:database') {
+            const [_, result] = std.command.exec(
+              insertDatabaseRefBlockCommand,
+              {
+                refBlockId: candidate.blockId,
+                refDocId: candidate.docId,
+                place: 'after',
+                removeEmptyLine: true,
+                selectedModels: [model],
+              }
+            );
+            insertedBlockId = result.insertedDatabaseRefBlockId;
+          } else if (candidate.flavour === 'affine:frame') {
+            const [_, result] = std.command.exec(insertSurfaceRefBlockCommand, {
+              reference: candidate.blockId,
+              refDocId: candidate.docId,
+              refFlavour: candidate.flavour,
+              place: 'after',
+              removeEmptyLine: true,
+              selectedModels: [model],
+            });
+            insertedBlockId = result.insertedSurfaceRefBlockId;
+          } else if (candidate.flavour === 'affine:note') {
+            const [_, result] = std.command.exec(insertNoteRefBlockCommand, {
+              refBlockId: candidate.blockId,
+              refDocId: candidate.docId,
+              place: 'after',
+              removeEmptyLine: true,
+              selectedModels: [model],
+            });
+            insertedBlockId = result.insertedNoteRefBlockId;
+          }
+          if (!insertedBlockId) {
+            toast(std.host, 'Could not insert that reference.');
+            return;
+          }
 
-        std.selection.set([
-          std.selection.create(BlockSelection, {
-            blockId: insertedBlockId,
-          }),
-        ]);
+          std.selection.set([
+            std.selection.create(BlockSelection, {
+              blockId: insertedBlockId,
+            }),
+          ]);
+        })().catch(console.error);
       },
     };
 

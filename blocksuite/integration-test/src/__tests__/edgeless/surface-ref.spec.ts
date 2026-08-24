@@ -439,8 +439,8 @@ describe('frame referenced across pages (cross-doc)', () => {
 });
 
 import type { FrameBlockComponent } from '@blocksuite/affine/blocks/frame';
-import { insertSurfaceRefBlockCommand } from '@blocksuite/affine/blocks/surface-ref';
 import type { SurfaceRefBlockComponent } from '@blocksuite/affine/blocks/surface-ref';
+import { insertSurfaceRefBlockCommand } from '@blocksuite/affine/blocks/surface-ref';
 import type {
   FrameBlockModel,
   SurfaceRefBlockModel,

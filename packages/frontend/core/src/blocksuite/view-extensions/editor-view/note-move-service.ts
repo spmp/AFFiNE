@@ -1,8 +1,8 @@
+import { DocsService } from '@affine/core/modules/doc';
 import {
   DocsQuickSearchSession,
   QuickSearchService,
 } from '@affine/core/modules/quicksearch';
-import { DocsService } from '@affine/core/modules/doc';
 import { NoteMoveExtension } from '@blocksuite/affine/shared/services';
 import type { FrameworkProvider } from '@toeverything/infra';
 

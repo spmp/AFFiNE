@@ -1,5 +1,5 @@
-import { EditorChevronDown } from '@blocksuite/affine-components/toolbar';
 import { toast } from '@blocksuite/affine-components/toast';
+import { EditorChevronDown } from '@blocksuite/affine-components/toolbar';
 import { NoteRefBlockModel } from '@blocksuite/affine-model';
 import {
   ActionPlacement,

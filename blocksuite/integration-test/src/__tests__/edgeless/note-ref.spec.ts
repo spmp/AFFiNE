@@ -1,14 +1,13 @@
+import type { NoteRefBlockComponent } from '@blocksuite/affine/blocks/note-ref';
 import {
   createReusableNoteAndInsertRefCommand,
   insertNoteRefBlockCommand,
   noteRefSlashMenuConfig,
 } from '@blocksuite/affine/blocks/note-ref';
-import type { NoteRefBlockComponent } from '@blocksuite/affine/blocks/note-ref';
 import type { NoteBlockModel } from '@blocksuite/affine/model';
 import { EditPropsStore } from '@blocksuite/affine/shared/services';
 import { TextSelection } from '@blocksuite/std';
-import type { BlockModel } from '@blocksuite/store';
-import { Store, Text } from '@blocksuite/store';
+import { type BlockModel, type Store, Text } from '@blocksuite/store';
 import { userEvent } from '@vitest/browser/context';
 import { beforeEach, describe, expect, test } from 'vitest';
 
@@ -93,7 +92,7 @@ describe('note referenced more than once on a page', () => {
     ) as NoteRefBlockComponent;
 
     // Defaults to a visible border (Story 0.6's "border by default" theme).
-    expect(refEl.getAttribute('data-show-border')).toBe('true');
+    expect(refEl.dataset.showBorder).toBe('true');
 
     doc.updateBlock(doc.getModelById(result.insertedNoteRefBlockId!)!, {
       showBorder: false,
@@ -101,7 +100,7 @@ describe('note referenced more than once on a page', () => {
     });
     await wait();
 
-    expect(refEl.getAttribute('data-show-border')).toBe('false');
+    expect(refEl.dataset.showBorder).toBe('false');
     expect(refEl.style.backgroundColor).toBe('rgb(4, 5, 6)');
   });
 
@@ -262,7 +261,7 @@ describe('note referenced more than once on a page', () => {
 
     const anchorNoteId = addNote(doc);
     const anchorModel = doc.getBlock(anchorNoteId)!.model.children[0]!;
-    const [, result] = editor.std.command.exec(insertNoteRefBlockCommand, {
+    editor.std.command.exec(insertNoteRefBlockCommand, {
       refBlockId: reusableNoteId,
       place: 'after',
       selectedModels: [anchorModel],
@@ -387,12 +386,12 @@ describe('note referenced more than once on a page', () => {
 
     const primaryEl = document.querySelector(
       `affine-note[data-block-id="${primaryNoteId}"] .affine-note-block-container`
-    );
+    ) as HTMLElement | null;
     const secondaryEl = document.querySelector(
       `affine-note[data-block-id="${secondaryNoteId}"] .affine-note-block-container`
-    );
-    expect(primaryEl?.getAttribute('data-page-border')).toBe('false');
-    expect(secondaryEl?.getAttribute('data-page-border')).toBe('true');
+    ) as HTMLElement | null;
+    expect(primaryEl?.dataset.pageBorder).toBe('false');
+    expect(secondaryEl?.dataset.pageBorder).toBe('true');
   });
 
   test('a note explicitly given pageBorder: false / no background renders borderless with no override — including a note flagged as the page block', async () => {
@@ -411,7 +410,7 @@ describe('note referenced more than once on a page', () => {
     const primaryEl = document.querySelector(
       `affine-note[data-block-id="${primaryNoteId}"] .affine-note-block-container`
     ) as HTMLElement;
-    expect(primaryEl?.getAttribute('data-page-border')).toBe('false');
+    expect(primaryEl?.dataset.pageBorder).toBe('false');
     expect(primaryEl?.style.backgroundColor).toBe('');
 
     // A user can still deliberately re-enable it afterward.
@@ -420,7 +419,7 @@ describe('note referenced more than once on a page', () => {
       pageBackgroundOverride: 'rgb(9, 9, 9)',
     });
     await wait();
-    expect(primaryEl?.getAttribute('data-page-border')).toBe('true');
+    expect(primaryEl?.dataset.pageBorder).toBe('true');
     expect(primaryEl?.style.backgroundColor).toBe('rgb(9, 9, 9)');
   });
 
@@ -439,7 +438,7 @@ describe('note referenced more than once on a page', () => {
     const secondaryEl = document.querySelector(
       `affine-note[data-block-id="${secondaryNoteId}"] .affine-note-block-container`
     ) as HTMLElement;
-    expect(secondaryEl.getAttribute('data-page-border')).toBe('false');
+    expect(secondaryEl.dataset.pageBorder).toBe('false');
     expect(secondaryEl.style.backgroundColor).toBe('rgb(1, 2, 3)');
   });
 
@@ -498,6 +497,7 @@ describe('note referenced more than once on a page', () => {
     // sole paragraph with a non-text block — mirroring what
     // `insertLatexBlockCommand`'s own `removeEmptyLine` behavior does live.
     const canonicalModel = doc.getBlock(reusableNoteId)!.model;
+    // oxlint-disable-next-line unicorn/no-useless-spread -- snapshot is required, the loop body deletes from the live (reactive) children array
     for (const child of [...canonicalModel.children]) {
       doc.deleteBlock(child);
     }
@@ -524,6 +524,7 @@ describe('note referenced more than once on a page', () => {
     // coordination. If two references both observe "no trailing
     // paragraph yet" before either one's `addBlock` lands, both add one.
     const reusableNoteId = createReusableNote();
+    // oxlint-disable-next-line unicorn/no-useless-spread -- snapshot is required, the loop body deletes from the live (reactive) children array
     for (const child of [...doc.getBlock(reusableNoteId)!.model.children]) {
       doc.deleteBlock(child);
     }
@@ -938,6 +939,7 @@ describe('note referenced across pages (cross-doc)', () => {
     const refEl = document.querySelector(
       `affine-note-ref[data-block-id="${result.insertedNoteRefBlockId}"]`
     ) as NoteRefBlockComponent;
+    const refElInternals = refEl as unknown as Record<string, unknown>;
 
     const sourceParagraphId =
       secondDoc.getModelById(reusableNoteId)!.children[0]!.id;
@@ -946,7 +948,7 @@ describe('note referenced across pages (cross-doc)', () => {
     );
     expect(existingParagraphElBefore).toBeTruthy();
 
-    const stdBefore = refEl._previewStd;
+    const stdBefore = refElInternals._previewStd;
     expect(stdBefore).toBeTruthy();
 
     const newBlockId = (
@@ -960,7 +962,7 @@ describe('note referenced across pages (cross-doc)', () => {
 
     // The nested std instance itself must be the exact same object —
     // not just "an equivalent one" — proving no store/scope swap happened.
-    expect(refEl._previewStd).toBe(stdBefore);
+    expect(refElInternals._previewStd).toBe(stdBefore);
 
     // The pre-existing paragraph's own DOM element must be the exact same
     // node, not a newly (re)created one with the same block id — proving
@@ -1320,7 +1322,8 @@ describe('note referenced across pages (cross-doc)', () => {
 
     const refEl = document.querySelector(
       `affine-note-ref[data-block-id="${result.insertedNoteRefBlockId}"]`
-    ) as NoteRefBlockComponent & {
+    ) as NoteRefBlockComponent;
+    const refElInternals = refEl as unknown as {
       _previewStd?: { event: { active: boolean } };
     };
     expect(refEl).toBeTruthy();
@@ -1330,7 +1333,7 @@ describe('note referenced across pages (cross-doc)', () => {
     );
     await wait();
 
-    expect(refEl._previewStd?.event.active).toBe(true);
+    expect(refElInternals._previewStd?.event.active).toBe(true);
     expect(editor.std.event.active).toBe(false);
   });
 
@@ -1348,6 +1351,7 @@ describe('note referenced across pages (cross-doc)', () => {
     // (deliberately, for this test) still `false`.
     const secondDoc = createSecondDoc();
     const reusableNoteId = createReusableNoteOn(secondDoc);
+    // oxlint-disable-next-line unicorn/no-useless-spread -- snapshot is required, the loop body deletes from the live (reactive) children array
     for (const child of [...secondDoc.getModelById(reusableNoteId)!.children]) {
       secondDoc.deleteBlock(child);
     }

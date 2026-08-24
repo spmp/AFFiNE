@@ -1,6 +1,6 @@
 import { EdgelessCRUDExtension } from '@blocksuite/affine-block-surface';
-import { type SurfaceRefProps } from '@blocksuite/affine-model';
 import { toast } from '@blocksuite/affine-components/toast';
+import { type SurfaceRefProps } from '@blocksuite/affine-model';
 import {
   ensureDocLoaded,
   waitForBlockInDoc,

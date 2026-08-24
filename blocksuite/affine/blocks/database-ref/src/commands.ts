@@ -1,9 +1,9 @@
-import { NoteDisplayMode } from '@blocksuite/affine-model';
+import { toast } from '@blocksuite/affine-components/toast';
 import type {
   DatabaseRefProps,
   NoteBlockModel,
 } from '@blocksuite/affine-model';
-import { toast } from '@blocksuite/affine-components/toast';
+import { NoteDisplayMode } from '@blocksuite/affine-model';
 import {
   ensureDocLoaded,
   waitForBlockInDoc,

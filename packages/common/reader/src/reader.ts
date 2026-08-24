@@ -880,9 +880,10 @@ export async function readAllBlocksFromDoc({
       // non-`EdgelessOnly` note among the root's children, in
       // `sys:children` order) — replicated here in raw Yjs terms since
       // this reader operates on raw blocks, not `BlockModel`s.
+      const parentChildren = parentBlock?.get('sys:children');
       const siblingIds =
-        parentBlock?.get('sys:children') instanceof YArray
-          ? (parentBlock!.get('sys:children') as YArray<string>).toArray()
+        parentChildren instanceof YArray
+          ? (parentChildren as YArray<string>).toArray()
           : [];
       const pageBlockId = siblingIds.find(siblingId => {
         const sibling = blocks.get(siblingId);

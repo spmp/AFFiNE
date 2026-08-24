@@ -21,6 +21,7 @@ export const PackageList = [
       'blocksuite/affine/blocks/latex',
       'blocksuite/affine/blocks/list',
       'blocksuite/affine/blocks/note',
+      'blocksuite/affine/blocks/note-ref',
       'blocksuite/affine/blocks/paragraph',
       'blocksuite/affine/blocks/root',
       'blocksuite/affine/blocks/surface',
@@ -185,6 +186,8 @@ export const PackageList = [
     name: '@blocksuite/affine-block-database-ref',
     workspaceDependencies: [
       'blocksuite/affine/blocks/database',
+      'blocksuite/affine/blocks/note-ref',
+      'blocksuite/affine/blocks/surface-ref',
       'blocksuite/affine/components',
       'blocksuite/affine/ext-loader',
       'blocksuite/affine/model',
@@ -334,6 +337,23 @@ export const PackageList = [
       'blocksuite/affine/fragments/doc-title',
       'blocksuite/affine/gfx/turbo-renderer',
       'blocksuite/affine/inlines/preset',
+      'blocksuite/affine/model',
+      'blocksuite/affine/rich-text',
+      'blocksuite/affine/shared',
+      'blocksuite/affine/widgets/slash-menu',
+      'blocksuite/framework/global',
+      'blocksuite/framework/std',
+      'blocksuite/framework/store',
+    ],
+  },
+  {
+    location: 'blocksuite/affine/blocks/note-ref',
+    name: '@blocksuite/affine-block-note-ref',
+    workspaceDependencies: [
+      'blocksuite/affine/blocks/note',
+      'blocksuite/affine/blocks/root',
+      'blocksuite/affine/components',
+      'blocksuite/affine/ext-loader',
       'blocksuite/affine/model',
       'blocksuite/affine/rich-text',
       'blocksuite/affine/shared',
@@ -1503,6 +1523,7 @@ export type PackageName =
   | '@blocksuite/affine-block-latex'
   | '@blocksuite/affine-block-list'
   | '@blocksuite/affine-block-note'
+  | '@blocksuite/affine-block-note-ref'
   | '@blocksuite/affine-block-paragraph'
   | '@blocksuite/affine-block-root'
   | '@blocksuite/affine-block-surface'

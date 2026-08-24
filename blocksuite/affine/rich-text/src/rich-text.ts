@@ -276,6 +276,9 @@ export class RichText extends WithDisposable(ShadowlessElement) {
           .waitForUpdate()
           .then(() => {
             if (!inlineEditor.mounted || inlineEditor.rendering) return;
+            // Populated from @blocksuite/affine-inlines-latex's command.ts,
+            // outside this file's static-analysis scope.
+            // oxlint-disable-next-line sonarjs/no-empty-collection
             if (suppressingRichTextAutoScroll.has(this)) return;
 
             const range = inlineEditor.toDomRange(inlineRange);
