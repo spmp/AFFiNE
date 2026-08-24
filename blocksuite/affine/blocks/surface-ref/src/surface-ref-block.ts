@@ -10,6 +10,7 @@ import { ViewExtensionManagerIdentifier } from '@blocksuite/affine-ext-loader';
 import { RefNodeSlotsProvider } from '@blocksuite/affine-inline-reference';
 import {
   FrameBlockModel,
+  NoteBlockModel,
   type SurfaceRefBlockModel,
 } from '@blocksuite/affine-model';
 import {

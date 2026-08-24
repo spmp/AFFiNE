@@ -1,15 +1,15 @@
+import {
+  embedPngMetadata,
+  extractPngMetadata,
+} from '@blocksuite/affine-shared/utils';
 import { expect, type Page } from '@playwright/test';
 import JSZip from 'jszip';
 
 import {
-  embedPngMetadata,
-  extractPngMetadata,
-} from '../../../../blocksuite/affine/shared/src/utils/png-metadata.ts';
-import {
   createConnectorElement,
   createShapeElement,
   edgelessCommonSetup,
-  selectElementsByService,
+  selectElementInEdgeless,
   toViewCoord,
 } from '../utils/actions/edgeless.js';
 import { pressEnter, type } from '../utils/actions/keyboard.js';
@@ -25,18 +25,18 @@ import { test } from '../utils/playwright.js';
 const BASE_PNG =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/xcAAgIB/6v3+QAAAABJRU5ErkJggg==';
 
-function toArrayBuffer(buffer: Buffer) {
+function toArrayBuffer(buffer: Buffer): ArrayBuffer {
   return buffer.buffer.slice(
     buffer.byteOffset,
     buffer.byteOffset + buffer.byteLength
-  );
+  ) as ArrayBuffer;
 }
 
-function toArrayBufferFromUint8(bytes: Uint8Array) {
+function toArrayBufferFromUint8(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(
     bytes.byteOffset,
     bytes.byteOffset + bytes.byteLength
-  );
+  ) as ArrayBuffer;
 }
 
 async function createFrameWithContent(page: Page) {
@@ -44,10 +44,14 @@ async function createFrameWithContent(page: Page) {
   const frameId = await page.evaluate(async () => {
     const root = document.querySelector('affine-edgeless-root') as any;
     if (!root) throw new Error('edgeless root not found');
-    const { Bound } =
-      await import('/@fs/workspace/AFFiNE/blocksuite/framework/global/src/gfx/model/bound.ts');
-    const { EdgelessFrameManagerIdentifier } =
-      await import('/@fs/workspace/AFFiNE/blocksuite/affine/blocks/frame/src/frame-manager.ts');
+    const boundModPath =
+      '/@fs/workspace/AFFiNE/blocksuite/framework/global/src/gfx/model/bound.ts';
+    const { Bound } = await import(/* @vite-ignore */ boundModPath);
+    const frameManagerModPath =
+      '/@fs/workspace/AFFiNE/blocksuite/affine/blocks/frame/src/frame-manager.ts';
+    const { EdgelessFrameManagerIdentifier } = await import(
+      /* @vite-ignore */ frameManagerModPath
+    );
     const frameManager = root.service.std.getOptional(
       EdgelessFrameManagerIdentifier
     );
@@ -60,7 +64,7 @@ async function createFrameWithContent(page: Page) {
   await createShapeElement(page, [40, 40], [120, 120]);
   await page.mouse.click(10, 10);
   await waitNextFrame(page, 200);
-  await selectElementsByService(page, [frameId]);
+  await selectElementInEdgeless(page, [frameId]);
   const [vx, vy] = await toViewCoord(page, [200, 130]);
   await page.mouse.click(vx, vy);
   return frameId;
@@ -71,8 +75,11 @@ async function buildFramePngData(page: Page, frameId: string) {
     const root = document.querySelector('affine-edgeless-root') as any;
     if (!root) throw new Error('edgeless root not found');
     const doc = (window as any).doc;
-    const { EdgelessFrameManagerIdentifier } =
-      await import('/@fs/workspace/AFFiNE/blocksuite/affine/blocks/frame/src/frame-manager.ts');
+    const frameManagerModPath =
+      '/@fs/workspace/AFFiNE/blocksuite/affine/blocks/frame/src/frame-manager.ts';
+    const { EdgelessFrameManagerIdentifier } = await import(
+      /* @vite-ignore */ frameManagerModPath
+    );
     const host = root.service.std.host ?? root.host;
     const rootModelId = host?.store?.root?.id;
     const rootComponent = rootModelId
@@ -138,8 +145,9 @@ async function buildFramePngData(page: Page, frameId: string) {
       }
     }
     if (!frame) throw new Error('frame not found');
-    const { buildFramePngPayload } =
-      await import('/@fs/workspace/AFFiNE/blocksuite/affine/blocks/frame/src/metadata.ts');
+    const __modPath =
+      '/@fs/workspace/AFFiNE/blocksuite/affine/blocks/frame/src/metadata.ts';
+    const { buildFramePngPayload } = await import(/* @vite-ignore */ __modPath);
     const payload = await buildFramePngPayload(
       root.service.std,
       frame,
@@ -163,20 +171,28 @@ async function exportPageFromDebugMenu(page: Page, label: 'markdown' | 'html') {
   const result = await page.evaluate(async menuLabel => {
     const menu = document.querySelector('starter-debug-menu') as any;
     if (!menu) throw new Error('starter debug menu not found');
+    const adaptersModPath =
+      '/@fs/workspace/AFFiNE/blocksuite/affine/shared/src/adapters/index.ts';
     const {
       docLinkBaseURLMiddleware,
       HtmlAdapterFactoryIdentifier,
       MarkdownAdapterFactoryIdentifier,
       embedSyncedDocMiddleware,
       titleMiddleware,
-    } =
-      await import('/@fs/workspace/AFFiNE/blocksuite/affine/shared/src/adapters/index.ts');
-    const { buildFramePngPayload } =
-      await import('/@fs/workspace/AFFiNE/blocksuite/affine/blocks/frame/src/metadata.ts');
-    const { createAssetsArchive } =
-      await import('/@fs/workspace/AFFiNE/blocksuite/affine/widgets/linked-doc/src/transformers/index.ts');
-    const { sha } =
-      await import('/@fs/workspace/AFFiNE/blocksuite/framework/global/src/utils/crypto.ts');
+    } = await import(/* @vite-ignore */ adaptersModPath);
+    const frameMetadataModPath =
+      '/@fs/workspace/AFFiNE/blocksuite/affine/blocks/frame/src/metadata.ts';
+    const { buildFramePngPayload } = await import(
+      /* @vite-ignore */ frameMetadataModPath
+    );
+    const linkedDocModPath =
+      '/@fs/workspace/AFFiNE/blocksuite/affine/widgets/linked-doc/src/transformers/index.ts';
+    const { createAssetsArchive } = await import(
+      /* @vite-ignore */ linkedDocModPath
+    );
+    const cryptoModPath =
+      '/@fs/workspace/AFFiNE/blocksuite/framework/global/src/utils/crypto.ts';
+    const { sha } = await import(/* @vite-ignore */ cryptoModPath);
 
     const doc = menu.editor.doc;
     const std = menu.editor.std;
@@ -418,8 +434,11 @@ test.describe('export and import', () => {
           frame = root.gfx?.getElementById?.(id);
         }
         if (!frame) {
-          const { EdgelessFrameManagerIdentifier } =
-            await import('/@fs/workspace/AFFiNE/blocksuite/affine/blocks/frame/src/frame-manager.ts');
+          const __modPath =
+            '/@fs/workspace/AFFiNE/blocksuite/affine/blocks/frame/src/frame-manager.ts';
+          const { EdgelessFrameManagerIdentifier } = await import(
+            /* @vite-ignore */ __modPath
+          );
           const frameManager = root.service.std.getOptional(
             EdgelessFrameManagerIdentifier
           );
@@ -436,12 +455,13 @@ test.describe('export and import', () => {
           }
         }
         if (!frame) throw new Error('frame not found');
-        const { importFramePng } =
-          await import('/@fs/workspace/AFFiNE/blocksuite/affine/blocks/frame/src/metadata.ts');
+        const __modPath =
+          '/@fs/workspace/AFFiNE/blocksuite/affine/blocks/frame/src/metadata.ts';
+        const { importFramePng } = await import(/* @vite-ignore */ __modPath);
         const std = root.service.std;
         const store = std.store;
         const host = std.host ?? root.host;
-        window.showOpenFilePicker = async () => [
+        window.showOpenFilePicker = (async () => [
           {
             getFile: async () => {
               const binary = atob(fileBase64);
@@ -452,7 +472,7 @@ test.describe('export and import', () => {
               return new File([bytes], 'frame.png', { type: 'image/png' });
             },
           },
-        ];
+        ]) as unknown as typeof window.showOpenFilePicker;
 
         await importFramePng({ std, store, host } as any, frame);
         return frame.xywh;
@@ -501,8 +521,11 @@ test.describe('export and import', () => {
     await page.evaluate(async id => {
       const root = document.querySelector('affine-edgeless-root') as any;
       if (!root) throw new Error('edgeless root not found');
-      const { EdgelessFrameManagerIdentifier } =
-        await import('/@fs/workspace/AFFiNE/blocksuite/affine/blocks/frame/src/frame-manager.ts');
+      const __modPath =
+        '/@fs/workspace/AFFiNE/blocksuite/affine/blocks/frame/src/frame-manager.ts';
+      const { EdgelessFrameManagerIdentifier } = await import(
+        /* @vite-ignore */ __modPath
+      );
       const frameManager = root.service.std.getOptional(
         EdgelessFrameManagerIdentifier
       );
@@ -515,7 +538,7 @@ test.describe('export and import', () => {
       frameManager.addElementsToFrame(frame, elements);
     }, frameId);
 
-    await selectElementsByService(page, [frameId]);
+    await selectElementInEdgeless(page, [frameId]);
     const payload = await buildFramePngData(page, frameId);
     const metadataText = extractPngMetadata(
       toArrayBuffer(Buffer.from(payload.buffer)),
@@ -563,8 +586,11 @@ test.describe('export and import', () => {
           frame = root.gfx?.getElementById?.(frameId);
         }
         if (!frame) {
-          const { EdgelessFrameManagerIdentifier } =
-            await import('/@fs/workspace/AFFiNE/blocksuite/affine/blocks/frame/src/frame-manager.ts');
+          const __modPath =
+            '/@fs/workspace/AFFiNE/blocksuite/affine/blocks/frame/src/frame-manager.ts';
+          const { EdgelessFrameManagerIdentifier } = await import(
+            /* @vite-ignore */ __modPath
+          );
           const frameManager = root.service.std.getOptional(
             EdgelessFrameManagerIdentifier
           );
@@ -581,12 +607,13 @@ test.describe('export and import', () => {
           }
         }
         if (!frame) throw new Error('frame not found');
-        const { importFramePng } =
-          await import('/@fs/workspace/AFFiNE/blocksuite/affine/blocks/frame/src/metadata.ts');
+        const __modPath =
+          '/@fs/workspace/AFFiNE/blocksuite/affine/blocks/frame/src/metadata.ts';
+        const { importFramePng } = await import(/* @vite-ignore */ __modPath);
         const std = root.service.std;
         const store = std.store;
         const host = std.host ?? root.host;
-        window.showOpenFilePicker = async () => [
+        window.showOpenFilePicker = (async () => [
           {
             getFile: async () => {
               const binary = atob(fileBase64);
@@ -597,7 +624,7 @@ test.describe('export and import', () => {
               return new File([bytes], fileName, { type: 'image/png' });
             },
           },
-        ];
+        ]) as unknown as typeof window.showOpenFilePicker;
         await importFramePng({ std, store, host } as any, frame);
       },
       { fileBase64: payloadBase64, fileName: payload.fileName, frameId }
@@ -676,8 +703,11 @@ test.describe('export and import', () => {
       async ({ fileBase64, fileName }) => {
         const menu = document.querySelector('starter-debug-menu') as any;
         if (!menu) throw new Error('starter debug menu not found');
-        const { MarkdownTransformer } =
-          await import('/@fs/workspace/AFFiNE/blocksuite/affine/widgets/linked-doc/src/transformers/markdown.ts');
+        const __modPath =
+          '/@fs/workspace/AFFiNE/blocksuite/affine/widgets/linked-doc/src/transformers/markdown.ts';
+        const { MarkdownTransformer } = await import(
+          /* @vite-ignore */ __modPath
+        );
         const binary = atob(fileBase64);
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i += 1) {

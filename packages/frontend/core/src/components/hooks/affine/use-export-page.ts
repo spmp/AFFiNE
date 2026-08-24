@@ -49,6 +49,7 @@ type ExportType =
   | 'html'
   | 'png'
   | 'markdown'
+  | 'copy-markdown'
   | 'snapshot'
   | 'pdf-export';
 
@@ -256,6 +257,35 @@ async function exportMarkdownWithFrames(doc: Store, std: BlockStdScope) {
   download(downloadBlob, name);
 }
 
+async function copyMarkdownToClipboard(doc: Store, std: BlockStdScope) {
+  const transformer = new Transformer({
+    schema: getAFFiNEWorkspaceSchema(),
+    blobCRUD: doc.workspace.blobSync,
+    docCRUD: {
+      create: (id: string) => doc.workspace.createDoc(id).getStore({ id }),
+      get: (id: string) => doc.workspace.getDoc(id)?.getStore({ id }) ?? null,
+      delete: (id: string) => doc.workspace.removeDoc(id),
+    },
+    middlewares: [
+      docLinkBaseURLMiddleware(doc.workspace.id),
+      titleMiddleware(doc.workspace.meta.docMetas),
+      embedSyncedDocMiddleware('content'),
+    ],
+  });
+
+  const adapterFactory = std.store.provider.get(
+    MarkdownAdapterFactoryIdentifier
+  );
+  const adapter = adapterFactory.get(transformer);
+  const result = (await adapter.fromDoc(doc)) as AdapterResult;
+
+  if (!result?.file) {
+    return;
+  }
+
+  await navigator.clipboard.writeText(result.file);
+}
+
 async function exportHtmlWithFrames(doc: Store, std: BlockStdScope) {
   const transformer = new Transformer({
     schema: getAFFiNEWorkspaceSchema(),
@@ -349,6 +379,11 @@ async function exportHandler({
       return;
     case 'markdown':
       await exportToMarkdown(page, editorRoot?.std);
+      return;
+    case 'copy-markdown':
+      if (editorRoot?.std) {
+        await copyMarkdownToClipboard(page, editorRoot.std);
+      }
       return;
     case 'snapshot':
       await ZipTransformer.exportDocs(
