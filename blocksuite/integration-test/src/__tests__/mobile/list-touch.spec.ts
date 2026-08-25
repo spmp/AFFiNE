@@ -17,6 +17,7 @@ import {
   createStubVirtualKeyboardExtension,
   enableMobileDatabaseEditing,
   isVisible,
+  touchTap,
 } from './utils.js';
 
 // Story 2.12 (MOBILE-03 + the phase's own shared mobile harness):
@@ -274,5 +275,204 @@ describe('list view mobile touch parity (Story 2.12, MOBILE-03)', () => {
     expect(() =>
       pointerdown(handle!, { x: 2, y: 2 }, { pointerType: 'touch' })
     ).not.toThrow();
+  });
+
+  // ---------------------------------------------------------------------
+  // Task 2: full MOBILE-03 live-verification pass -- checkbox, detail
+  // fields, drag-handle reorder, and the editing-trigger correctness case
+  // RESEARCH.md Pitfall 4 / Open Question 2 flagged as unverified.
+  // ---------------------------------------------------------------------
+
+  // Behavior (1): tapping a row's checkbox/task-status cell toggles it,
+  // matching desktop click behavior. `HeaderAreaTextCell.renderTaskStatusCheckbox`
+  // (properties/title/text.ts) binds a plain `@click` handler, so
+  // `touchTap`'s pointerdown/pointerup/click sequence (mirroring a real
+  // touch tap's synthesized click) exercises the identical code path
+  // desktop's mouse click already does -- a regression-only check per this
+  // task's own scope, no production fix expected unless it fails.
+  test('tapping the checkbox toggles task status, matching desktop click behavior', async () => {
+    const { dataSource } = await seedJournalTodo();
+    const rowA = dataSource.rowAddAsTodoList('end');
+    await wait();
+    await enableFlagOnRenderedRow(rowA);
+
+    const rowEl = getRowEl(rowA);
+    const checkbox = rowEl?.querySelector(
+      '[data-testid="task-status-checkbox"]'
+    ) as HTMLElement | null;
+    expect(checkbox).toBeTruthy();
+    expect(dataSource.getTaskStatusInfo(rowA)?.checked).toBe(false);
+
+    touchTap(checkbox!);
+    await wait();
+
+    expect(dataSource.getTaskStatusInfo(rowA)?.checked).toBe(true);
+  });
+
+  // Behavior (2): tapping a row reaches its detail fields
+  // (`renderDetailValue` output). `detailProperties$` (list-view-manager.ts)
+  // is not gated on any tap/focus state, so this is a regression-only
+  // check -- but the auto-created Status/Done-date columns are NOT a valid
+  // fixture for it: `ensureTaskStatusColumn`/`ensureDoneDateColumn` both
+  // deliberately hide themselves in every *non-table* view by default
+  // (redundant with the title cell's own checkbox) -- confirmed live this
+  // session (`dataSource.propertyDataSet`/`hidePropertyInViews`,
+  // data-source.ts:793-804). A plain, ordinary text property (not
+  // hidden by any such policy) is the correct fixture for "a detail field
+  // genuinely visible and reachable via touch, matching desktop".
+  test('tapping a row reaches its detail fields (renderDetailValue), matching desktop', async () => {
+    const { dataSource } = await seedJournalTodo();
+    const rowA = dataSource.rowAddAsTodoList('end');
+    const notesColumnId = dataSource.propertyAdd('end', {
+      type: 'rich-text',
+      name: 'Notes',
+    });
+    expect(notesColumnId).toBeTruthy();
+    await wait();
+
+    const rowEl = getRowEl(rowA);
+    expect(rowEl).toBeTruthy();
+    touchTap(rowEl!);
+    await wait();
+
+    const detailField = rowEl!.querySelector(
+      '.affine-data-view-list-field'
+    ) as HTMLElement | null;
+    expect(detailField).toBeTruthy();
+    expect(isVisible(detailField)).toBe(true);
+
+    detailField!.focus();
+    expect(document.activeElement).toBe(detailField);
+  });
+
+  // Behavior (3): a touch-driven drag gesture on the now-visible drag
+  // handle reorders a row via `ListDragController`'s existing pointer-based
+  // `dragStart` (RESEARCH.md: mechanism is already `PointerEvent`-based, not
+  // native HTML5 DnD), and `touch-action: none` (Task 1's CSS addition) is
+  // present on the handle so the browser does not interpret the gesture as
+  // a page/list scroll instead. Modeled on `journal-todo-drag.spec.ts`'s own
+  // `dragHandleOnto` helper, with `pointerType: 'touch'`.
+  test('touch-driven drag on the drag handle reorders a row, and touch-action:none is set to prevent scroll-interpretation', async () => {
+    const { dataSource } = await seedJournalTodo();
+    const rowA = dataSource.rowAddAsTodoList('end');
+    const rowB = dataSource.rowAddAsTodoList('end');
+    await wait();
+    await enableFlagOnRenderedRow(rowA);
+
+    const handleA = getHandle(rowA);
+    const rowBEl = getRowEl(rowB);
+    expect(handleA).toBeTruthy();
+    expect(rowBEl).toBeTruthy();
+
+    // Only present inside the IS_MOBILE-gated CSS block (Task 1) -- under
+    // the desktop config project this same file is also picked up by, the
+    // browser's default `touch-action: auto` remains, since no touch-drag
+    // vs. scroll conflict exists there in the first place.
+    expect(getComputedStyle(handleA!).touchAction).toBe(
+      IS_MOBILE ? 'none' : 'auto'
+    );
+
+    const handleRect = handleA!.getBoundingClientRect();
+    const titleB = rowBEl!.querySelector(
+      '.affine-data-view-list-title'
+    ) as HTMLElement;
+    expect(titleB).toBeTruthy();
+    const rowBRect = rowBEl!.getBoundingClientRect();
+    const titleBRect = titleB.getBoundingClientRect();
+
+    pointerdown(
+      handleA!,
+      { x: handleRect.width / 2, y: handleRect.height / 2 },
+      { pointerType: 'touch', pointerId: 1, isPrimary: true }
+    );
+    // Small first move, still on the handle -- crosses the framework's own
+    // drag-start distance threshold without leaving the handle (matches
+    // `journal-todo-drag.spec.ts`'s own `dragHandleOnto` rationale).
+    handleA!.dispatchEvent(
+      new PointerEvent('pointermove', {
+        clientX: handleRect.left + handleRect.width / 2 + 10,
+        clientY: handleRect.top + handleRect.height / 2 + 10,
+        bubbles: true,
+        pointerId: 1,
+        isPrimary: true,
+        pointerType: 'touch',
+      })
+    );
+    rowBEl!.dispatchEvent(
+      new PointerEvent('pointermove', {
+        clientX: titleBRect.left,
+        clientY: rowBRect.bottom - 2,
+        bubbles: true,
+        pointerId: 1,
+        isPrimary: true,
+        pointerType: 'touch',
+      })
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointerup', {
+        clientX: titleBRect.left,
+        clientY: rowBRect.bottom - 2,
+        pointerId: 1,
+        isPrimary: true,
+        pointerType: 'touch',
+      })
+    );
+    await wait();
+
+    const rowIds = Array.from(
+      document.querySelectorAll('.affine-data-view-list-row')
+    ).map(el => (el as HTMLElement).dataset.rowId);
+    expect(rowIds.indexOf(rowB)).toBeLessThan(rowIds.indexOf(rowA));
+  });
+
+  // Behavior (4): editing-trigger correctness (RESEARCH.md Pitfall 4 / Open
+  // Question 2) -- a mere row-select tap (the row's own `tabindex="0"`
+  // receiving focus, without entering text-edit) must NOT hide the row
+  // actions; only focus genuinely landing inside the title's own rich-text
+  // (real text-edit) should. Live-verified here rather than assumed: with
+  // the original whole-row `:focus-within` selector this assertion FAILS
+  // (the row itself receiving focus satisfies `:focus-within` on the row),
+  // which is why Task 1's selector was narrowed to
+  // `.affine-data-view-list-row:has(.affine-data-view-list-title:focus-within)`
+  // -- documented in the SUMMARY as the final selector choice.
+  test('editing-trigger correctness: a row-select focus does not hide actions, only a genuine title text-edit focus does', async () => {
+    const { dataSource } = await seedJournalTodo();
+    const rowA = dataSource.rowAddAsTodoList('end');
+    await wait();
+    await enableFlagOnRenderedRow(rowA);
+
+    const rowEl = getRowEl(rowA)!;
+    const noteAction = getNoteAction(rowA);
+    expect(noteAction).toBeTruthy();
+    expect(isVisible(noteAction)).toBe(IS_MOBILE);
+
+    // Case A: row-select tap -- the row container itself (not the title)
+    // receives focus.
+    rowEl.focus();
+    await wait();
+    expect(isVisible(noteAction)).toBe(IS_MOBILE);
+    rowEl.blur();
+    await wait();
+
+    // Case B: genuine text-edit -- focus lands on the title's own
+    // contenteditable node (the actual leaf DOM element `<rich-text>`
+    // delegates real text-editing focus to internally -- `<rich-text>`
+    // itself carries no `tabindex`/`contenteditable`, only its own
+    // rendered `div[contenteditable="true"]` child does, confirmed live
+    // this session against the rendered DOM).
+    const titleEl = rowEl.querySelector(
+      '.affine-data-view-list-title'
+    ) as HTMLElement | null;
+    expect(titleEl).toBeTruthy();
+    const editable = titleEl!.querySelector(
+      '[contenteditable="true"]'
+    ) as HTMLElement | null;
+    expect(editable).toBeTruthy();
+    editable!.focus();
+    await wait();
+    expect(isVisible(noteAction)).toBe(false);
+    editable!.blur();
+    await wait();
+    expect(isVisible(noteAction)).toBe(IS_MOBILE);
   });
 });
