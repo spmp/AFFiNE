@@ -5,6 +5,7 @@ import {
 } from '@blocksuite/affine-components/context-menu';
 import { DatePicker } from '@blocksuite/affine-components/date-picker';
 import { createLitPortal } from '@blocksuite/affine-components/portal';
+import { IS_MOBILE } from '@blocksuite/global/env';
 import { SignalWatcher, WithDisposable } from '@blocksuite/global/lit';
 import { DateTimeIcon, PageIcon, PlusIcon } from '@blocksuite/icons/lit';
 import type { BlockStdScope } from '@blocksuite/std';
@@ -21,6 +22,43 @@ import { renderUniLit } from '../../../core/utils/uni-component/index.js';
 import type { ListViewUILogic } from './list-view-ui-logic.js';
 
 const HIERARCHY_LEVEL_COLUMN_NAME = 'Hierarchy Level';
+
+// Story 2.12 (MOBILE-03): touch has no `:hover` state, so the three
+// hover-gated row-action classes below (note/due-date/drag-handle) are
+// otherwise invisible on mobile web. This block reproduces
+// `table/mobile/row.ts`'s already-shipped "opposite polarity" default —
+// visible by default, hidden only during an editing-equivalent state — but
+// inline (`IS_MOBILE`-gated), since List has no separate mobile component
+// the way Table/Kanban do. List also has no `data-editing` DOM hook
+// (unlike Table/Kanban's `[data-editing='true']`); the closest existing
+// hook is the row's own `:focus-within` state (already used above for an
+// unrelated background-highlight rule), reused here as the
+// editing-equivalent trigger per RESEARCH.md Pattern 2 / Pitfall 4. The
+// desktop `:hover` rules below are left completely unmodified (MOBILE-05).
+const mobileListActionStyles = css`
+  .affine-data-view-list-note-action,
+  .affine-data-view-list-due-date-action,
+  .affine-data-view-list-drag-handle {
+    visibility: visible;
+    opacity: 1;
+  }
+
+  .affine-data-view-list-row:focus-within .affine-data-view-list-note-action,
+  .affine-data-view-list-row:focus-within
+    .affine-data-view-list-due-date-action,
+  .affine-data-view-list-row:focus-within .affine-data-view-list-drag-handle {
+    visibility: hidden;
+    opacity: 0;
+  }
+
+  /* RESEARCH.md Pitfall 3: preventDefault() on the drag handle's
+     pointerdown-equivalent does not reliably suppress touch-scrolling in
+     all browsers without this -- no existing rule anywhere in this
+     package's drag-handle CSS sets it. */
+  .affine-data-view-list-drag-handle {
+    touch-action: none;
+  }
+`;
 
 @customElement('affine-data-view-list')
 export class ListViewRenderer extends SignalWatcher(
@@ -231,6 +269,8 @@ export class ListViewRenderer extends SignalWatcher(
     .affine-data-view-list-indent-spacer {
       flex-shrink: 0;
     }
+
+    ${IS_MOBILE ? mobileListActionStyles : css``}
   `;
 
   @property({ attribute: false })
