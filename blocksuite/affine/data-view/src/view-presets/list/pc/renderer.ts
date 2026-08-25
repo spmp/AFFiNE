@@ -43,10 +43,21 @@ const mobileListActionStyles = css`
     opacity: 1;
   }
 
-  .affine-data-view-list-row:focus-within .affine-data-view-list-note-action,
-  .affine-data-view-list-row:focus-within
+  /* Task 2 (live-verification finding, RESEARCH.md Pitfall 4 / Open
+     Question 2): the whole-row \`:focus-within\` above incorrectly treated a
+     mere row-select tap (the row itself receiving focus via its own
+     \`tabindex="0"\`) as "editing", since \`:focus-within\` matches an
+     element that itself holds focus, not only a focused descendant.
+     Narrowed to \`:has(.affine-data-view-list-title:focus-within)\` so only
+     focus that actually lands inside the title's own rich-text (genuine
+     text-edit) triggers the hide -- confirmed via this plan's own
+     editing-trigger correctness test (list-touch.spec.ts, Task 2). */
+  .affine-data-view-list-row:has(.affine-data-view-list-title:focus-within)
+    .affine-data-view-list-note-action,
+  .affine-data-view-list-row:has(.affine-data-view-list-title:focus-within)
     .affine-data-view-list-due-date-action,
-  .affine-data-view-list-row:focus-within .affine-data-view-list-drag-handle {
+  .affine-data-view-list-row:has(.affine-data-view-list-title:focus-within)
+    .affine-data-view-list-drag-handle {
     visibility: hidden;
     opacity: 0;
   }
