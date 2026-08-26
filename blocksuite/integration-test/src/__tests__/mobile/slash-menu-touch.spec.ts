@@ -13,6 +13,7 @@ import {
   type CrossDocReferenceService,
   JournalTodoDatabaseProvider,
 } from '@blocksuite/affine/shared/services';
+import { IS_MOBILE } from '@blocksuite/global/env';
 import { Text } from '@blocksuite/store';
 import { userEvent } from '@vitest/browser/context';
 import { beforeEach, describe, expect, test } from 'vitest';
@@ -22,16 +23,26 @@ import { addNote } from '../utils/edgeless.js';
 import { setupEditor } from '../utils/setup.js';
 import { createStubVirtualKeyboardExtension, touchTap } from './utils.js';
 
-// Story 2.12 (MOBILE-04): live-verify — not re-implement — that
-// `/Journal Todo`, the sibling `database-view-ref`/`database-ref` slash
-// commands, and the cross-doc reference picker DI seam all work under a
-// touch-emulated mobile context, matching desktop. RESEARCH.md confirmed
-// zero `IS_MOBILE` gating anywhere in `database-view-ref/src/configs/
-// slash-menu.ts` (664 lines, fully read) or `database-ref/src/configs/
-// slash-menu.ts` — so every assertion below is a regression check against
-// already-correct, shared (non-mobile-specific) command logic, run for real
-// under this plan's mobile-context harness (`vitest.mobile.config.ts`),
-// picked up identically by the existing, unmodified desktop config.
+// Story 2.12 (MOBILE-04) — header CORRECTED in Phase 2 (MOBILE-10/MOBILE-11):
+// this file was originally framed as proving `/Journal Todo` and its sibling
+// slash commands are reachable via a touch-emulated mobile context, "matching
+// desktop". That reachability claim was disproven by live on-device UAT and
+// by this phase's harness fix (`utils/setup.ts` now genuinely composes
+// `mobile-page`/`mobile-edgeless` scope under `IS_MOBILE`): the slash-menu
+// widget itself never mounts on mobile at all
+// (`SlashMenuViewExtension.setup`'s intentional mobile-scope early return,
+// confirmed by the widget-mount test below). Tests 1-4 below remain valid —
+// they exercise each command's own `SlashMenuConfig` *logic* directly
+// (calling `.action()` on the resolved item, bypassing the widget entirely),
+// so they are genuine command-correctness regression checks, still run under
+// this plan's mobile-context harness (`vitest.mobile.config.ts`), picked up
+// identically by the existing, unmodified desktop config. They do NOT prove
+// reachability via the real mobile UI. Reachability for these same
+// capabilities (Journal Todo, generic database references) is provided by
+// the keyboard-toolbar's Database tool group instead — see
+// `keyboard-toolbar-database-touch.spec.ts` (this phase's MOBILE-06/MOBILE-09
+// plans) — not the slash menu, which test 5 below confirms is unreachable on
+// mobile by construction.
 //
 // Scope note on the cross-doc reference picker (Environment Availability,
 // RESEARCH.md): the actual picker UI is the app's shared React
@@ -332,19 +343,34 @@ describe('slash-menu + cross-doc reference picker touch parity (Story 2.12, MOBI
     expect(refModel.props.refDocId).toBe(secondDoc.id);
   });
 
-  // Behavior (5): the slash menu's own built-in fuzzy-filter empty state —
-  // typing text matching no registered command — renders zero items,
-  // pre-existing generic `AffineSlashMenuWidget` behavior (`InnerSlashMenu`,
-  // `slash-menu-popover.ts`'s own `_queryState === 'no_result'` branch),
-  // unmodified by this phase. Unlike behaviors (1)-(4) above (which call a
-  // command's own `action()` directly, mirroring the existing desktop
-  // suite's established convention), this one drives the REAL widget UI —
-  // clicking into the editor and typing via `userEvent`, the same
-  // real-Playwright-interaction technique `note-ref.spec.ts` already
-  // established for exercising `affine-slash-menu` itself — since the
-  // fuzzy-filter behavior under test lives inside that shared widget, not
-  // inside any one command's own logic.
-  test("the slash menu's built-in fuzzy-filter empty state renders no matching items under a touch-emulated context — pre-existing generic behavior, unmodified", async () => {
+  // Behavior (5) — CORRECTED (Phase 2, MOBILE-10/MOBILE-11): this test used
+  // to assert that `affine-slash-menu` renders and its built-in fuzzy-filter
+  // empty state shows zero items under a touch-emulated context. That
+  // premise was disproven by live on-device UAT: the slash-menu widget
+  // itself architecturally never mounts on mobile
+  // (`SlashMenuViewExtension.setup`'s intentional mobile-scope early return,
+  // `blocksuite/affine/widgets/slash-menu/src/view.ts:17-21`) — it was only
+  // ever appearing under the OLD version of this harness, which (before
+  // Phase 2's Task 1 fix to `utils/setup.ts`) silently composed the DESKTOP
+  // `page`/`edgeless` view-extension scope even under `IS_MOBILE`, so this
+  // assertion was proving desktop behavior while claiming to prove mobile
+  // behavior. Under the now-correctly-mobile-scoped harness, this test
+  // instead proves the true architectural exclusion directly: after the
+  // same real click-and-type interaction (kept unchanged, including its
+  // documented flake mitigation below), no `affine-slash-menu` custom
+  // element exists in the DOM under `IS_MOBILE` — reachability for these
+  // same capabilities is provided by the keyboard-toolbar's Database tool
+  // group (see `keyboard-toolbar-database-touch.spec.ts`, this phase's
+  // MOBILE-06/MOBILE-09 plans), not the slash menu. This file is picked up
+  // by BOTH the mobile-context project (`vitest.mobile.config.ts`) AND the
+  // existing, unmodified desktop suite (`vitest.config.ts`) — same as every
+  // other spec in this directory — so the assertion branches on `IS_MOBILE`
+  // (mirroring `calendar-touch.spec.ts`'s established pattern): under
+  // desktop, the widget IS registered (`page`/`edgeless` scope) and its
+  // pre-existing generic fuzzy-filter empty state still renders zero items
+  // for a nonexistent command, unmodified by this phase — that half of this
+  // test is a genuine non-regression check, not a new claim.
+  test('the slash menu widget mounts (and shows its fuzzy-filter empty state) on desktop, but never mounts under a touch-emulated mobile context (MOBILE-10)', async () => {
     const noteId = addNote(doc);
     const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
     await wait();
@@ -405,11 +431,23 @@ describe('slash-menu + cross-doc reference picker touch parity (Story 2.12, MOBI
     await wait(300);
 
     const slashMenu = document.querySelector('affine-slash-menu');
-    expect(slashMenu).toBeTruthy();
-    const innerSlashMenu =
-      slashMenu?.shadowRoot?.querySelector('inner-slash-menu');
-    expect(innerSlashMenu).toBeTruthy();
-    const items = innerSlashMenu?.shadowRoot?.querySelectorAll('[data-testid]');
-    expect(items?.length ?? 0).toBe(0);
+    if (IS_MOBILE) {
+      // The widget is never registered for mobile scope in the first place
+      // (`SlashMenuViewExtension.setup`'s mobile-scope early return), so
+      // typing "/" — the desktop trigger — has no effect here at all; this
+      // is the correct, provable behavior, not a missing feature.
+      expect(slashMenu).toBeFalsy();
+    } else {
+      // Desktop: pre-existing generic `AffineSlashMenuWidget` behavior
+      // (`InnerSlashMenu`, `slash-menu-popover.ts`'s own
+      // `_queryState === 'no_result'` branch), unmodified by this phase.
+      expect(slashMenu).toBeTruthy();
+      const innerSlashMenu =
+        slashMenu?.shadowRoot?.querySelector('inner-slash-menu');
+      expect(innerSlashMenu).toBeTruthy();
+      const items =
+        innerSlashMenu?.shadowRoot?.querySelectorAll('[data-testid]');
+      expect(items?.length ?? 0).toBe(0);
+    }
   }, 30_000); // generous timeout: gives the real userEvent.click's actionability wait headroom under concurrent-suite CPU contention (see comment above the click)
 });
