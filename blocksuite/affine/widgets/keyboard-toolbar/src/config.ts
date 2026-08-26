@@ -850,6 +850,23 @@ const databaseToolGroup: KeyboardToolPanelGroup = {
           .run();
       },
     },
+    {
+      name: 'Calendar view',
+      icon: TodayIcon(),
+      showWhen: ({ std }) =>
+        std.store.schema.flavourSchemaMap.has('affine:database'),
+      action: ({ std }) => {
+        std.command
+          .chain()
+          .pipe(getSelectedModelsCommand)
+          .pipe(insertDatabaseBlockCommand, {
+            viewType: viewPresets.calendarViewMeta.type,
+            place: 'after',
+            removeEmptyLine: true,
+          })
+          .run();
+      },
+    },
   ],
 };
 
