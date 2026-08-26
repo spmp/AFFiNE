@@ -55,7 +55,10 @@ export default defineConfig(_configEnv =>
       coverage: {
         provider: 'istanbul',
         reporter: ['lcov'],
-        reportsDirectory: '../../.coverage/integration-test',
+        // Distinct from vitest.config.ts's own '../../.coverage/integration-test'
+        // -- a shared directory would have one suite's lcov.info silently
+        // overwrite the other's if both run in the same CI job.
+        reportsDirectory: '../../.coverage/integration-test-mobile',
       },
       deps: {
         interopDefault: true,
