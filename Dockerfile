@@ -49,6 +49,13 @@ RUN if [ -n "${BUILD_VERSION}" ]; then \
       find . -name "package.json" -type f -exec sed -i 's/"version": "[^"]*"/"version": "'"${BUILD_VERSION}"'"/' {} \;; \
     fi
 
+# Guard against a non-SemVer BUILD_VERSION getting baked into every package.json above.
+# The backend WebSocket sync gateway's isSupportedWsClientVersion check
+# (packages/backend/server/src/core/sync/gateway.ts) validates the client's version with
+# semver.valid()/semver.Range on every space:join message; an invalid version here silently
+# disconnects every client built from this image in a reconnect loop.
+RUN if [ -n "${BUILD_VERSION}" ] && ! printf '%s' "${BUILD_VERSION}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then echo "ERROR: BUILD_VERSION='${BUILD_VERSION}' is not valid SemVer (expected MAJOR.MINOR.PATCH with optional -prerelease and +build metadata, e.g. 1.2.3, 1.2.3-beta.1, 1.2.3+20260826; see https://semver.org). This value is written into every package.json's \"version\" field and validated by the backend WebSocket sync gateway (packages/backend/server/src/core/sync/gateway.ts, isSupportedWsClientVersion) — an invalid value causes clients to be silently disconnected in a reconnect loop." >&2; exit 1; fi
+
 # Setup Node.js
 RUN corepack enable
 
