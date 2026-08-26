@@ -1,5 +1,6 @@
 import { addSiblingAttachmentBlocks } from '@blocksuite/affine-block-attachment';
 import { insertDatabaseBlockCommand } from '@blocksuite/affine-block-database';
+import { insertJournalTodoReference } from '@blocksuite/affine-block-database-view-ref';
 import { insertEmptyEmbedIframeCommand } from '@blocksuite/affine-block-embed';
 import { insertImagesCommand } from '@blocksuite/affine-block-image';
 import { insertLatexBlockCommand } from '@blocksuite/affine-block-latex';
@@ -69,6 +70,7 @@ import {
   CollapseTabIcon,
   CopyIcon,
   DatabaseKanbanViewIcon,
+  DatabaseListViewIcon,
   DatabaseTableViewIcon,
   DeleteIcon,
   DividerIcon,
@@ -865,6 +867,21 @@ const databaseToolGroup: KeyboardToolPanelGroup = {
             removeEmptyLine: true,
           })
           .run();
+      },
+    },
+    {
+      name: 'Journal Todo',
+      icon: DatabaseListViewIcon(),
+      showWhen: ({ std }) =>
+        std.store.schema.flavourSchemaMap.has('affine:database'),
+      action: ({ std }) => {
+        const [_, { selectedModels }] = std.command.exec(
+          getSelectedModelsCommand
+        );
+        const model = selectedModels?.[0];
+        if (!model) return;
+
+        insertJournalTodoReference(std, model).catch(console.error);
       },
     },
   ],
