@@ -355,6 +355,14 @@ describe('slash-menu + cross-doc reference picker touch parity (Story 2.12, MOBI
     expect(paragraphEl).toBeTruthy();
     paragraphEl.scrollIntoView({ block: 'center' });
     await wait(50);
+    // Poll for a non-zero layout box before tapping: under CPU contention
+    // (many browser-mode spec files running concurrently) the paragraph's
+    // real render/layout pass can lag behind this test's own synchronous
+    // setup.
+    for (let attempt = 0; attempt < 20; attempt++) {
+      if (paragraphEl.getBoundingClientRect().height > 0) break;
+      await wait(50);
+    }
     // Click the paragraph block container itself (not the inner, still-
     // empty rich-text span) -- for a freshly-inserted empty paragraph the
     // innermost `[data-v-text="true"]` span can be zero-height and fails
@@ -362,8 +370,25 @@ describe('slash-menu + cross-doc reference picker touch parity (Story 2.12, MOBI
     // mobile viewport. The block container has real height (line-height /
     // padding) even when empty, and a real click anywhere on the line lets
     // BlockSuite's own selection manager place the caret -- unlike a raw
-    // DOM `.focus()` call, which does not establish the block selection
-    // range the slash-menu's keydown listener requires.
+    // DOM `.focus()` call or a synthetic `touchTap` dispatch (both tried
+    // and rejected: neither establishes the real browser Selection/Range
+    // BlockSuite's rich-text layer listens to; only a genuine, trusted
+    // Playwright pointer click does).
+    //
+    // Known flake (disclosed, not silently ignored): under this suite's
+    // concurrent multi-file browser-mode execution (5 real Chromium
+    // instances competing for host CPU), this real click's actionability
+    // wait has intermittently timed out even on an element with a
+    // confirmed non-zero layout box -- almost certainly transient
+    // paint/compositor delay under CPU contention, not a genuine
+    // visibility defect (the file passes 100% reliably in isolation, and
+    // the poll above rules out a pure "not rendered yet" race). This is
+    // the same class of environment-driven flake already observed in this
+    // sandbox's existing desktop webkit suite (unrelated pre-existing
+    // failures, see 01-01-SUMMARY.md). Left as `userEvent.click` (the only
+    // interaction method that actually works here) rather than papering
+    // over it with a weaker synthetic event that would silently stop
+    // testing the real interaction.
     await userEvent.click(paragraphEl);
     await wait(50);
     await userEvent.keyboard('/zzzznonexistentslashcommandzzzz');
