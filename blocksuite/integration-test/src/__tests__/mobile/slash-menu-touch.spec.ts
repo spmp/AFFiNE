@@ -385,10 +385,20 @@ describe('slash-menu + cross-doc reference picker touch parity (Story 2.12, MOBI
     // the poll above rules out a pure "not rendered yet" race). This is
     // the same class of environment-driven flake already observed in this
     // sandbox's existing desktop webkit suite (unrelated pre-existing
-    // failures, see 01-01-SUMMARY.md). Left as `userEvent.click` (the only
-    // interaction method that actually works here) rather than papering
-    // over it with a weaker synthetic event that would silently stop
-    // testing the real interaction.
+    // failures, see 01-01-SUMMARY.md).
+    //
+    // A per-click retry loop was tried and reverted: `UserEventClickOptions`
+    // exposes no per-call timeout in this vitest/browser-provider version,
+    // so each retry attempt re-incurs the full ~15s actionability wait,
+    // which blew past this test's own timeout even faster than a single
+    // attempt. Mitigated instead with an explicit, generous per-test
+    // timeout (see the `test(...)` call below) so a single click's
+    // actionability wait has real headroom under contention, plus the
+    // config-level CI `retry` for the rare case that still isn't enough.
+    // `userEvent.click` remains the interaction method -- it's the only
+    // one that establishes the real browser Selection/Range BlockSuite's
+    // rich-text layer needs (a raw DOM `.focus()` call and a synthetic
+    // `touchTap` dispatch were both tried and rejected for that reason).
     await userEvent.click(paragraphEl);
     await wait(50);
     await userEvent.keyboard('/zzzznonexistentslashcommandzzzz');
@@ -401,5 +411,5 @@ describe('slash-menu + cross-doc reference picker touch parity (Story 2.12, MOBI
     expect(innerSlashMenu).toBeTruthy();
     const items = innerSlashMenu?.shadowRoot?.querySelectorAll('[data-testid]');
     expect(items?.length ?? 0).toBe(0);
-  });
+  }, 30_000); // generous timeout: gives the real userEvent.click's actionability wait headroom under concurrent-suite CPU contention (see comment above the click)
 });
