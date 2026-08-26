@@ -1,7 +1,11 @@
 import { DatabaseBlockDataSource } from '@blocksuite/affine/blocks/database';
+import {
+  PeekViewExtension,
+  type PeekViewService,
+} from '@blocksuite/affine/components/peek';
 import type { DatabaseBlockModel } from '@blocksuite/affine/model';
 import { IS_MOBILE } from '@blocksuite/global/env';
-import { beforeEach, describe, expect, test } from 'vitest';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { wait } from '../utils/common.js';
 import { addNote } from '../utils/edgeless.js';
@@ -88,6 +92,11 @@ describe('calendar view mobile touch parity (Story 2.12, MOBILE-02)', () => {
       | (HTMLElement & {
           logic: {
             view: { readonly$: { value: boolean } };
+            // `moveMonth`/`goToday` write this plain field directly
+            // (`calendar/pc/view.ts:161,216-229`) -- reading it numerically
+            // is a more reliable chronological-ordering assertion than
+            // parsing the `.calendar-title` formatted label text.
+            currentMonth: number;
           };
           requestUpdate: () => void;
           updateComplete: Promise<boolean>;
@@ -179,5 +188,165 @@ describe('calendar view mobile touch parity (Story 2.12, MOBILE-02)', () => {
     expect(dataSource.rows$.value.length).toBe(rowCountBefore + 1);
     const newRowId = dataSource.rows$.value[dataSource.rows$.value.length - 1];
     expect(dataSource.getDueDateForRow(newRowId!)).toBe(targetDate);
+  });
+
+  // ---------------------------------------------------------------------
+  // Task 2: full MOBILE-02 live-verification pass -- month nav, entry-open
+  // (peek/detail panel), and grid horizontal-scroll-with-legibility.
+  // RESEARCH.md Open Question 1 flagged the 720px-min-width grid as an
+  // unconfirmed usability risk on phone-width viewports; per this plan's
+  // own priority order, this block live-tests all three assertions FIRST
+  // and only escalates to a CSS-only adjustment (and, if that alone can't
+  // resolve a genuine interaction-model failure, a full `calendar/mobile/`
+  // fork) if any assertion actually fails -- see the SUMMARY for which
+  // path was taken.
+  //
+  // A dedicated nested `describe` (its own `beforeEach`) rather than
+  // reusing the outer block's setup: the entry-open assertion needs a real
+  // `PeekViewExtension` mock registered on the editor so
+  // `openCalendarEntry` -> `root.openDetailPanel` ->
+  // `database-block.ts`'s `detailPanelConfig.openDetailPanel` has a
+  // `PeekViewProvider` to resolve (mirrors
+  // `due-date-calendar-navigation.spec.ts`'s own established pattern) --
+  // harmless to also have present for the nav/grid-scroll assertions,
+  // which never trigger it.
+  describe('Task 2: live-verification of nav / entry-open / grid-scroll (MOBILE-02)', () => {
+    let peek: ReturnType<
+      typeof vi.fn<(payload: Record<string, unknown>) => void>
+    >;
+
+    beforeEach(async () => {
+      peek = vi.fn();
+      const cleanup = await setupEditor('page', [
+        createStubVirtualKeyboardExtension(),
+        PeekViewExtension({
+          peek: ((payload: Record<string, unknown>) => {
+            peek(payload);
+            return Promise.resolve();
+          }) as PeekViewService['peek'],
+        }),
+      ]);
+      return cleanup;
+    });
+
+    // Assertion (1): tapping the month-nav prev/next buttons advances /
+    // retreats the visible month chronologically, matching desktop
+    // `moveMonth` behavior -- `moveMonth`/`goToday` are plain `@click`
+    // handlers (`calendar/pc/view.ts:739-747` per RESEARCH.md, now
+    // 976-990 in the current file), so this is a regression-only,
+    // live-touch-confirmation check.
+    test('tapping month-nav prev/next buttons advances/retreats the visible month chronologically', async () => {
+      await seedCalendarWithEntry();
+      const renderer = getCalendarRenderer();
+      expect(renderer).toBeTruthy();
+
+      const initialMonth = renderer!.logic.currentMonth;
+
+      const nextButton = document.querySelector(
+        '.calendar-icon-button[aria-label="Next month"]'
+      ) as HTMLElement | null;
+      expect(nextButton).toBeTruthy();
+      touchTap(nextButton!);
+      await wait(200);
+      const afterNext = renderer!.logic.currentMonth;
+      expect(afterNext).toBeGreaterThan(initialMonth);
+
+      const prevButton = document.querySelector(
+        '.calendar-icon-button[aria-label="Previous month"]'
+      ) as HTMLElement | null;
+      expect(prevButton).toBeTruthy();
+      touchTap(prevButton!);
+      await wait(200);
+      touchTap(prevButton!);
+      await wait(200);
+
+      expect(renderer!.logic.currentMonth).toBeLessThan(afterNext);
+      expect(renderer!.logic.currentMonth).toBeLessThan(initialMonth);
+    });
+
+    // Assertion (2): tapping an existing calendar entry opens its detail
+    // view, matching desktop `handleEntryClick` -- `openEntry` ->
+    // `openCalendarEntry` (`calendar/pc/actions.ts`) routes a `kind:
+    // 'row'` entry through `root.openDetailPanel`, which
+    // `database-block.ts`'s `detailPanelConfig.openDetailPanel`
+    // implements by calling `peekViewService.peek({ target, template })`
+    // for a plain (non-journal-todo-canonical) row -- asserted on that
+    // observable `template` payload (not a `docId` navigation, which is
+    // the journal-todo-specific special case
+    // `due-date-calendar-navigation.spec.ts` covers separately), matching
+    // this package's black-box test style.
+    test('tapping an existing calendar entry opens its detail panel (peek called with a template), matching desktop handleEntryClick', async () => {
+      const { seededDate } = await seedCalendarWithEntry();
+      const dayCell = getDayCell(seededDate);
+      expect(dayCell).toBeTruthy();
+      const entryEl = dayCell!.querySelector(
+        '.calendar-entry'
+      ) as HTMLElement | null;
+      expect(entryEl).toBeTruthy();
+
+      touchTap(entryEl!);
+      await wait(200);
+
+      expect(peek).toHaveBeenCalledTimes(1);
+      const [payload] = peek.mock.calls[0] as [Record<string, unknown>];
+      expect(payload).not.toHaveProperty('docId');
+      expect(payload).toHaveProperty('template');
+    });
+
+    // Assertion (3): `.calendar-scroll` is horizontally scrollable at the
+    // 390px mobile viewport (`.calendar-shell`'s `min-width: 720px` per
+    // `calendar/pc/styles.ts:61-65` forces overflow by design -- this is
+    // the density UI-SPEC/RESEARCH.md's Open Question 1 already flagged,
+    // not a broken layout), and day-cell / entry `min-height` legibility
+    // guardrails survive scrolling unchanged. Values below are read live
+    // from the current `calendar/pc/styles.ts` (112px day cells at line
+    // 178, the `--calendar-entry-height: 22px` custom property entries
+    // resolve to at line 260/27) rather than the plan's own approximate
+    // "36px" citation, per this task's `read_first` directive to verify
+    // against the actual file, not a cited line-number snapshot.
+    test('.calendar-scroll is horizontally scrollable at the mobile viewport, and day-cell/entry min-height are unchanged after scrolling', async () => {
+      await seedCalendarWithEntry();
+
+      const scrollEl = document.querySelector(
+        '.calendar-scroll'
+      ) as HTMLElement | null;
+      expect(scrollEl).toBeTruthy();
+      // This file is picked up by both the mobile-context project (390px
+      // viewport, `.calendar-shell`'s 720px min-width genuinely overflows
+      // -- the scrollable case this assertion exists to prove) and the
+      // existing desktop suite (1024x768 viewport, wide enough that the
+      // 720px shell fits without overflow) -- branch on `IS_MOBILE`
+      // (mirroring every other assertion in this file) rather than
+      // hardcoding the mobile-only expectation, so the desktop config run
+      // stays a genuine non-regression check instead of a false failure.
+      if (IS_MOBILE) {
+        expect(scrollEl!.scrollWidth).toBeGreaterThan(scrollEl!.clientWidth);
+      } else {
+        expect(scrollEl!.scrollWidth).toBeLessThanOrEqual(
+          scrollEl!.clientWidth
+        );
+      }
+
+      const dayCell = document.querySelector(
+        '.calendar-day'
+      ) as HTMLElement | null;
+      const entry = document.querySelector(
+        '.calendar-entry'
+      ) as HTMLElement | null;
+      expect(dayCell).toBeTruthy();
+      expect(entry).toBeTruthy();
+
+      const dayMinHeightBefore = getComputedStyle(dayCell!).minHeight;
+      const entryMinHeightBefore = getComputedStyle(entry!).minHeight;
+      expect(dayMinHeightBefore).toBe('112px');
+      expect(entryMinHeightBefore).toBe('22px');
+
+      scrollEl!.scrollLeft = 200;
+      scrollEl!.dispatchEvent(new Event('scroll', { bubbles: true }));
+      await wait(100);
+
+      expect(getComputedStyle(dayCell!).minHeight).toBe(dayMinHeightBefore);
+      expect(getComputedStyle(entry!).minHeight).toBe(entryMinHeightBefore);
+    });
   });
 });
