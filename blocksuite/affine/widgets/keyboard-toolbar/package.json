@@ -12,6 +12,7 @@
   "dependencies": {
     "@blocksuite/affine-block-attachment": "workspace:*",
     "@blocksuite/affine-block-database": "workspace:*",
+    "@blocksuite/affine-block-database-view-ref": "workspace:*",
     "@blocksuite/affine-block-embed": "workspace:*",
     "@blocksuite/affine-block-image": "workspace:*",
     "@blocksuite/affine-block-latex": "workspace:*",

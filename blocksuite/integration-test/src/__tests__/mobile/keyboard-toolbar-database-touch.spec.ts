@@ -1,4 +1,8 @@
-import type { DatabaseBlockModel } from '@blocksuite/affine/model';
+import type {
+  DatabaseBlockModel,
+  DatabaseViewRefBlockModel,
+} from '@blocksuite/affine/model';
+import { JournalTodoDatabaseProvider } from '@blocksuite/affine/shared/services';
 import {
   defaultKeyboardToolbarConfig,
   type KeyboardToolPanelConfig,
@@ -90,5 +94,86 @@ describe('keyboard-toolbar database tool group touch reachability (Phase 2, MOBI
       mode: string;
     };
     expect(seededView.mode).toBe(viewPresets.calendarViewMeta.type);
+  });
+
+  // Task 3 (MOBILE-06): proves the keyboard-toolbar's "Journal Todo" item
+  // invokes the shared `insertJournalTodoReference` function — extracted in
+  // this same task from the slash-menu's own "Journal Todo" action — with
+  // identical, correctly-seeded results (fresh canonical, `list`-mode view,
+  // 2-condition OR-grace filter), matching `slash-menu-touch.spec.ts`'s own
+  // desktop-path assertions for the same underlying logic. Mirrors that
+  // file's `createStubStdForJournalTodo` — a `getOptional` Proxy override is
+  // the right tool for `JournalTodoDatabaseProvider` specifically (a pure
+  // read/write pointer seam), not a real DI registration.
+  function createStubStdForJournalTodo(journalDate: string) {
+    let ref: { refDocId: string; refBlockId: string } | undefined;
+    const stub = new Proxy(editor.std, {
+      get(target, prop, receiver) {
+        if (prop === 'getOptional') {
+          return (identifier: unknown) => {
+            if (identifier === JournalTodoDatabaseProvider) {
+              return {
+                getJournalDate: () => journalDate,
+                getJournalTodoDatabaseRef: () => ref,
+                setJournalTodoDatabaseRef: (newRef: typeof ref) => {
+                  ref = newRef;
+                },
+                isTemplateDoc: () => false,
+              };
+            }
+            return undefined;
+          };
+        }
+        if (prop === 'host') {
+          const realHost = Reflect.get(target, prop, receiver) as object;
+          return new Proxy(realHost, {
+            get(hostTarget, hostProp) {
+              if (hostProp === 'std') return stub;
+              return Reflect.get(hostTarget, hostProp, hostTarget);
+            },
+          });
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    return { stub, getRef: () => ref };
+  }
+
+  test('the keyboard-toolbar\'s "Journal Todo" item inserts a correctly-seeded database-view-ref block via insertJournalTodoReference', async () => {
+    await selectFreshParagraph();
+    const { stub, getRef } = createStubStdForJournalTodo('2026-08-08');
+
+    const databaseGroup = findDatabaseGroup();
+    const journalTodoItem = databaseGroup.items.find(
+      item => item.name === 'Journal Todo'
+    );
+    expect(journalTodoItem).toBeTruthy();
+
+    await journalTodoItem!.action?.({
+      std: stub,
+      rootComponent: {} as BlockComponent,
+      closeToolPanel: () => {},
+    });
+    await wait();
+
+    const ref = getRef();
+    expect(ref).toBeTruthy();
+    const canonicalModel = doc.getBlock(ref!.refBlockId)
+      ?.model as DatabaseBlockModel;
+    expect(canonicalModel?.flavour).toBe('affine:database');
+
+    const refEl = document.querySelector(
+      'affine-database-view-ref'
+    ) as HTMLElement & { model: DatabaseViewRefBlockModel };
+    expect(refEl).toBeTruthy();
+    const refModel = refEl.model;
+    expect(refModel.props.refBlockId).toBe(ref!.refBlockId);
+    const seededView = refModel.props.views[0] as unknown as {
+      mode: string;
+      filter: { op: string; conditions: unknown[] };
+    };
+    expect(seededView.mode).toBe('list');
+    expect(seededView.filter.op).toBe('or');
+    expect(seededView.filter.conditions.length).toBe(2);
   });
 });
