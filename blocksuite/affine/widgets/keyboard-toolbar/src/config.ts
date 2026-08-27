@@ -118,7 +118,7 @@ import {
   ConfigExtensionFactory,
 } from '@blocksuite/std';
 import { GfxControllerIdentifier } from '@blocksuite/std/gfx';
-import { computed } from '@preact/signals-core';
+import { computed, signal } from '@preact/signals-core';
 import { cssVarV2 } from '@toeverything/theme/v2';
 import type { TemplateResult } from 'lit';
 
@@ -221,10 +221,43 @@ export type DynamicKeyboardToolPanelGroup = (
 // `{ ensureColumns: true }`. `getRowHierarchyLevel` already tolerates a
 // missing hierarchy-level column (returns `0`), so the read-only path below
 // stays correct even when the columns haven't been created yet.
+// WR-03 (Phase 02 code review): `AffineKeyboardToolbar` extends
+// `SignalWatcher`, which only re-renders when a `@preact/signals-core`
+// signal read during the previous `render()` changes — it does not
+// re-render on plain DOM mutations like `document.activeElement` changing.
+// `getFocusedDatabaseListRow` (below) reads `document.activeElement`
+// directly, so without this signal, tapping from one database row straight
+// to another (no intervening text-selection/toolbar-visibility change)
+// could leave `RightTab`/`CollapseTab`'s enabled/disabled state stuck on
+// whichever row last happened to trigger an unrelated re-render.
+// `_focusedRowVersion$` is bumped on every `focusin`/`focusout` anywhere in
+// the document and read (for its dependency-tracking side effect only) at
+// the top of `getFocusedDatabaseListRow`, so `SignalWatcher` picks up the
+// dependency and re-renders whenever focus moves.
+const _focusedRowVersion$ = signal(0);
+let _focusListenerAttached = false;
+function _ensureFocusVersionListenerAttached() {
+  if (_focusListenerAttached) return;
+  _focusListenerAttached = true;
+  const bump = () => {
+    _focusedRowVersion$.value = _focusedRowVersion$.value + 1;
+  };
+  // Capture phase: focus events don't bubble, so this must listen during
+  // capture to observe focus changes anywhere in the document, including
+  // inside shadow DOM subtrees (Lit components).
+  document.addEventListener('focusin', bump, true);
+  document.addEventListener('focusout', bump, true);
+}
+
 function getFocusedDatabaseListRow(
   std: BlockStdScope,
   { ensureColumns = false }: { ensureColumns?: boolean } = {}
 ) {
+  _ensureFocusVersionListenerAttached();
+  // Read (not used otherwise) purely so `SignalWatcher` registers this as
+  // a tracked dependency of whichever `disableWhen`/`action` call led here.
+  void _focusedRowVersion$.value;
+
   const rowEl = document.activeElement?.closest(
     '.affine-data-view-list-row'
   ) as HTMLElement | null;
