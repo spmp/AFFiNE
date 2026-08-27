@@ -3,6 +3,7 @@ import {
   genericDatabaseViewRefSlashMenuConfig,
   journalTodoDatabaseSlashMenuConfig,
 } from '@blocksuite/affine/blocks/database-view-ref';
+import { noteRefSlashMenuConfig } from '@blocksuite/affine/blocks/note-ref';
 import type {
   DatabaseBlockModel,
   DatabaseRefBlockModel,
@@ -370,6 +371,36 @@ describe('slash-menu + cross-doc reference picker touch parity (Story 2.12, MOBI
   // pre-existing generic fuzzy-filter empty state still renders zero items
   // for a nonexistent command, unmodified by this phase — that half of this
   // test is a genuine non-regression check, not a new claim.
+  // D-04 live-verification (Phase 2, Plan 03): confirms — under this now-
+  // honest mobile-scoped harness, not by assumption — that pr/18's Note
+  // (`note-ref`) and Reference (`database-ref`) tools are unreachable via
+  // the slash menu on mobile for the identical architectural reason as
+  // Journal Todo/Calendar above: `noteRefSlashMenuConfig` and
+  // `databaseRefSlashMenuConfig` are real, well-formed `SlashMenuConfig`
+  // objects (proving the commands themselves are NOT broken or missing —
+  // their logic is exercised directly by `slash-menu-touch.spec.ts`'s own
+  // test 3/3b above for `databaseRefSlashMenuConfig`, and by
+  // `keyboard-toolbar-note-reference-touch.spec.ts` for both, once
+  // registered into the keyboard-toolbar), but grepping the whole
+  // `blocksuite/` and `packages/frontend/core/src` trees for
+  // `NoteRefSlashMenuConfigExtension`/`DatabaseRefSlashMenuConfigExtension`
+  // outside their own `src/configs/slash-menu.ts`/`src/view.ts` files
+  // (confirmed this session, see `note-ref/src/view.ts` and
+  // `database-ref/src/view.ts`) finds no other call site — their ONLY
+  // registration point is `SlashMenuConfigExtension`, the exact same
+  // mobile-excluded seam Journal Todo/Calendar used before this phase. The
+  // widget-mount assertion immediately below already proves
+  // `affine-slash-menu` never mounts AT ALL under mobile scope — an
+  // architectural, not per-command, fact — so this per-command check is the
+  // precise confirmation D-04 requires: no command-specific mobile
+  // reachability exists today for either tool.
+  test('Note (note-ref) and Reference (database-ref) slash-menu configs are real and well-formed, but their sole registration point (SlashMenuConfigExtension) is excluded from mobile scope — same root cause as Journal Todo/Calendar (D-04)', () => {
+    expect(noteRefSlashMenuConfig).toBeTruthy();
+    expect(typeof noteRefSlashMenuConfig.items).toBe('function');
+    expect(databaseRefSlashMenuConfig).toBeTruthy();
+    expect(typeof databaseRefSlashMenuConfig.items).toBe('function');
+  });
+
   test('the slash menu widget mounts (and shows its fuzzy-filter empty state) on desktop, but never mounts under a touch-emulated mobile context (MOBILE-10)', async () => {
     const noteId = addNote(doc);
     const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
