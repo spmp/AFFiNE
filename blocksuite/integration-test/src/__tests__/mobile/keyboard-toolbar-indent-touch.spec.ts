@@ -109,6 +109,58 @@ describe('keyboard-toolbar indent/outdent touch reachability for database rows (
     expect(dataSource.getRowHierarchyLevel(rowB)).toBe(0);
   });
 
+  // Regression test for CR-01 (Phase 02 code review): `rowMove`'s
+  // self-target trick (`rowMove(rowId, { id: rowId, before: false })`) used
+  // to silently no-op whenever the focused row already had at least one
+  // child, because the resolved move target landed inside the very subtree
+  // being moved and `Store.moveBlocks` rejects that. Indent/outdent now go
+  // through `DatabaseBlockDataSource.applyPendingHierarchyLevel`, a
+  // level-only path that never calls `doc.moveBlocks`. This seeds a parent
+  // row with a real child before outdenting the parent, and asserts both
+  // the parent's and the child's levels actually update (previously
+  // neither would move).
+  test('outdent on a row that has a child updates both levels instead of silently no-oping', async () => {
+    const { dataSource, rowB } = await seedListViewWithTwoRows();
+    const rightTab = findTab('RightTab');
+    const collapseTab = findTab('CollapseTab');
+
+    // Indent rowB under rowA so rowB starts at level 1.
+    focusRow(rowB);
+    await wait();
+    await rightTab.action?.({ std: editor.std, ...ctx });
+    await wait();
+    expect(dataSource.getRowHierarchyLevel(rowB)).toBe(1);
+
+    // Add a third row after rowB and indent it twice so it nests as rowB's
+    // child (level 2) — giving rowB a subtree before outdenting it.
+    const rowC = dataSource.rowAddAsTodoList('end');
+    await wait();
+    focusRow(rowC);
+    await wait();
+    await rightTab.action?.({ std: editor.std, ...ctx });
+    await wait();
+    await rightTab.action?.({ std: editor.std, ...ctx });
+    await wait();
+    expect(dataSource.getRowHierarchyLevel(rowC)).toBe(2);
+
+    // rowB now has a child (rowC). Outdenting rowB previously hit the
+    // `rowMove` self-target bug: the computed target landed on rowC
+    // (already part of the subtree being moved), so `Store.moveBlocks`
+    // silently rejected the move and neither row's level changed, despite
+    // `disableWhen` reporting the button as enabled.
+    focusRow(rowB);
+    await wait();
+    expect(collapseTab.disableWhen?.({ std: editor.std, ...ctx })).toBe(false);
+
+    await collapseTab.action?.({ std: editor.std, ...ctx });
+    await wait();
+
+    expect(dataSource.getRowHierarchyLevel(rowB)).toBe(0);
+    // rowC shifts down by the same delta (-1) so it stays nested one level
+    // under rowB.
+    expect(dataSource.getRowHierarchyLevel(rowC)).toBe(1);
+  });
+
   test('indent on the first row (no previous sibling) is disabled', async () => {
     const { rowA } = await seedListViewWithTwoRows();
     focusRow(rowA);
