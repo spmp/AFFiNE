@@ -1273,7 +1273,10 @@ export const defaultKeyboardToolbarConfig: KeyboardToolbarConfig = {
             row.previousSiblingLevel + 1
           );
           row.dataSource.setPendingHierarchyLevel(row.rowId, newLevel);
-          row.dataSource.rowMove(row.rowId, { id: row.rowId, before: false });
+          // Level-only fast path — must not reuse `rowMove`'s self-target
+          // trick here, since it silently no-ops whenever this row has
+          // children (see `applyPendingHierarchyLevel`'s doc comment).
+          row.dataSource.applyPendingHierarchyLevel(row.rowId);
           return;
         }
 
@@ -1310,7 +1313,10 @@ export const defaultKeyboardToolbarConfig: KeyboardToolbarConfig = {
           const newLevel = row.level - 1;
           if (newLevel < 0) return;
           row.dataSource.setPendingHierarchyLevel(row.rowId, newLevel);
-          row.dataSource.rowMove(row.rowId, { id: row.rowId, before: false });
+          // Level-only fast path — must not reuse `rowMove`'s self-target
+          // trick here, since it silently no-ops whenever this row has
+          // children (see `applyPendingHierarchyLevel`'s doc comment).
+          row.dataSource.applyPendingHierarchyLevel(row.rowId);
           return;
         }
 
