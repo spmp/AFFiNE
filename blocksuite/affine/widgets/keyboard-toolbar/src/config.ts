@@ -210,7 +210,21 @@ export type DynamicKeyboardToolPanelGroup = (
 // (Table/Kanban use distinct custom elements, e.g. `data-view-table-row`),
 // so this lookup is inherently List-view-scoped without needing a separate
 // `views.some(v => v.mode === 'list')` check.
-function getFocusedDatabaseListRow(std: BlockStdScope) {
+// WR-02 (Phase 02 code review): `ensureColumns` must default to `false`.
+// This lookup is called from `disableWhen`, which the toolbar re-evaluates
+// on every render pass for any focused database row — purely as a side
+// effect of the toolbar being visible, not because the user tapped
+// anything. `dataSource.ensureTaskHierarchyColumns()` creates up to three
+// new (hidden) columns on the database via `addProperty` with no
+// `captureSync()`/undo-boundary guard, so it must only run when a mutation
+// is actually expected — i.e. from the `action` callbacks, which opt in via
+// `{ ensureColumns: true }`. `getRowHierarchyLevel` already tolerates a
+// missing hierarchy-level column (returns `0`), so the read-only path below
+// stays correct even when the columns haven't been created yet.
+function getFocusedDatabaseListRow(
+  std: BlockStdScope,
+  { ensureColumns = false }: { ensureColumns?: boolean } = {}
+) {
   const rowEl = document.activeElement?.closest(
     '.affine-data-view-list-row'
   ) as HTMLElement | null;
@@ -226,7 +240,7 @@ function getFocusedDatabaseListRow(std: BlockStdScope) {
   const dataSource = new DatabaseBlockDataSource(parent as DatabaseBlockModel);
   if (dataSource.readonly$.value) return undefined;
 
-  dataSource.ensureTaskHierarchyColumns();
+  if (ensureColumns) dataSource.ensureTaskHierarchyColumns();
 
   const index = parent.children.indexOf(model);
   const level = dataSource.getRowHierarchyLevel(model.id);
@@ -1265,7 +1279,7 @@ export const defaultKeyboardToolbarConfig: KeyboardToolbarConfig = {
         return !success;
       },
       action: ({ std }) => {
-        const row = getFocusedDatabaseListRow(std);
+        const row = getFocusedDatabaseListRow(std, { ensureColumns: true });
         if (row) {
           if (row.previousSiblingLevel === undefined) return;
           const newLevel = Math.min(
@@ -1308,7 +1322,7 @@ export const defaultKeyboardToolbarConfig: KeyboardToolbarConfig = {
         return !success;
       },
       action: ({ std }) => {
-        const row = getFocusedDatabaseListRow(std);
+        const row = getFocusedDatabaseListRow(std, { ensureColumns: true });
         if (row) {
           const newLevel = row.level - 1;
           if (newLevel < 0) return;
