@@ -1,5 +1,8 @@
 import { addSiblingAttachmentBlocks } from '@blocksuite/affine-block-attachment';
-import { insertDatabaseBlockCommand } from '@blocksuite/affine-block-database';
+import {
+  DatabaseBlockDataSource,
+  insertDatabaseBlockCommand,
+} from '@blocksuite/affine-block-database';
 import { insertJournalTodoReference } from '@blocksuite/affine-block-database-view-ref';
 import { insertEmptyEmbedIframeCommand } from '@blocksuite/affine-block-embed';
 import { insertImagesCommand } from '@blocksuite/affine-block-image';
@@ -35,7 +38,10 @@ import {
   toggleStrike,
   toggleUnderline,
 } from '@blocksuite/affine-inline-preset';
-import type { FrameBlockModel } from '@blocksuite/affine-model';
+import type {
+  DatabaseBlockModel,
+  FrameBlockModel,
+} from '@blocksuite/affine-model';
 import { insertContent } from '@blocksuite/affine-rich-text';
 import {
   copySelectedModelsCommand,
@@ -188,6 +194,46 @@ export type KeyboardToolPanelGroup = {
 export type DynamicKeyboardToolPanelGroup = (
   ctx: KeyboardToolbarContext
 ) => KeyboardToolPanelGroup | null;
+
+// Database List-view rows are rendered by data-view's own renderer
+// (`affine-data-view-list`), NOT as standard block-tree `BlockComponent`s —
+// their title cell is explicitly marked `data-not-block-text` and carries no
+// `data-block-id`, so `getSelectedModelsCommand` (which resolves selection
+// via std.selection/the block-tree DOM) can never see a focused row; a
+// database row's "focus" only ever shows up as `document.activeElement`
+// landing somewhere inside `.affine-data-view-list-row` (row-level tap
+// focus via its own `tabindex="0"`, or text-edit focus inside its title's
+// contenteditable). `.affine-data-view-list-row` is List-view-specific
+// (Table/Kanban use distinct custom elements, e.g. `data-view-table-row`),
+// so this lookup is inherently List-view-scoped without needing a separate
+// `views.some(v => v.mode === 'list')` check.
+function getFocusedDatabaseListRow(std: BlockStdScope) {
+  const rowEl = document.activeElement?.closest(
+    '.affine-data-view-list-row'
+  ) as HTMLElement | null;
+  const rowId = rowEl?.dataset.rowId;
+  if (!rowId) return undefined;
+
+  const model = std.store.getModelById(rowId);
+  if (!model) return undefined;
+
+  const parent = std.store.getParent(model);
+  if (!parent || parent.flavour !== 'affine:database') return undefined;
+
+  const dataSource = new DatabaseBlockDataSource(parent as DatabaseBlockModel);
+  if (dataSource.readonly$.value) return undefined;
+
+  dataSource.ensureTaskHierarchyColumns();
+
+  const index = parent.children.indexOf(model);
+  const level = dataSource.getRowHierarchyLevel(model.id);
+  const previousSibling = index > 0 ? parent.children[index - 1] : undefined;
+  const previousSiblingLevel = previousSibling
+    ? dataSource.getRowHierarchyLevel(previousSibling.id)
+    : undefined;
+
+  return { dataSource, rowId: model.id, level, previousSiblingLevel };
+}
 
 const textToolActionItems: KeyboardToolbarActionItem[] = [
   {
@@ -1172,6 +1218,9 @@ export const defaultKeyboardToolbarConfig: KeyboardToolbarConfig = {
       name: 'RightTab',
       icon: RightTabIcon(),
       disableWhen: ({ std }) => {
+        const row = getFocusedDatabaseListRow(std);
+        if (row) return row.previousSiblingLevel === undefined;
+
         const [success] = std.command
           .chain()
           .tryAll(chain => [
@@ -1182,6 +1231,18 @@ export const defaultKeyboardToolbarConfig: KeyboardToolbarConfig = {
         return !success;
       },
       action: ({ std }) => {
+        const row = getFocusedDatabaseListRow(std);
+        if (row) {
+          if (row.previousSiblingLevel === undefined) return;
+          const newLevel = Math.min(
+            row.level + 1,
+            row.previousSiblingLevel + 1
+          );
+          row.dataSource.setPendingHierarchyLevel(row.rowId, newLevel);
+          row.dataSource.rowMove(row.rowId, { id: row.rowId, before: false });
+          return;
+        }
+
         std.command
           .chain()
           .tryAll(chain => [
@@ -1197,6 +1258,9 @@ export const defaultKeyboardToolbarConfig: KeyboardToolbarConfig = {
       name: 'CollapseTab',
       icon: CollapseTabIcon(),
       disableWhen: ({ std }) => {
+        const row = getFocusedDatabaseListRow(std);
+        if (row) return row.level === 0;
+
         const [success] = std.command
           .chain()
           .tryAll(chain => [
@@ -1207,6 +1271,15 @@ export const defaultKeyboardToolbarConfig: KeyboardToolbarConfig = {
         return !success;
       },
       action: ({ std }) => {
+        const row = getFocusedDatabaseListRow(std);
+        if (row) {
+          const newLevel = row.level - 1;
+          if (newLevel < 0) return;
+          row.dataSource.setPendingHierarchyLevel(row.rowId, newLevel);
+          row.dataSource.rowMove(row.rowId, { id: row.rowId, before: false });
+          return;
+        }
+
         std.command
           .chain()
           .tryAll(chain => [
