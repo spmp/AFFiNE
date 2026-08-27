@@ -2670,39 +2670,63 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     deleteRows(this._model, ids);
   }
 
+  /**
+   * Resolves the "subtree" that `rowId` drags along whenever it is moved or
+   * re-leveled: `rowId` itself plus every immediately-following row whose
+   * hierarchy level is greater than `rowId`'s own level (i.e. its current
+   * children/descendants, in document order). Shared by `rowMove` (which
+   * relocates the subtree to a new sibling position) and
+   * `applyPendingHierarchyLevel` (which only re-levels the subtree in
+   * place), so both stay consistent about what counts as "part of the
+   * move".
+   */
+  private _resolveMovingSubtree(rowId: string): {
+    movingModels: BlockModel[];
+    movedRowIds: string[];
+    oldRootLevel: number;
+  } {
+    const model = this.doc.getModelById(rowId);
+    if (!model) {
+      return { movingModels: [], movedRowIds: [], oldRootLevel: 0 };
+    }
+    const levelColumn = this._model.props.columns.find(
+      column => column.name === TASK_HIERARCHY_LEVEL_COLUMN_NAME
+    );
+    const children = this._model.children;
+    const startIndex = children.findIndex(child => child.id === rowId);
+    let movingModels = [model];
+    let movedRowIds = [rowId];
+    let oldRootLevel = 0;
+    if (startIndex >= 0 && levelColumn) {
+      const rootLevel = this.parseHierarchyLevel(
+        getCell(this._model, rowId, levelColumn.id)?.value
+      );
+      oldRootLevel = rootLevel;
+      const subtree = [children[startIndex]].filter(
+        (v): v is typeof model => !!v
+      );
+      for (let i = startIndex + 1; i < children.length; i++) {
+        const child = children[i];
+        if (!child) break;
+        const level = this.parseHierarchyLevel(
+          getCell(this._model, child.id, levelColumn.id)?.value
+        );
+        if (level <= rootLevel) {
+          break;
+        }
+        subtree.push(child as typeof model);
+      }
+      movingModels = subtree;
+      movedRowIds = subtree.map(item => item.id);
+    }
+    return { movingModels, movedRowIds, oldRootLevel };
+  }
+
   rowMove(rowId: string, position: InsertToPosition): void {
     const model = this.doc.getModelById(rowId);
     if (model) {
-      const levelColumn = this._model.props.columns.find(
-        column => column.name === TASK_HIERARCHY_LEVEL_COLUMN_NAME
-      );
-      const children = this._model.children;
-      const startIndex = children.findIndex(child => child.id === rowId);
-      let movingModels = [model];
-      let movedRowIds = [rowId];
-      let oldRootLevel = 0;
-      if (startIndex >= 0 && levelColumn) {
-        const rootLevel = this.parseHierarchyLevel(
-          getCell(this._model, rowId, levelColumn.id)?.value
-        );
-        oldRootLevel = rootLevel;
-        const subtree = [children[startIndex]].filter(
-          (v): v is typeof model => !!v
-        );
-        for (let i = startIndex + 1; i < children.length; i++) {
-          const child = children[i];
-          if (!child) break;
-          const level = this.parseHierarchyLevel(
-            getCell(this._model, child.id, levelColumn.id)?.value
-          );
-          if (level <= rootLevel) {
-            break;
-          }
-          subtree.push(child as typeof model);
-        }
-        movingModels = subtree;
-        movedRowIds = subtree.map(item => item.id);
-      }
+      const { movingModels, movedRowIds, oldRootLevel } =
+        this._resolveMovingSubtree(rowId);
 
       const index = insertPositionToIndex(position, this._model.children);
       const target = this._model.children[index];
@@ -2716,6 +2740,36 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       this.doc.moveBlocks(movingModels, this._model, target);
       this.recomputeHierarchyMetadataAfterMove(rowId);
     }
+  }
+
+  /**
+   * Applies a previously-queued `setPendingHierarchyLevel(rowId, ...)` in
+   * place, without reordering `rowId` relative to its siblings. Indent/
+   * outdent only ever need to change `rowId`'s level (and shift any of its
+   * existing descendants by the same delta) — never to move `rowId` to a
+   * different sibling position — so this never needs `doc.moveBlocks`.
+   *
+   * `rowMove`'s "self-target" trick (`rowMove(rowId, { id: rowId, before:
+   * false })`) was previously reused to trigger the same recompute
+   * pipeline, but it breaks whenever `rowId` has at least one child: the
+   * resolved target lands on that child, which is already part of the
+   * subtree `rowMove` computes as "being moved", and `Store.moveBlocks`
+   * silently rejects (`console.error` + no-op) a move whose target is
+   * inside the set of blocks being moved. This method mirrors `rowMove`'s
+   * descendant-subtree resolution and feeds the same
+   * `recomputeHierarchyMetadataAfterMove` bookkeeping directly, without
+   * ever attempting a block move.
+   */
+  applyPendingHierarchyLevel(rowId: string): void {
+    const model = this.doc.getModelById(rowId);
+    if (!model) return;
+
+    const { movedRowIds, oldRootLevel } = this._resolveMovingSubtree(rowId);
+    this._pendingHierarchyMoveByRowId.set(rowId, {
+      movedRowIds,
+      oldRootLevel,
+    });
+    this.recomputeHierarchyMetadataAfterMove(rowId);
   }
 
   private recomputeHierarchyMetadataAfterMove(movedRowId: string) {
