@@ -106,7 +106,19 @@ export async function insertJournalTodoReference(
   model: BlockModel
 ): Promise<void> {
   const journalTodo = std.getOptional(JournalTodoDatabaseProvider);
-  if (!journalTodo) return;
+  if (!journalTodo) {
+    // Desktop's slash-menu item (`journalTodoDatabaseSlashMenuConfig.items`)
+    // gates the whole "Journal Todo" entry on this provider being
+    // available, so it's simply absent from the menu when missing. The
+    // mobile keyboard-toolbar's "Journal Todo" item only gates on the
+    // `affine:database` schema being registered (it can't cheaply re-check
+    // provider availability from `showWhen` the way the desktop slash-menu
+    // does), so this function is reachable with no provider present — give
+    // the same feedback `insertCrossDocReference` gives for its own
+    // missing-provider case, instead of a silent no-op.
+    toast(std.host, 'Journal Todo is not available.');
+    return;
+  }
 
   const store = std.store;
 
