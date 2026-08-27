@@ -3,6 +3,7 @@ import {
   DatabaseBlockDataSource,
   insertDatabaseBlockCommand,
 } from '@blocksuite/affine-block-database';
+import { insertCrossDocReference } from '@blocksuite/affine-block-database-ref';
 import { insertJournalTodoReference } from '@blocksuite/affine-block-database-view-ref';
 import { insertEmptyEmbedIframeCommand } from '@blocksuite/affine-block-embed';
 import { insertImagesCommand } from '@blocksuite/affine-block-image';
@@ -14,6 +15,7 @@ import {
   indentListCommand,
 } from '@blocksuite/affine-block-list';
 import { updateBlockType } from '@blocksuite/affine-block-note';
+import { createReusableNoteAndInsertRefCommand } from '@blocksuite/affine-block-note-ref';
 import {
   canDedentParagraphCommand,
   canIndentParagraphCommand,
@@ -94,6 +96,7 @@ import {
   NewPageIcon,
   NowIcon,
   NumberedListIcon,
+  PageIcon,
   PlusIcon,
   QuoteIcon,
   RedoIcon,
@@ -928,6 +931,37 @@ const databaseToolGroup: KeyboardToolPanelGroup = {
         if (!model) return;
 
         insertJournalTodoReference(std, model).catch(console.error);
+      },
+    },
+    {
+      name: 'New note',
+      icon: PageIcon(),
+      showWhen: ({ std }) =>
+        std.store.schema.flavourSchemaMap.has('affine:note-ref'),
+      action: ({ std }) => {
+        std.command
+          .chain()
+          .pipe(getSelectedModelsCommand)
+          .pipe(createReusableNoteAndInsertRefCommand, {
+            place: 'after',
+            removeEmptyLine: true,
+          })
+          .run();
+      },
+    },
+    {
+      name: 'Reference',
+      icon: LinkIcon(),
+      showWhen: ({ std }) =>
+        std.store.schema.flavourSchemaMap.has('affine:database-ref'),
+      action: ({ std }) => {
+        const [_, { selectedModels }] = std.command.exec(
+          getSelectedModelsCommand
+        );
+        const model = selectedModels?.[0];
+        if (!model) return;
+
+        insertCrossDocReference(std, model).catch(console.error);
       },
     },
   ],
