@@ -414,6 +414,18 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     return 0;
   }
 
+  getRowHierarchyLevel(rowId: string): number {
+    const column = this._model.props.columns.find(
+      column => column.name === TASK_HIERARCHY_LEVEL_COLUMN_NAME
+    );
+    if (!column) {
+      return 0;
+    }
+    return this.parseHierarchyLevel(
+      getCell(this._model, rowId, column.id)?.value
+    );
+  }
+
   getTaskStatusInheritance() {
     return {
       done:
