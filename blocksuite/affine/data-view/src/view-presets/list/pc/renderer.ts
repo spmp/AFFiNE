@@ -680,10 +680,17 @@ export class ListViewRenderer extends SignalWatcher(
         new Map([[newRow.id, ancestors]])
       );
     } else {
-      // Fallback for a minimal data source without the privileged method
-      // -- mirrors `addRowAfter`'s own fallback; note this path is a
-      // no-op against the real `DatabaseBlockDataSource` (see doc comment
-      // above), kept only for parity with that established pattern.
+      // WR-04: this fallback is a documented no-op against the real
+      // `DatabaseBlockDataSource` (see doc comment above -- all three
+      // columns are `READONLY_SYSTEM_COLUMN_NAMES`), kept only for parity
+      // with `addRowAfter`'s own identical fallback. Surface it loudly if
+      // it's ever actually reached, so a future data source that drops
+      // `applyTaskHierarchyMutation` doesn't silently regress into this
+      // guaranteed-broken path with no test failure.
+      console.error(
+        'splitRowAtCursor: dataSource is missing applyTaskHierarchyMutation; ' +
+          'falling back to a write path that is a no-op for read-only system columns.'
+      );
       const copyColumnValue = (columnName: string) => {
         const property = this.view.propertiesRaw$.value.find(
           property => property.name$.value === columnName
