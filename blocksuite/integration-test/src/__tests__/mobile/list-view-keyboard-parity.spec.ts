@@ -207,4 +207,99 @@ describe('database List-view keyboard editing parity (Phase 3, LIST-01..04)', ()
     expect(model?.text?.toString()).toBe('world');
     expect(dbModel.children.length).toBe(2);
   });
+
+  // Bug 3 live-reproduction (D-04): must run and be recorded BEFORE any fix
+  // code for LIST-03/LIST-04's empty-row Enter handling. `data-source.ts`'s
+  // `ensureRowAsTodoList` (lines 2624-2660) was the lead suspect -- it
+  // resets a row's own `Hierarchy Level` cell to 0, but ONLY when
+  // converting a still-`affine:paragraph` row into `affine:list` for the
+  // first time; a row that is already `affine:list` returns early without
+  // touching level. Since `rowAddAsTodoList` creates the row as
+  // `affine:list` directly (never a paragraph needing conversion), and
+  // `onRowKeyDown`'s own `ensureTodoListRow(rowId)` call at the top of
+  // every keydown is therefore a no-op for it, the live result below
+  // determines whether the suspected corruption actually reaches a
+  // real root-level Enter press.
+  test('Bug 3 live-repro: pressing Enter on a root-level (level 0) row never changes that row\'s own Hierarchy Level cell', async () => {
+    const { dataSource, dbEl, rowIds } = await seedListView(1);
+    const [row1] = rowIds;
+    await setRowText(row1, 'root task');
+
+    expect(dataSource.getRowHierarchyLevel(row1)).toBe(0);
+
+    const row1El = getRowEl(dbEl, row1);
+    await focusRowAt(row1El, 'root task'.length);
+
+    dispatchKey(row1El, 'Enter');
+    await wait(200);
+
+    expect(dataSource.getRowHierarchyLevel(row1)).toBe(0);
+  });
+
+  test('Enter mid-text on a non-empty, indented (level 1) row splits at the cursor, preserving hierarchy level on the new sibling', async () => {
+    const { dataSource, dbModel, dbEl, rowIds } = await seedListView(2);
+    const [row1, row2] = rowIds;
+
+    // Indent row2 to level 1 via a real Tab keydown (the existing,
+    // already-working Shift-Tab/Tab mechanism), matching this file's
+    // established real-dispatch style rather than mutating the column
+    // directly.
+    const row2El = getRowEl(dbEl, row2);
+    row2El.focus();
+    dispatchKey(row2El, 'Tab');
+    await wait(200);
+    expect(dataSource.getRowHierarchyLevel(row2)).toBe(1);
+
+    await setRowText(row2, 'hello world');
+    await focusRowAt(row2El, 'hello'.length);
+
+    const rowCountBefore = dbModel.children.length;
+    dispatchKey(row2El, 'Enter');
+    await wait(200);
+
+    expect(dbModel.children.length).toBe(rowCountBefore + 1);
+    const row2Model = doc.getModelById(row2);
+    expect(row2Model?.text?.toString()).toBe('hello');
+
+    const row1Index = dbModel.children.findIndex(c => c.id === row1);
+    const row2Index = dbModel.children.findIndex(c => c.id === row2);
+    const newRowModel = dbModel.children[row2Index + 1];
+    expect(row1Index).toBeGreaterThanOrEqual(0);
+    expect(newRowModel).toBeTruthy();
+    expect(newRowModel?.text?.toString()).toBe(' world');
+    expect(dataSource.getRowHierarchyLevel(newRowModel!.id)).toBe(1);
+  });
+
+  test('Enter on an empty, indented (level 1) row unindents it by one level instead of creating a blank row', async () => {
+    const { dataSource, dbModel, dbEl, rowIds } = await seedListView(2);
+    const [, row2] = rowIds;
+
+    const row2El = getRowEl(dbEl, row2);
+    row2El.focus();
+    dispatchKey(row2El, 'Tab');
+    await wait(200);
+    expect(dataSource.getRowHierarchyLevel(row2)).toBe(1);
+
+    const rowCountBefore = dbModel.children.length;
+    await focusRowAt(row2El, 0);
+    dispatchKey(row2El, 'Enter');
+    await wait(200);
+
+    expect(dbModel.children.length).toBe(rowCountBefore);
+    expect(dataSource.getRowHierarchyLevel(row2)).toBe(0);
+  });
+
+  test('Enter on an empty, root-level (level 0) row creates a new sibling row and never changes the pressed row\'s own level', async () => {
+    const { dataSource, dbModel, dbEl, rowIds } = await seedListView(1);
+    const [row1] = rowIds;
+
+    const row1El = getRowEl(dbEl, row1);
+    const rowCountBefore = dbModel.children.length;
+    await focusRowAt(row1El, 0);
+    dispatchKey(row1El, 'Enter');
+    await wait(200);
+
+    expect(dbModel.children.length).toBe(rowCountBefore + 1);
+    expect(dataSource.getRowHierarchyLevel(row1)).toBe(0);
+  });
 });
