@@ -172,6 +172,44 @@ describe('database List-view keyboard editing parity (Phase 3, LIST-01..04)', ()
     expect(dbModel.children.length).toBe(1);
   });
 
+  // CR-02 regression: `prevRowId`/`nextRowId` are computed from the
+  // view-filtered `rows$.value`, but the actual merge (`mergeWithPrev` ->
+  // `getPrevContentBlock`) is a pure block-tree walk with no knowledge of
+  // the view's search/filter state. When an active search hides a row
+  // between the current row and its filtered-view neighbor, the two
+  // diverge -- this proves the fix now bails out rather than silently
+  // merging into (and deleting text into) a row the user cannot see.
+  test('Backspace does not merge into a row hidden by an active search filter when block-tree adjacency diverges from the filtered view', async () => {
+    const { dataSource, dbModel, dbEl, rowIds } = await seedListView(3);
+    const [row1, row2, row3] = rowIds;
+    await setRowText(row1, 'alpha');
+    await setRowText(row2, 'hidden');
+    await setRowText(row3, 'alpha again');
+
+    const viewManager = dbEl.dataSource.value.viewManager as unknown as {
+      currentViewId$: { value: string };
+      viewGet: (id: string) => { setSearch: (str: string) => void };
+    };
+    const listView = viewManager.viewGet(viewManager.currentViewId$.value);
+    listView.setSearch('alpha');
+    await wait(200);
+
+    // Filtered view now shows [row1, row3] -- row3's filtered-view previous
+    // row is row1, but its real block-tree previous sibling is row2.
+    const row3El = getRowEl(dbEl, row3);
+    await focusRowAt(row3El, 0);
+
+    dispatchKey(row3El, 'Backspace');
+    await wait(200);
+
+    expect(doc.getModelById(row3)).toBeTruthy();
+    expect(doc.getModelById(row3)?.text?.toString()).toBe('alpha again');
+    expect(doc.getModelById(row2)?.text?.toString()).toBe('hidden');
+    expect(doc.getModelById(row1)?.text?.toString()).toBe('alpha');
+    expect(dbModel.children.length).toBe(3);
+    expect(dataSource.getRowHierarchyLevel(row3)).toBe(0);
+  });
+
   test('Delete at end-of-text with a next row present merges the next row backward, keeping the cursor at the join point', async () => {
     const { dbEl, rowIds } = await seedListView(2);
     const [row1, row2] = rowIds;

@@ -771,6 +771,22 @@ export class ListViewRenderer extends SignalWatcher(
       if (!prevRowId || !model || !this.std) {
         return;
       }
+      // CR-02: `prevRowId` comes from the view-filtered `rows$.value`
+      // (filter/search-reduced), but the actual merge below
+      // (`mergeWithPrev` -> `getPrevContentBlock`) is a pure block-tree
+      // walk over `parent.children` with zero knowledge of the view's
+      // filter/search state. When a filter/search hides a row between the
+      // two, those diverge: the block-tree merge would silently target a
+      // currently-hidden row while focus lands on an unrelated, unmodified
+      // visible row. Bail out rather than merging into a row the user
+      // cannot currently see.
+      const parent = this.std.store.getParent(model);
+      const modelIndex = parent?.children.findIndex(c => c.id === rowId) ?? -1;
+      const blockTreePrevId =
+        modelIndex > 0 ? parent?.children[modelIndex - 1]?.id : undefined;
+      if (blockTreePrevId !== prevRowId) {
+        return;
+      }
       event.preventDefault();
       event.stopImmediatePropagation();
       event.stopPropagation();
@@ -808,6 +824,18 @@ export class ListViewRenderer extends SignalWatcher(
       }
       const nextModel = this.std.store.getBlock(nextRowId)?.model;
       if (!nextModel) {
+        return;
+      }
+      // CR-02: mirror the Backspace guard above -- `nextRowId` is the
+      // view-filtered next row, but `mergeWithPrev(nextModel)` resolves its
+      // own merge target via a pure block-tree walk starting from
+      // `nextModel`. Only proceed when the filtered neighbor is also the
+      // real block-tree-adjacent next row.
+      const parent = this.std.store.getParent(model);
+      const modelIndex = parent?.children.findIndex(c => c.id === rowId) ?? -1;
+      const blockTreeNextId =
+        modelIndex >= 0 ? parent?.children[modelIndex + 1]?.id : undefined;
+      if (blockTreeNextId !== nextRowId) {
         return;
       }
       event.preventDefault();
