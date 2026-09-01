@@ -171,4 +171,40 @@ describe('database List-view keyboard editing parity (Phase 3, LIST-01..04)', ()
     expect(model?.text?.toString()).toBe('hello');
     expect(dbModel.children.length).toBe(1);
   });
+
+  test('Delete at end-of-text with a next row present merges the next row backward, keeping the cursor at the join point', async () => {
+    const { dbEl, rowIds } = await seedListView(2);
+    const [row1, row2] = rowIds;
+    await setRowText(row1, 'hello');
+    await setRowText(row2, 'world');
+
+    const row1El = getRowEl(dbEl, row1);
+    await focusRowAt(row1El, 'hello'.length);
+
+    dispatchKey(row1El, 'Delete');
+    await wait(200);
+
+    expect(doc.getModelById(row2)).toBeFalsy();
+    const row1Model = doc.getModelById(row1);
+    expect(row1Model?.text?.toString()).toBe('helloworld');
+    expect(row1El.contains(document.activeElement)).toBe(true);
+  });
+
+  test('Delete at end-of-text on the LAST row does nothing', async () => {
+    const { dbModel, dbEl, rowIds } = await seedListView(2);
+    const [row1, row2] = rowIds;
+    await setRowText(row1, 'hello');
+    await setRowText(row2, 'world');
+
+    const row2El = getRowEl(dbEl, row2);
+    await focusRowAt(row2El, 'world'.length);
+
+    dispatchKey(row2El, 'Delete');
+    await wait(200);
+
+    const model = doc.getModelById(row2);
+    expect(model).toBeTruthy();
+    expect(model?.text?.toString()).toBe('world');
+    expect(dbModel.children.length).toBe(2);
+  });
 });
