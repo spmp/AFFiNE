@@ -1,3 +1,5 @@
+import { splitListCommand } from '@blocksuite/affine-block-list';
+import { mergeWithPrev } from '@blocksuite/affine-block-paragraph';
 import {
   menu,
   popMenu,
@@ -5,6 +7,11 @@ import {
 } from '@blocksuite/affine-components/context-menu';
 import { DatePicker } from '@blocksuite/affine-components/date-picker';
 import { createLitPortal } from '@blocksuite/affine-components/portal';
+import {
+  TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME,
+  TASK_HIERARCHY_LEVEL_COLUMN_NAME,
+  TASK_PARENT_IDENTIFIER_COLUMN_NAME,
+} from '@blocksuite/affine-shared/utils';
 import { IS_MOBILE } from '@blocksuite/global/env';
 import { SignalWatcher, WithDisposable } from '@blocksuite/global/lit';
 import { DateTimeIcon, PageIcon, PlusIcon } from '@blocksuite/icons/lit';
@@ -542,6 +549,93 @@ export class ListViewRenderer extends SignalWatcher(
     return 0;
   }
 
+  /**
+   * Enter mid-text (LIST-02): splits the row's text at the cursor via the
+   * native `splitListCommand`, then copies the hierarchy columns
+   * (`TASK_HIERARCHY_LEVEL_COLUMN_NAME`/`TASK_PARENT_IDENTIFIER_COLUMN_NAME`/
+   * `TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME`) from the original row onto the
+   * new sibling -- `splitListCommand` itself only ever inserts the new row
+   * as a flat sibling (case 5/6, since database rows never have real
+   * block-tree children) and does not know about these data-view-only
+   * virtual-hierarchy columns, defaulting the new row to level 0.
+   *
+   * Writes go through `dataSource.applyTaskHierarchyMutation` (the same
+   * privileged path `ListViewUILogic.addRowAfter` uses), NOT
+   * `property.valueSetFromString` -- all three columns are listed in
+   * `DatabaseBlockDataSource`'s own `READONLY_SYSTEM_COLUMN_NAMES`, so the
+   * generic `cellValueChange` write path `valueSetFromString` routes
+   * through silently no-ops for them (confirmed live: reads succeed,
+   * writes are dropped). `applyTaskHierarchyMutation` is the sanctioned
+   * bypass for exactly this kind of system-managed, code-only mutation.
+   */
+  private splitRowAtCursor(rowId: string, inlineIndex: number): void {
+    const model = this.std?.store.getBlock(rowId)?.model;
+    if (!model || !this.std) {
+      return;
+    }
+    const parent = this.std.store.getParent(model);
+    const originalIndex = parent?.children.findIndex(c => c.id === rowId) ?? -1;
+    const level = this.getHierarchyLevel(rowId);
+    const getColumnStringValue = (columnName: string) => {
+      const property = this.view.propertiesRaw$.value.find(
+        property => property.name$.value === columnName
+      );
+      return property?.stringValueGet(rowId) ?? '';
+    };
+    const rowParent = getColumnStringValue(TASK_PARENT_IDENTIFIER_COLUMN_NAME);
+    const ancestors = getColumnStringValue(
+      TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME
+    );
+    this.std.command
+      .chain()
+      .pipe(splitListCommand, { blockId: rowId, inlineIndex })
+      .run();
+    if (originalIndex < 0 || !parent) {
+      return;
+    }
+    const newRow = parent.children[originalIndex + 1];
+    if (!newRow) {
+      return;
+    }
+    const dataSource = this.view.manager?.dataSource as
+      | {
+          applyTaskHierarchyMutation?: (
+            updatedLevels: Map<string, number>,
+            updatedParents: Map<string, string | undefined>,
+            updatedAncestors: Map<string, string>
+          ) => void;
+        }
+      | undefined;
+    if (dataSource?.applyTaskHierarchyMutation) {
+      dataSource.applyTaskHierarchyMutation(
+        new Map([[newRow.id, level]]),
+        new Map([[newRow.id, rowParent || undefined]]),
+        new Map([[newRow.id, ancestors]])
+      );
+    } else {
+      // Fallback for a minimal data source without the privileged method
+      // -- mirrors `addRowAfter`'s own fallback; note this path is a
+      // no-op against the real `DatabaseBlockDataSource` (see doc comment
+      // above), kept only for parity with that established pattern.
+      const copyColumnValue = (columnName: string) => {
+        const property = this.view.propertiesRaw$.value.find(
+          property => property.name$.value === columnName
+        );
+        if (!property) {
+          return;
+        }
+        property.valueSetFromString(
+          newRow.id,
+          property.stringValueGet(rowId) ?? ''
+        );
+      };
+      copyColumnValue(TASK_HIERARCHY_LEVEL_COLUMN_NAME);
+      copyColumnValue(TASK_PARENT_IDENTIFIER_COLUMN_NAME);
+      copyColumnValue(TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME);
+    }
+    this.focusRowTitle(newRow.id);
+  }
+
   private renderCell(rowId: string, propertyId: string) {
     const property = this.view.propertyGetOrCreate(propertyId);
     const renderer = property.meta$.value?.renderer.cellRenderer.view;
@@ -624,10 +718,132 @@ export class ListViewRenderer extends SignalWatcher(
       return;
     }
     this.logic.ensureTodoListRow(rowId);
-    if (event.key === 'Enter' && !event.shiftKey) {
+    if (event.key === 'Backspace') {
+      if (this.view.readonly$.value) {
+        return;
+      }
+      const richText = (
+        event.currentTarget as HTMLElement
+      ).querySelector<
+        HTMLElement & {
+          inlineEditor?: {
+            getInlineRange?: () => { index: number; length: number } | null;
+          };
+        }
+      >('rich-text');
+      const range = richText?.inlineEditor?.getInlineRange?.();
+      if (!range) {
+        return;
+      }
+      if (range.index !== 0 || range.length !== 0) {
+        return;
+      }
+      const rows = this.view.rows$.value;
+      const rowIndex = rows.findIndex(r => r.rowId === rowId);
+      if (rowIndex <= 0) {
+        return;
+      }
+      const prevRowId = rows[rowIndex - 1]?.rowId;
+      const model = this.std?.store.getBlock(rowId)?.model;
+      if (!prevRowId || !model || !this.std) {
+        return;
+      }
       event.preventDefault();
       event.stopImmediatePropagation();
       event.stopPropagation();
+      mergeWithPrev(this.std.host, model);
+      this.focusRowTitle(prevRowId);
+      return;
+    }
+    if (event.key === 'Delete') {
+      if (this.view.readonly$.value) {
+        return;
+      }
+      const richText = (
+        event.currentTarget as HTMLElement
+      ).querySelector<
+        HTMLElement & {
+          inlineEditor?: {
+            getInlineRange?: () => { index: number; length: number } | null;
+          };
+        }
+      >('rich-text');
+      const range = richText?.inlineEditor?.getInlineRange?.();
+      const model = this.std?.store.getBlock(rowId)?.model;
+      if (!model || !this.std) {
+        return;
+      }
+      if (!range || range.length !== 0) {
+        return;
+      }
+      if (range.index !== (model.text?.length ?? 0)) {
+        return;
+      }
+      const rows = this.view.rows$.value;
+      const rowIndex = rows.findIndex(r => r.rowId === rowId);
+      const nextRowId = rows[rowIndex + 1]?.rowId;
+      if (!nextRowId) {
+        return;
+      }
+      const nextModel = this.std.store.getBlock(nextRowId)?.model;
+      if (!nextModel) {
+        return;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+      mergeWithPrev(this.std.host, nextModel);
+      this.focusRowTitle(rowId);
+      return;
+    }
+    if (event.key === 'Enter' && !event.shiftKey) {
+      if (this.view.readonly$.value) {
+        return;
+      }
+      const model = this.std?.store.getBlock(rowId)?.model;
+      const richText = (
+        event.currentTarget as HTMLElement
+      ).querySelector<
+        HTMLElement & {
+          inlineEditor?: {
+            getInlineRange?: () => { index: number; length: number } | null;
+          };
+        }
+      >('rich-text');
+      const range = richText?.inlineEditor?.getInlineRange?.();
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+      if ((model?.text?.length ?? 0) > 0) {
+        // LIST-02: split at the cursor, preserving hierarchy level on the
+        // new sibling.
+        this.splitRowAtCursor(rowId, range?.index ?? model!.text!.length);
+        return;
+      }
+      // Empty row.
+      const level = this.getHierarchyLevel(rowId);
+      if (level > 0) {
+        // LIST-03: dedent by one level instead of creating a blank row --
+        // reuses the existing, already-working Shift-Tab mechanism
+        // (`ListViewUILogic.unindentRow`), NOT the native
+        // `dedentListCommand`: `affine:database`'s block schema role is
+        // 'hub', never 'content', so `canDedentListCommand`'s
+        // `parent.role !== 'content'` guard can never succeed for a
+        // database row.
+        this.logic.unindentRow(rowId);
+        this.requestUpdate();
+        return;
+      }
+      // LIST-04: root-level (level 0) empty row -- only ever adds a
+      // sibling, never touches its own level. Bug 3 (suspected
+      // `ensureRowAsTodoList`-driven level corruption on this exact path)
+      // was live-reproduced (D-04) and did NOT reproduce: a row created via
+      // `rowAddAsTodoList` is already `affine:list` by the time Enter is
+      // pressed on it, so `ensureTodoListRow`'s early-return-if-already-list
+      // guard means the level-reset-to-0 branch in `ensureRowAsTodoList`
+      // (which only fires when converting a still-`affine:paragraph` row)
+      // is never reached for this row. This call is therefore unchanged
+      // from the prior unconditional behavior -- only its gating changed.
       const newRowId = this.logic.addRowAfter(rowId);
       this.focusRowTitle(newRowId);
       return;

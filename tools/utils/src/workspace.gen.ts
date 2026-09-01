@@ -511,6 +511,8 @@ export const PackageList = [
     location: 'blocksuite/affine/data-view',
     name: '@blocksuite/data-view',
     workspaceDependencies: [
+      'blocksuite/affine/blocks/list',
+      'blocksuite/affine/blocks/paragraph',
       'blocksuite/affine/components',
       'blocksuite/affine/shared',
       'blocksuite/framework/global',
