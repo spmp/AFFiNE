@@ -597,6 +597,31 @@ export class ListViewRenderer extends SignalWatcher(
     if (!newRow) {
       return;
     }
+    // CR-01: `splitListCommand` always inserts `newRow` immediately after
+    // the original row (`originalIndex + 1`) -- but if the original row
+    // already has indented sub-rows (contiguous following rows with a
+    // higher hierarchy level, per `_resolveMovingSubtree`'s own
+    // definition), that insertion point sits BEFORE those sub-rows,
+    // silently re-parenting them under the new sibling instead of leaving
+    // them under the original row. Walk past the original row's full
+    // subtree first, mirroring `ListViewUILogic.addRowAfter`'s own
+    // skip-forward `insertIndex` walk, before deciding where `newRow`
+    // really belongs.
+    let insertAfter = originalIndex + 1; // newRow's own index
+    while (insertAfter + 1 < parent.children.length) {
+      const candidate = parent.children[insertAfter + 1];
+      if (!candidate) {
+        break;
+      }
+      if (this.getHierarchyLevel(candidate.id) <= level) {
+        break;
+      }
+      insertAfter += 1;
+    }
+    if (insertAfter > originalIndex + 1) {
+      const target = parent.children[insertAfter + 1] ?? null;
+      this.std.store.moveBlocks([newRow], parent, target);
+    }
     const dataSource = this.view.manager?.dataSource as
       | {
           applyTaskHierarchyMutation?: (
@@ -722,9 +747,7 @@ export class ListViewRenderer extends SignalWatcher(
       if (this.view.readonly$.value) {
         return;
       }
-      const richText = (
-        event.currentTarget as HTMLElement
-      ).querySelector<
+      const richText = (event.currentTarget as HTMLElement).querySelector<
         HTMLElement & {
           inlineEditor?: {
             getInlineRange?: () => { index: number; length: number } | null;
@@ -759,9 +782,7 @@ export class ListViewRenderer extends SignalWatcher(
       if (this.view.readonly$.value) {
         return;
       }
-      const richText = (
-        event.currentTarget as HTMLElement
-      ).querySelector<
+      const richText = (event.currentTarget as HTMLElement).querySelector<
         HTMLElement & {
           inlineEditor?: {
             getInlineRange?: () => { index: number; length: number } | null;
@@ -801,9 +822,7 @@ export class ListViewRenderer extends SignalWatcher(
         return;
       }
       const model = this.std?.store.getBlock(rowId)?.model;
-      const richText = (
-        event.currentTarget as HTMLElement
-      ).querySelector<
+      const richText = (event.currentTarget as HTMLElement).querySelector<
         HTMLElement & {
           inlineEditor?: {
             getInlineRange?: () => { index: number; length: number } | null;
