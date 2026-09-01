@@ -250,6 +250,9 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
         event.preventDefault();
         return;
       }
+      if (IS_MAC ? event.metaKey : event.ctrlKey) {
+        return;
+      }
       event.stopPropagation();
     }
   };
@@ -375,6 +378,7 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
       .markdownMatches="${this.inlineManager?.markdownMatches}"
       .readonly="${!this.isEditing$.value}"
       .enableClipboard="${false}"
+      .enableUndoRedo="${false}"
       @keydown=${this._onRichTextKeyDown}
       .verticalScrollContainerGetter="${() =>
         this.topContenteditableElement?.host
