@@ -1,3 +1,4 @@
+import { mergeWithPrev } from '@blocksuite/affine-block-paragraph';
 import {
   menu,
   popMenu,
@@ -624,6 +625,43 @@ export class ListViewRenderer extends SignalWatcher(
       return;
     }
     this.logic.ensureTodoListRow(rowId);
+    if (event.key === 'Backspace') {
+      if (this.view.readonly$.value) {
+        return;
+      }
+      const richText = (
+        event.currentTarget as HTMLElement
+      ).querySelector<
+        HTMLElement & {
+          inlineEditor?: {
+            getInlineRange?: () => { index: number; length: number } | null;
+          };
+        }
+      >('rich-text');
+      const range = richText?.inlineEditor?.getInlineRange?.();
+      if (!range) {
+        return;
+      }
+      if (range.index !== 0 || range.length !== 0) {
+        return;
+      }
+      const rows = this.view.rows$.value;
+      const rowIndex = rows.findIndex(r => r.rowId === rowId);
+      if (rowIndex <= 0) {
+        return;
+      }
+      const prevRowId = rows[rowIndex - 1]?.rowId;
+      const model = this.std?.store.getBlock(rowId)?.model;
+      if (!prevRowId || !model || !this.std) {
+        return;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+      mergeWithPrev(this.std.host, model);
+      this.focusRowTitle(prevRowId);
+      return;
+    }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       event.stopImmediatePropagation();
