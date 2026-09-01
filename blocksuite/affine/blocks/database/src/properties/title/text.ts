@@ -250,7 +250,17 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
         event.preventDefault();
         return;
       }
-      if (IS_MAC ? event.metaKey : event.ctrlKey) {
+      // WR-02: narrowly scoped to the actual hotkeys this fix targets --
+      // `PageKeyboardManager`'s `Mod-z`/`Shift-Mod-z`/`Control-y` global
+      // bindings (keyboard-manager.ts) -- rather than letting every
+      // Ctrl/Cmd-modified key bubble past the title cell (which would also
+      // let unrelated global hotkeys like `Mod-Shift-l` reach the document
+      // dispatcher from inside a database title cell edit session).
+      const key = event.key.toLowerCase();
+      if (
+        (IS_MAC ? event.metaKey : event.ctrlKey) &&
+        (key === 'z' || (key === 'y' && !IS_MAC))
+      ) {
         return;
       }
       event.stopPropagation();
