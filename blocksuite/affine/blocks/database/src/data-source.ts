@@ -2731,6 +2731,16 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       const index = insertPositionToIndex(position, this._model.children);
       const target = this._model.children[index];
       if (target?.id === rowId) {
+        // LIST-05/D-02: the resolved target collides with `rowId`'s own
+        // current position — no real reorder is needed (e.g. dragging a
+        // row onto its immediately-preceding sibling). A bare `return`
+        // here used to silently drop any pending level set via
+        // `setPendingHierarchyLevel` just before this call. Fall through
+        // to the same level-only recompute `applyPendingHierarchyLevel`
+        // already uses for the keyboard-toolbar indent/outdent buttons
+        // (see its own doc comment for why `moveBlocks` can't be reused
+        // here) so the level change still commits.
+        this.applyPendingHierarchyLevel(rowId);
         return;
       }
       this._pendingHierarchyMoveByRowId.set(rowId, {
