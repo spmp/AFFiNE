@@ -139,6 +139,23 @@ export class ListViewRenderer extends SignalWatcher(
     requestAnimationFrame(() => focus());
   }
 
+  /**
+   * WR-03: shared inline-range lookup, previously duplicated verbatim
+   * across the Backspace/Delete/Enter branches of `onRowKeyDown`.
+   */
+  private getInlineRange(
+    currentTarget: HTMLElement
+  ): { index: number; length: number } | null {
+    const richText = currentTarget.querySelector<
+      HTMLElement & {
+        inlineEditor?: {
+          getInlineRange?: () => { index: number; length: number } | null;
+        };
+      }
+    >('rich-text');
+    return richText?.inlineEditor?.getInlineRange?.() ?? null;
+  }
+
   static override styles = css`
     .affine-data-view-list {
       display: flex;
@@ -772,14 +789,7 @@ export class ListViewRenderer extends SignalWatcher(
       if (this.view.readonly$.value) {
         return;
       }
-      const richText = (event.currentTarget as HTMLElement).querySelector<
-        HTMLElement & {
-          inlineEditor?: {
-            getInlineRange?: () => { index: number; length: number } | null;
-          };
-        }
-      >('rich-text');
-      const range = richText?.inlineEditor?.getInlineRange?.();
+      const range = this.getInlineRange(event.currentTarget as HTMLElement);
       if (!range) {
         return;
       }
@@ -828,14 +838,7 @@ export class ListViewRenderer extends SignalWatcher(
       if (this.view.readonly$.value) {
         return;
       }
-      const richText = (event.currentTarget as HTMLElement).querySelector<
-        HTMLElement & {
-          inlineEditor?: {
-            getInlineRange?: () => { index: number; length: number } | null;
-          };
-        }
-      >('rich-text');
-      const range = richText?.inlineEditor?.getInlineRange?.();
+      const range = this.getInlineRange(event.currentTarget as HTMLElement);
       const model = this.std?.store.getBlock(rowId)?.model;
       if (!model || !this.std) {
         return;
@@ -884,14 +887,7 @@ export class ListViewRenderer extends SignalWatcher(
         return;
       }
       const model = this.std?.store.getBlock(rowId)?.model;
-      const richText = (event.currentTarget as HTMLElement).querySelector<
-        HTMLElement & {
-          inlineEditor?: {
-            getInlineRange?: () => { index: number; length: number } | null;
-          };
-        }
-      >('rich-text');
-      const range = richText?.inlineEditor?.getInlineRange?.();
+      const range = this.getInlineRange(event.currentTarget as HTMLElement);
       event.preventDefault();
       event.stopImmediatePropagation();
       event.stopPropagation();
