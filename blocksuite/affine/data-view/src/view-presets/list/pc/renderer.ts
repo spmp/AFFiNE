@@ -662,6 +662,47 @@ export class ListViewRenderer extends SignalWatcher(
       this.focusRowTitle(prevRowId);
       return;
     }
+    if (event.key === 'Delete') {
+      if (this.view.readonly$.value) {
+        return;
+      }
+      const richText = (
+        event.currentTarget as HTMLElement
+      ).querySelector<
+        HTMLElement & {
+          inlineEditor?: {
+            getInlineRange?: () => { index: number; length: number } | null;
+          };
+        }
+      >('rich-text');
+      const range = richText?.inlineEditor?.getInlineRange?.();
+      const model = this.std?.store.getBlock(rowId)?.model;
+      if (!model || !this.std) {
+        return;
+      }
+      if (!range || range.length !== 0) {
+        return;
+      }
+      if (range.index !== (model.text?.length ?? 0)) {
+        return;
+      }
+      const rows = this.view.rows$.value;
+      const rowIndex = rows.findIndex(r => r.rowId === rowId);
+      const nextRowId = rows[rowIndex + 1]?.rowId;
+      if (!nextRowId) {
+        return;
+      }
+      const nextModel = this.std.store.getBlock(nextRowId)?.model;
+      if (!nextModel) {
+        return;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+      mergeWithPrev(this.std.host, nextModel);
+      this.focusRowTitle(rowId);
+      return;
+    }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       event.stopImmediatePropagation();
