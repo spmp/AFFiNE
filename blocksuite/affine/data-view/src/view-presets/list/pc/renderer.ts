@@ -95,15 +95,40 @@ export class ListViewRenderer extends SignalWatcher(
     this.logic.dragController.hostConnected();
   }
 
-  private focusRowTitle(rowId: string) {
+  /**
+   * WR-01: `offset`, when given, restores the cursor at that exact inline
+   * index (the merge-boundary position) instead of `focusEnd()`'s
+   * unconditional jump to the absolute end of the merged text -- database
+   * rows are rendered by this class's own `repeat()` directive, not as
+   * registered `BlockComponent`s in `std.view`'s registry, so
+   * `mergeWithPrev`'s own `asyncSetInlineRange`-based cursor restore always
+   * silently no-ops for them (`std.view.getBlock(id)` returns `null`),
+   * leaving this caller-supplied fallback as the only place a
+   * merge-boundary offset can be applied.
+   */
+  private focusRowTitle(rowId: string, offset?: number) {
     const focus = (attempt = 0) => {
       const row = this.querySelector<HTMLElement>(`[data-row-id="${rowId}"]`);
       const titleCell = row?.querySelector<HTMLElement>(
         'data-view-header-area-text'
-      ) as (HTMLElement & { inlineEditor?: { focusEnd?: () => void } }) | null;
+      ) as
+        | (HTMLElement & {
+            inlineEditor?: {
+              focusEnd?: () => void;
+              setInlineRange?: (range: {
+                index: number;
+                length: number;
+              }) => void;
+            };
+          })
+        | null;
       const richText = row?.querySelector<HTMLElement>('rich-text');
       row?.focus();
-      titleCell?.inlineEditor?.focusEnd?.();
+      if (offset != null && titleCell?.inlineEditor?.setInlineRange) {
+        titleCell.inlineEditor.setInlineRange({ index: offset, length: 0 });
+      } else {
+        titleCell?.inlineEditor?.focusEnd?.();
+      }
       if (!titleCell?.inlineEditor && richText) {
         richText.focus();
       }
@@ -787,11 +812,16 @@ export class ListViewRenderer extends SignalWatcher(
       if (blockTreePrevId !== prevRowId) {
         return;
       }
+      // WR-01: capture the previous row's own text length BEFORE the join
+      // so the cursor can be restored at the merge boundary, not the
+      // absolute end of the merged text.
+      const prevModel = this.std.store.getBlock(prevRowId)?.model;
+      const prevTextLengthBeforeJoin = prevModel?.text?.length ?? 0;
       event.preventDefault();
       event.stopImmediatePropagation();
       event.stopPropagation();
       mergeWithPrev(this.std.host, model);
-      this.focusRowTitle(prevRowId);
+      this.focusRowTitle(prevRowId, prevTextLengthBeforeJoin);
       return;
     }
     if (event.key === 'Delete') {
@@ -838,11 +868,15 @@ export class ListViewRenderer extends SignalWatcher(
       if (blockTreeNextId !== nextRowId) {
         return;
       }
+      // WR-01: the merge boundary is this row's own pre-merge text length
+      // (`range.index`, already asserted equal to it above) -- restore the
+      // cursor there instead of jumping to the absolute end of the merged
+      // text.
       event.preventDefault();
       event.stopImmediatePropagation();
       event.stopPropagation();
       mergeWithPrev(this.std.host, nextModel);
-      this.focusRowTitle(rowId);
+      this.focusRowTitle(rowId, range.index);
       return;
     }
     if (event.key === 'Enter' && !event.shiftKey) {
