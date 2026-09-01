@@ -2730,16 +2730,23 @@ export class DatabaseBlockDataSource extends DataSourceBase {
 
       const index = insertPositionToIndex(position, this._model.children);
       const target = this._model.children[index];
-      if (target?.id === rowId) {
-        // LIST-05/D-02: the resolved target collides with `rowId`'s own
-        // current position — no real reorder is needed (e.g. dragging a
-        // row onto its immediately-preceding sibling). A bare `return`
-        // here used to silently drop any pending level set via
-        // `setPendingHierarchyLevel` just before this call. Fall through
-        // to the same level-only recompute `applyPendingHierarchyLevel`
-        // already uses for the keyboard-toolbar indent/outdent buttons
-        // (see its own doc comment for why `moveBlocks` can't be reused
-        // here) so the level change still commits.
+      if (target && movedRowIds.includes(target.id)) {
+        // LIST-05/D-02 (+ CR-03 hardening): the resolved target collides
+        // with `rowId`'s own moving subtree — either `rowId` itself (e.g.
+        // dragging a row onto its immediately-preceding sibling), or one of
+        // `rowId`'s own descendants (e.g. dragging a row onto its own
+        // indented child, which stays rendered directly beneath it during
+        // the drag and is trivially droppable-onto). Either way no real
+        // reorder is possible: `Store.moveBlocks` would silently no-op
+        // (console.error) a move whose target sibling is inside the set of
+        // blocks being moved, while `recomputeHierarchyMetadataAfterMove`
+        // would still run unconditionally afterward, desyncing hierarchy
+        // metadata from actual row order. Fall through to the same
+        // level-only recompute `applyPendingHierarchyLevel` already uses
+        // for the keyboard-toolbar indent/outdent buttons (see its own doc
+        // comment for why `moveBlocks` can't be reused here) so any pending
+        // level change still commits, without ever attempting the doomed
+        // move.
         this.applyPendingHierarchyLevel(rowId);
         return;
       }
