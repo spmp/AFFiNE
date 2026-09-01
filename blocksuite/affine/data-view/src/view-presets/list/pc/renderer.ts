@@ -28,8 +28,6 @@ import type { TaskWorkflowCapableDataSource } from '../../../core/data-source/ta
 import { renderUniLit } from '../../../core/utils/uni-component/index.js';
 import type { ListViewUILogic } from './list-view-ui-logic.js';
 
-const HIERARCHY_LEVEL_COLUMN_NAME = 'Hierarchy Level';
-
 // Story 2.12 (MOBILE-03): touch has no `:hover` state, so the three
 // hover-gated row-action classes below (note/due-date/drag-handle) are
 // otherwise invisible on mobile web. This block reproduces
@@ -576,7 +574,7 @@ export class ListViewRenderer extends SignalWatcher(
 
   private getHierarchyLevel(rowId: string) {
     const property = this.view.propertiesRaw$.value.find(
-      property => property.name$.value === HIERARCHY_LEVEL_COLUMN_NAME
+      property => property.name$.value === TASK_HIERARCHY_LEVEL_COLUMN_NAME
     );
     const value = property
       ? this.view.cellGetOrCreate(rowId, property.id).value$.value
