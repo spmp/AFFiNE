@@ -220,7 +220,7 @@ describe('database List-view keyboard editing parity (Phase 3, LIST-01..04)', ()
   // every keydown is therefore a no-op for it, the live result below
   // determines whether the suspected corruption actually reaches a
   // real root-level Enter press.
-  test('Bug 3 live-repro: pressing Enter on a root-level (level 0) row never changes that row\'s own Hierarchy Level cell', async () => {
+  test("Bug 3 live-repro: pressing Enter on a root-level (level 0) row never changes that row's own Hierarchy Level cell", async () => {
     const { dataSource, dbEl, rowIds } = await seedListView(1);
     const [row1] = rowIds;
     await setRowText(row1, 'root task');
@@ -270,6 +270,62 @@ describe('database List-view keyboard editing parity (Phase 3, LIST-01..04)', ()
     expect(dataSource.getRowHierarchyLevel(newRowModel!.id)).toBe(1);
   });
 
+  // CR-01 regression: `splitListCommand` always inserts the new row
+  // immediately after the original row -- if the original row already has
+  // indented sub-rows (contiguous following rows at a higher hierarchy
+  // level), that insertion point sits BEFORE those sub-rows, silently
+  // re-parenting them under the new sibling. This proves the fix
+  // repositions the new row past the original row's full subtree first.
+  test('Enter mid-text on a row with existing indented sub-rows keeps those sub-rows under the original row, not the new sibling', async () => {
+    const { dataSource, dbModel, dbEl, rowIds } = await seedListView(3);
+    const [row1, row2, row3] = rowIds;
+
+    // Indent row2 and row3 under row1, producing:
+    //   row1 (level 0)
+    //     row2 (level 1)
+    //     row3 (level 1)
+    const row2El = getRowEl(dbEl, row2);
+    row2El.focus();
+    dispatchKey(row2El, 'Tab');
+    await wait(200);
+    const row3El = getRowEl(dbEl, row3);
+    row3El.focus();
+    dispatchKey(row3El, 'Tab');
+    await wait(200);
+    expect(dataSource.getRowHierarchyLevel(row2)).toBe(1);
+    expect(dataSource.getRowHierarchyLevel(row3)).toBe(1);
+
+    await setRowText(row1, 'hello world');
+    const row1El = getRowEl(dbEl, row1);
+    await focusRowAt(row1El, 'hello'.length);
+
+    dispatchKey(row1El, 'Enter');
+    await wait(200);
+
+    const row1Model = doc.getModelById(row1);
+    expect(row1Model?.text?.toString()).toBe('hello');
+
+    const ids = dbModel.children.map(child => child.id);
+    const row1Index = ids.indexOf(row1);
+    const row2Index = ids.indexOf(row2);
+    const row3Index = ids.indexOf(row3);
+    const newRowId = ids.find(id => id !== row1 && id !== row2 && id !== row3);
+
+    // The new sibling must land AFTER row2/row3, not between row1 and
+    // them -- otherwise a positional/level-based subtree walker (e.g.
+    // `_resolveMovingSubtree`) would re-attribute row2/row3 to the new
+    // interloper row the next time either row is moved or re-leveled.
+    expect(newRowId).toBeTruthy();
+    const newRowIndex = ids.indexOf(newRowId!);
+    expect(row2Index).toBe(row1Index + 1);
+    expect(row3Index).toBe(row2Index + 1);
+    expect(newRowIndex).toBe(row3Index + 1);
+    expect(dataSource.getRowHierarchyLevel(row2)).toBe(1);
+    expect(dataSource.getRowHierarchyLevel(row3)).toBe(1);
+    expect(dataSource.getRowHierarchyLevel(newRowId!)).toBe(0);
+    expect(doc.getModelById(newRowId!)?.text?.toString()).toBe(' world');
+  });
+
   test('Enter on an empty, indented (level 1) row unindents it by one level instead of creating a blank row', async () => {
     const { dataSource, dbModel, dbEl, rowIds } = await seedListView(2);
     const [, row2] = rowIds;
@@ -289,7 +345,7 @@ describe('database List-view keyboard editing parity (Phase 3, LIST-01..04)', ()
     expect(dataSource.getRowHierarchyLevel(row2)).toBe(0);
   });
 
-  test('Enter on an empty, root-level (level 0) row creates a new sibling row and never changes the pressed row\'s own level', async () => {
+  test("Enter on an empty, root-level (level 0) row creates a new sibling row and never changes the pressed row's own level", async () => {
     const { dataSource, dbModel, dbEl, rowIds } = await seedListView(1);
     const [row1] = rowIds;
 
