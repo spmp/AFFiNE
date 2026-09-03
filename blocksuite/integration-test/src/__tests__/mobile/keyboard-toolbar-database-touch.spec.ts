@@ -15,7 +15,10 @@ import { beforeEach, describe, expect, test } from 'vitest';
 import { wait } from '../utils/common.js';
 import { addNote } from '../utils/edgeless.js';
 import { setupEditor } from '../utils/setup.js';
-import { createStubVirtualKeyboardExtension } from './utils.js';
+import {
+  registerStubVirtualKeyboardProviderForAllScopes,
+  unregisterStubVirtualKeyboardProviderForAllScopes,
+} from './utils.js';
 
 // Story 2.12/Phase 2 (MOBILE-06, MOBILE-10): now that
 // `utils/setup.ts`'s `createEditor` genuinely composes the mobile
@@ -44,10 +47,21 @@ function findDatabaseGroup(): KeyboardToolPanelGroup {
 
 describe('keyboard-toolbar database tool group touch reachability (Phase 2, MOBILE-06/MOBILE-10)', () => {
   beforeEach(async () => {
-    const cleanup = await setupEditor('page', [
-      createStubVirtualKeyboardExtension(),
-    ]);
-    return cleanup;
+    // Phase 4 (MOBILE-12): "Journal Todo"/"Calendar" tool-group actions
+    // insert an `affine:database-view-ref` reference block, whose nested
+    // preview now also builds the keyboard-toolbar widget's 'preview-page'
+    // scope registration (`view.ts`'s Task 1 fix) — that nested
+    // `BlockStdScope` needs its own `VirtualKeyboardProvider`, invisible to
+    // the plain `createStubVirtualKeyboardExtension()` + `setupEditor`
+    // extensions-array pattern this file used previously (see
+    // `mobile/utils.ts`'s own doc comment on
+    // `registerStubVirtualKeyboardProviderForAllScopes`).
+    registerStubVirtualKeyboardProviderForAllScopes();
+    const cleanup = await setupEditor('page');
+    return async () => {
+      await cleanup();
+      unregisterStubVirtualKeyboardProviderForAllScopes();
+    };
   });
 
   async function selectFreshParagraph() {

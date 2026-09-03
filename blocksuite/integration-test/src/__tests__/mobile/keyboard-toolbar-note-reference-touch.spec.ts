@@ -18,7 +18,10 @@ import { beforeEach, describe, expect, test } from 'vitest';
 import { wait } from '../utils/common.js';
 import { addNote } from '../utils/edgeless.js';
 import { setupEditor } from '../utils/setup.js';
-import { createStubVirtualKeyboardExtension } from './utils.js';
+import {
+  registerStubVirtualKeyboardProviderForAllScopes,
+  unregisterStubVirtualKeyboardProviderForAllScopes,
+} from './utils.js';
 
 // Phase 2, Plan 03 (MOBILE-09/D-04): pr/18's Note (`note-ref`) and Reference
 // (`database-ref`) tools are unreachable via the slash menu on mobile for
@@ -49,8 +52,16 @@ describe('keyboard-toolbar Note/Reference touch reachability (Phase 2, MOBILE-09
   ) => Promise.resolve(null);
 
   beforeEach(async () => {
+    // Phase 4 (MOBILE-12): the "Reference" tool-group action inserts an
+    // `affine:database-ref` reference block, whose nested preview now also
+    // builds the keyboard-toolbar widget's 'preview-page' scope registration
+    // (`view.ts`'s Task 1 fix) — that nested `BlockStdScope` needs its own
+    // `VirtualKeyboardProvider`, invisible to the plain
+    // `createStubVirtualKeyboardExtension()` + `setupEditor` extensions-array
+    // pattern this file used previously (see `mobile/utils.ts`'s own doc
+    // comment on `registerStubVirtualKeyboardProviderForAllScopes`).
+    registerStubVirtualKeyboardProviderForAllScopes();
     const cleanup = await setupEditor('page', [
-      createStubVirtualKeyboardExtension(),
       // Mirrors slash-menu-touch.spec.ts's own pattern: a stable extension
       // registered once per test, delegating to a per-test-reassignable
       // `resolvePicker` -- lets each test below swap in its own picker
@@ -61,7 +72,10 @@ describe('keyboard-toolbar Note/Reference touch reachability (Phase 2, MOBILE-09
       }),
     ]);
     resolvePicker = () => Promise.resolve(null);
-    return cleanup;
+    return async () => {
+      await cleanup();
+      unregisterStubVirtualKeyboardProviderForAllScopes();
+    };
   });
 
   function createSecondDoc() {
