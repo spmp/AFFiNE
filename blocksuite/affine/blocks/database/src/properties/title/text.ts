@@ -209,6 +209,13 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
   override connectedCallback() {
     super.connectedCallback();
     this.classList.add(titleCellStyle);
+    // `contentEditable = 'false'` here is load-bearing, not decoration —
+    // same nested-contenteditable boundary fix as `NoteBlockComponent`
+    // (see its `connectedCallback()` doc comment). This title cell's own
+    // descendant rich-text div independently sets `contenteditable="true"`
+    // (`rich-text.ts`), so without an explicit boundary here native tap
+    // hit-testing can briefly resolve to the outer page root instead.
+    this.contentEditable = 'false';
 
     this.ensureTodoListRowWhenMounted();
 

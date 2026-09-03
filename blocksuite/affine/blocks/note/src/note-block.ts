@@ -23,6 +23,21 @@ export class NoteBlockComponent extends BlockComponent<NoteBlockModel> {
 
   override connectedCallback() {
     super.connectedCallback();
+
+    // `contentEditable = 'false'` here is load-bearing, not decoration.
+    // `PageRootBlockComponent` sets the whole page `contentEditable="true"`
+    // (`page-root-block.ts`'s `renderBlock()`), and each descendant
+    // paragraph/list/database-row's own rich-text div *also* independently
+    // sets its own `contenteditable="true"` (`rich-text.ts`'s `render()`)
+    // — with nothing marking a boundary in between, native tap
+    // hit-testing can briefly resolve focus to the outer `affine-page-root`
+    // before JS sorts it out, producing a visible jump. This mirrors the
+    // identical fix already shipped for the cross-doc note-reference case
+    // (`note-ref-block.ts`'s `renderBlock()`), reusing the same boundary
+    // technique: marking this note's own host explicitly `false` turns
+    // every descendant rich-text div back into its own clearly-isolated
+    // editable island.
+    this.contentEditable = 'false';
   }
 
   // A note otherwise has zero page-mode styling of its own.
