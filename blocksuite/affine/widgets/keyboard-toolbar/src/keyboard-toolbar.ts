@@ -275,13 +275,6 @@ export class AffineKeyboardToolbar extends SignalWatcher(
           this.keyboard.visible$.value
         );
         this.toggleAttribute('data-panel-open', this.panelOpened);
-        // Actively track the real on-screen-keyboard height via the
-        // already-wired `this.keyboard` signal chain (D-09), instead of
-        // relying solely on native `100dvh` recompute, which iOS Safari
-        // doesn't always recompute promptly.
-        this.style.bottom = this.keyboard.visible$.value
-          ? `${this.keyboard.height$.value}px`
-          : this.keyboard.appTabSafeArea$.value;
       })
     );
 
