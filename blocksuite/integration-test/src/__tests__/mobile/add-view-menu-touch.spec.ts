@@ -1,4 +1,5 @@
 import { DatabaseBlockDataSource } from '@blocksuite/affine/blocks/database';
+import { FeatureFlagService } from '@blocksuite/affine/shared/services';
 import { viewPresets } from '@blocksuite/data-view/view-presets';
 import { IS_MOBILE } from '@blocksuite/global/env';
 import { Text } from '@blocksuite/store';
@@ -114,10 +115,16 @@ describe('add view menu touch parity (Story 2.12, MOBILE-01)', () => {
     ) as HTMLElement | null;
   }
 
+  // Task 04-02: `renderMore`'s fallback branch (`views-view.ts`) now wraps
+  // its "N more" label in a `<span class="name">`, with the count itself
+  // lowercased (`more`, not `More`) — this file's own `data-testid`
+  // (`database-views-overflow-button`, added alongside that markup change)
+  // is a more robust selector than matching on the button's own text
+  // content, and stays correct regardless of readonly/writable state.
   function getShowMoreButton() {
-    return Array.from(document.querySelectorAll('.database-view-button')).find(
-      el => el.textContent?.trim().endsWith('More')
-    ) as HTMLElement | undefined;
+    return document.querySelector(
+      '[data-testid="database-views-overflow-button"]'
+    ) as HTMLElement | null;
   }
 
   test('opening "Add View" via a tap on a freshly-created database lists Table, Kanban, Calendar, List, in that exact order', async () => {
@@ -197,6 +204,58 @@ describe('add view menu touch parity (Story 2.12, MOBILE-01)', () => {
         'Create List View',
       ]);
     }
+  });
+
+  test('the overflow fallback ("N more") button shows a plus icon when writable, and omits it when readonly (Finding 2 / MOBILE-13, D-07)', async () => {
+    const { databaseId } = createOrdinaryDatabase();
+    await wait();
+
+    const dataSource = new DatabaseBlockDataSource(
+      doc.getModelById(databaseId) as never
+    );
+    dataSource.viewManager.viewAdd(viewPresets.kanbanViewMeta.type);
+    dataSource.viewManager.viewAdd(viewPresets.calendarViewMeta.type);
+    dataSource.viewManager.viewAdd(viewPresets.listViewMeta.type);
+    await wait(200);
+
+    // Force the overflow fallback path deterministically -- shrink
+    // `component-overflow`'s own measured container width below what even
+    // a single view button needs, so `Overflow.doAdjustStyle`
+    // (`overflow/overflow.ts`) always falls back to rendering
+    // `renderMore(0)`, regardless of the real viewport's own natural
+    // layout (the sibling "once all four view types already exist" test
+    // above already proves that can legitimately go either way).
+    const overflowEl = document.querySelector(
+      'component-overflow'
+    ) as HTMLElement | null;
+    expect(overflowEl).toBeTruthy();
+    overflowEl!.style.width = '40px';
+    await wait(200);
+
+    const overflowButton = document.querySelector(
+      '[data-testid="database-views-overflow-button"]'
+    ) as HTMLElement | null;
+    expect(overflowButton).toBeTruthy();
+    expect(overflowButton!.querySelector('svg')).toBeTruthy();
+    expect(overflowButton!.textContent?.trim()).toBe('4 more');
+
+    // Flip the same database read-only (mirrors the existing "hidden
+    // under IS_MOBILE" test's own opt-out pattern) and confirm the icon
+    // is correctly omitted. The underlying data flow (`readonly$`,
+    // `data-source.ts`) only actually flips to `true` when `IS_MOBILE` is
+    // also true -- under the desktop config this same file is also
+    // picked up by, the database stays writable regardless of this flag,
+    // so the icon legitimately stays present there too.
+    doc
+      .get(FeatureFlagService)
+      .setFlag('enable_mobile_database_editing', false);
+    await wait(200);
+
+    const overflowButtonAfter = document.querySelector(
+      '[data-testid="database-views-overflow-button"]'
+    ) as HTMLElement | null;
+    expect(overflowButtonAfter).toBeTruthy();
+    expect(!!overflowButtonAfter!.querySelector('svg')).toBe(!IS_MOBILE);
   });
 
   test('tap targets for adjacent Add View menu entries do not overlap (pre-existing menu-list styling, unmodified)', async () => {
