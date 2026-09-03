@@ -115,10 +115,16 @@ describe('add view menu touch parity (Story 2.12, MOBILE-01)', () => {
     ) as HTMLElement | null;
   }
 
+  // Task 04-02: `renderMore`'s fallback branch (`views-view.ts`) now wraps
+  // its "N more" label in a `<span class="name">`, with the count itself
+  // lowercased (`more`, not `More`) — this file's own `data-testid`
+  // (`database-views-overflow-button`, added alongside that markup change)
+  // is a more robust selector than matching on the button's own text
+  // content, and stays correct regardless of readonly/writable state.
   function getShowMoreButton() {
-    return Array.from(document.querySelectorAll('.database-view-button')).find(
-      el => el.textContent?.trim().endsWith('More')
-    ) as HTMLElement | undefined;
+    return document.querySelector(
+      '[data-testid="database-views-overflow-button"]'
+    ) as HTMLElement | null;
   }
 
   test('opening "Add View" via a tap on a freshly-created database lists Table, Kanban, Calendar, List, in that exact order', async () => {
