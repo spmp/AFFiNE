@@ -275,6 +275,16 @@ export class AffineKeyboardToolbar extends SignalWatcher(
           this.keyboard.visible$.value
         );
         this.toggleAttribute('data-panel-open', this.panelOpened);
+        // Phase 4 (MOBILE-15, Bug B, D-09): actively track the real
+        // on-screen-keyboard height via the already-bridged
+        // visible$/height$/appTabSafeArea$ signals (see
+        // KeyboardToolbarExtension in packages/frontend/core), instead of
+        // relying solely on native 100dvh recompute, which iOS Safari
+        // doesn't always perform promptly. No new visualViewport listener
+        // is introduced here.
+        this.style.bottom = this.keyboard.visible$.value
+          ? `${this.keyboard.height$.value}px`
+          : this.keyboard.appTabSafeArea$.value;
       })
     );
 
