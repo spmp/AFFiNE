@@ -46,7 +46,9 @@ describe('keyboard-toolbar bottom position touch reachability (Phase 4, MOBILE-1
   test('host bottom style reactively tracks keyboard.height$/visible$/appTabSafeArea$', async () => {
     await focusFreshParagraph();
 
-    const toolbar = document.querySelector('affine-keyboard-toolbar');
+    const toolbar = document.querySelector<HTMLElement>(
+      'affine-keyboard-toolbar'
+    );
     expect(toolbar).toBeTruthy();
 
     const keyboard = (

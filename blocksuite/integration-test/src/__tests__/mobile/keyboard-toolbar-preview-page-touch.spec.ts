@@ -117,7 +117,10 @@ describe('keyboard-toolbar reachability inside "preview-page" referenced content
   async function waitForNestedDatabase(container: Element) {
     for (let attempt = 0; attempt < 20; attempt++) {
       const nestedDatabase = container.querySelector('affine-database') as
-        | (HTMLElement & { store: Store })
+        | (HTMLElement & {
+            store: Store;
+            std: { event: { active: boolean } };
+          })
         | null;
       if (nestedDatabase) return nestedDatabase;
       await wait();
@@ -172,9 +175,7 @@ describe('keyboard-toolbar reachability inside "preview-page" referenced content
 
     // Before any focus lands inside the reference, no toolbar exists
     // anywhere in the document.
-    expect(document.querySelectorAll('affine-keyboard-toolbar').length).toBe(
-      0
-    );
+    expect(document.querySelectorAll('affine-keyboard-toolbar').length).toBe(0);
 
     // `database-ref-block.ts`'s own `_subscribeTargetDoc` debounces every
     // Yjs `update` on the (same-doc) target by 300ms before re-running
@@ -190,9 +191,7 @@ describe('keyboard-toolbar reachability inside "preview-page" referenced content
     await wait();
     await wait();
 
-    expect(document.querySelectorAll('affine-keyboard-toolbar').length).toBe(
-      1
-    );
+    expect(document.querySelectorAll('affine-keyboard-toolbar').length).toBe(1);
     // `<blocksuite-portal>` (`widget.ts`'s `render()`) always portals its
     // template onto `document.body`, never as a light-DOM descendant of
     // whichever `BlockComponent` hosts the widget instance — so DOM
@@ -277,9 +276,7 @@ describe('keyboard-toolbar reachability inside "preview-page" referenced content
     await wait();
     await wait();
 
-    expect(document.querySelectorAll('affine-keyboard-toolbar').length).toBe(
-      1
-    );
+    expect(document.querySelectorAll('affine-keyboard-toolbar').length).toBe(1);
     // See the identical `<blocksuite-portal>` containment note in the
     // `database-ref` test above — DOM containment under `refEl` can never
     // be the proof, so this compares the rendered toolbar's own
@@ -365,8 +362,8 @@ describe('keyboard-toolbar reachability inside "preview-page" referenced content
       document.querySelectorAll('affine-keyboard-toolbar')
     ).filter(
       tb =>
-        (tb as unknown as { rootComponent?: { store?: Store } })
-          .rootComponent?.store === syncedDocStore
+        (tb as unknown as { rootComponent?: { store?: Store } }).rootComponent
+          ?.store === syncedDocStore
     );
     expect(toolbarsAgainstSyncedDoc.length).toBe(0);
   });
