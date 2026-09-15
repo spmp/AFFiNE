@@ -1370,6 +1370,150 @@ describe('journal todo database slash-menu command', () => {
     );
   });
 
+  test('Story 2.11 (live bug report — regression test, "auto-selected-today" bug): a duplicated database-view-ref whose canonical host doc has not finished loading yet still gets fixed once loading catches up', async () => {
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+    const { stub, getRef } = createStubStd({ journalDate: '2026-07-29' });
+
+    const items = journalTodoDatabaseSlashMenuConfig.items;
+    const resolvedItems =
+      typeof items === 'function' ? items({ std: stub, model }) : items;
+    await (
+      resolvedItems.find(i => i.name === 'Journal Todo') as unknown as {
+        action: () => Promise<void>;
+      }
+    ).action();
+    await wait();
+
+    const ref = getRef()!;
+    const canonicalModel = doc.getBlock(ref.refBlockId)
+      ?.model as DatabaseBlockModel;
+    const sourceRefEl = document.querySelector(
+      'affine-database-view-ref'
+    ) as DatabaseViewRefBlockComponent;
+    const sourceRefModel = sourceRefEl.model;
+    const sourceNoteModel = doc.getModelById(noteId)!;
+
+    // Exercise both fixes at once, same as the sibling "Note color" test
+    // above.
+    const noteColorColumnId = new DatabaseBlockDataSource(
+      canonicalModel
+    ).ensureNoteColorColumn()!;
+
+    const duplicatedAtMs = Date.now() + 100_000;
+    const dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(duplicatedAtMs);
+    // Simulate the canonical's host doc (`doc` — treated as already warm by
+    // every other test in this file) NOT having finished loading its
+    // content yet this session — the exact "auto-selected-today" race:
+    // `workspace.getDoc()` returns a handle, but `getStore().getBlock()`
+    // finds nothing for the canonical block until content actually streams
+    // in. `doc.getStore({ id: doc.id })` is memoized per id
+    // (`StoreContainer.getStore`), so grabbing it once and spying on its
+    // `getBlock` directly (rather than wrapping the whole `Store` in a
+    // Proxy, which would break `this`-bound private-field access on every
+    // *other* method) reaches both call sites that matter — the
+    // middleware's own initial synchronous check, and `waitForBlockInDoc`'s
+    // retry — since both resolve the exact same cached `Store` instance.
+    // Only the canonical's own block id is gated, so unrelated lookups
+    // (root, surface, the source reference itself) are unaffected.
+    let loaded = false;
+    const realStore = doc.doc.getStore({ id: doc.id });
+    const originalGetBlock = realStore.getBlock.bind(realStore);
+    const getBlockSpy = vi
+      .spyOn(realStore, 'getBlock')
+      .mockImplementation((id: string) =>
+        id === ref.refBlockId && !loaded ? undefined : originalGetBlock(id)
+      );
+    try {
+      const targetDoc = collection
+        .createDoc(
+          `doc:journal-todo-duplicate-cold-canonical-${Math.random().toString(16).slice(2, 8)}`
+        )
+        .getStore();
+      targetDoc.load(() => {
+        const rootId = targetDoc.addBlock('affine:page', {
+          title: new Text(),
+        });
+        targetDoc.addBlock('affine:surface', {}, rootId);
+      });
+
+      const transformer = new Transformer({
+        schema: new Schema().register(AffineSchemas),
+        blobCRUD: collection.blobSync,
+        docCRUD: {
+          create: (id: string) => collection.createDoc(id).getStore({ id }),
+          get: (id: string) => collection.getDoc(id)?.getStore({ id }) ?? null,
+          delete: (id: string) => collection.removeDoc(id),
+        },
+        middlewares: [
+          replaceIdMiddleware(collection.idGenerator),
+          refreshJournalTodoOnDuplicateMiddleware(),
+        ],
+      });
+      const slice = Slice.fromModels(doc, [sourceNoteModel]);
+      const snapshot = transformer.sliceToSnapshot(slice);
+      if (!snapshot) throw new Error('Failed to create snapshot');
+      await transformer.snapshotToSlice(
+        snapshot,
+        targetDoc,
+        targetDoc.root?.id
+      );
+
+      const duplicatedRefEl = targetDoc.getBlocksByFlavour(
+        'affine:database-view-ref'
+      )[0];
+      const duplicatedRefModel =
+        duplicatedRefEl.model as unknown as typeof sourceRefModel;
+
+      const findHide = (viewModel: unknown, columnId: string) => {
+        const view = viewModel as {
+          columns?: { id: string; hide?: boolean }[];
+        };
+        return view.columns?.find(c => c.id === columnId)?.hide;
+      };
+      const readLiteral = (viewModel: unknown) =>
+        (
+          viewModel as {
+            filter: { conditions: { args: { value: number }[] }[] };
+          }
+        ).filter.conditions[1].args[0].value;
+
+      // Immediately after duplication completes, the canonical still isn't
+      // resolvable (doc not "loaded" yet) — both fixes must have been
+      // skipped, not crashed or half-applied.
+      expect(readLiteral(duplicatedRefModel.props.views[0])).not.toBe(
+        duplicatedAtMs - 1
+      );
+      expect(
+        findHide(duplicatedRefModel.props.views[0], noteColorColumnId)
+      ).not.toBe(true);
+
+      // Loading "finishes" (content streams in) — the retry must pick this
+      // up and apply both fixes, without anything else re-triggering it.
+      // `waitForBlockInDoc` re-checks on the canonical doc's own Yjs
+      // `update` event (debounced 300ms), so a real, harmless mutation is
+      // needed to fire one — flipping `loaded` alone wouldn't wake it up.
+      loaded = true;
+      doc.spaceDoc.transact(() => {
+        doc.spaceDoc
+          .getMap('__test_journal_todo_load_signal__')
+          .set('x', Date.now());
+      });
+      await wait(500);
+
+      expect(readLiteral(duplicatedRefModel.props.views[0])).toBe(
+        duplicatedAtMs - 1
+      );
+      expect(
+        findHide(duplicatedRefModel.props.views[0], noteColorColumnId)
+      ).toBe(true);
+    } finally {
+      dateNowSpy.mockRestore();
+      getBlockSpy.mockRestore();
+    }
+  });
+
   test('the seeded list view hides Hierarchy/Parent/Ancestor and Done date columns; a table view added afterwards keeps Done date visible', async () => {
     const noteId = addNote(doc);
     const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
