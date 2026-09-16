@@ -67,7 +67,7 @@ import { styleMap } from 'lit/directives/style-map.js';
 
 import { popSideDetail } from './components/layout.js';
 import { DatabaseConfigExtension } from './config.js';
-import { EditorHostKey } from './context/host-context.js';
+import { EditorHostKey, RowHostKey } from './context/host-context.js';
 import type { DatabaseViewLocalOverride } from './context/view-local-override-context.js';
 import { DatabaseViewLocalOverrideProvider } from './context/view-local-override-context.js';
 import { DatabaseBlockDataSource } from './data-source.js';
@@ -284,6 +284,16 @@ export class DatabaseBlockComponent extends CaptionedBlockComponent<DatabaseBloc
         EditorHostKey,
         outerHostHolder?.outerStd?.host ?? this.host
       );
+      // ...but `this.host` is still the only host whose `store` actually
+      // owns this database's row blocks (for a nested reference render it
+      // is the preview scope over the canonical's own backing document;
+      // for a native render it is simply the same host again). Anything
+      // that resolves a row's `BlockModel`, or runs a block command against
+      // it, must go through this key instead — reading rows off the outer
+      // host returns `undefined` for every row in the cross-doc case, which
+      // is what made list-view Enter treat every row as empty and unindent
+      // it rather than split it.
+      dataSource.serviceSet(RowHostKey, this.host);
       this.std.provider
         .getAll(ExternalGroupByConfigProvider)
         .forEach(config => {
