@@ -23,7 +23,10 @@ import { css, html, nothing, type TemplateResult } from 'lit';
 import { customElement, eventOptions, property } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 
-import { EditorHostKey } from '../../../core/context/host-context.js';
+import {
+  EditorHostKey,
+  RowHostKey,
+} from '../../../core/context/host-context.js';
 import type { TaskWorkflowCapableDataSource } from '../../../core/data-source/task-workflow-capable.js';
 import { renderUniLit } from '../../../core/utils/uni-component/index.js';
 import type { ListViewUILogic } from './list-view-ui-logic.js';
@@ -348,6 +351,33 @@ export class ListViewRenderer extends SignalWatcher(
   }
 
   /**
+   * The std whose `store` actually owns this view's row blocks — always use
+   * this (never `this.std`) to resolve a row's `BlockModel` or to run a
+   * block command against one.
+   *
+   * `this.std` comes from `EditorHostKey`, which is deliberately the OUTER
+   * page's host so that row actions creating blocks "on the current page"
+   * land where the user is looking (see `database-block.ts`'s `dataSource`
+   * init). When this database is rendered nested inside a CROSS-DOC
+   * `database-ref`/`database-view-ref`, that outer store contains none of
+   * the rows — `getBlock(rowId)` returns `undefined` for every one of them.
+   *
+   * That mismatch is what made Enter on a *non-empty* cross-doc row unindent
+   * it: with `model` undefined, `onRowKeyDown`'s `(model?.text?.length ?? 0)
+   * > 0` emptiness test reported "empty" for every row, so every Enter fell
+   * through to the LIST-03/LIST-04 empty-row path (dedent at level > 0,
+   * add-sibling at level 0). The same wrong-store read also silently killed
+   * cross-doc Backspace/Delete row merging.
+   *
+   * Falls back to `this.std` for any data source that predates `RowHostKey`
+   * (nothing outside `affine-database` registers it), which restores the
+   * previous same-doc-only behavior rather than breaking those callers.
+   */
+  private get rowStd(): BlockStdScope | undefined {
+    return this.view.serviceGet(RowHostKey)?.std ?? this.std;
+  }
+
+  /**
    * The row's own persistent highlight — independent of whether a
    * `note-ref` currently exists on *this* page (a carried-over task's Note
    * reference can be set from an earlier day, long before this exact page
@@ -609,11 +639,12 @@ export class ListViewRenderer extends SignalWatcher(
    * bypass for exactly this kind of system-managed, code-only mutation.
    */
   private splitRowAtCursor(rowId: string, inlineIndex: number): void {
-    const model = this.std?.store.getBlock(rowId)?.model;
-    if (!model || !this.std) {
+    const std = this.rowStd;
+    const model = std?.store.getBlock(rowId)?.model;
+    if (!model || !std) {
       return;
     }
-    const parent = this.std.store.getParent(model);
+    const parent = std.store.getParent(model);
     const originalIndex = parent?.children.findIndex(c => c.id === rowId) ?? -1;
     const level = this.getHierarchyLevel(rowId);
     const getColumnStringValue = (columnName: string) => {
@@ -626,7 +657,7 @@ export class ListViewRenderer extends SignalWatcher(
     const ancestors = getColumnStringValue(
       TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME
     );
-    this.std.command
+    std.command
       .chain()
       .pipe(splitListCommand, { blockId: rowId, inlineIndex })
       .run();
@@ -660,7 +691,7 @@ export class ListViewRenderer extends SignalWatcher(
     }
     if (insertAfter > originalIndex + 1) {
       const target = parent.children[insertAfter + 1] ?? null;
-      this.std.store.moveBlocks([newRow], parent, target);
+      std.store.moveBlocks([newRow], parent, target);
     }
     const dataSource = this.view.manager?.dataSource as
       | {
@@ -807,8 +838,9 @@ export class ListViewRenderer extends SignalWatcher(
         return;
       }
       const prevRowId = rows[rowIndex - 1]?.rowId;
-      const model = this.std?.store.getBlock(rowId)?.model;
-      if (!prevRowId || !model || !this.std) {
+      const std = this.rowStd;
+      const model = std?.store.getBlock(rowId)?.model;
+      if (!prevRowId || !model || !std) {
         return;
       }
       // CR-02: `prevRowId` comes from the view-filtered `rows$.value`
@@ -820,7 +852,7 @@ export class ListViewRenderer extends SignalWatcher(
       // currently-hidden row while focus lands on an unrelated, unmodified
       // visible row. Bail out rather than merging into a row the user
       // cannot currently see.
-      const parent = this.std.store.getParent(model);
+      const parent = std.store.getParent(model);
       const modelIndex = parent?.children.findIndex(c => c.id === rowId) ?? -1;
       const blockTreePrevId =
         modelIndex > 0 ? parent?.children[modelIndex - 1]?.id : undefined;
@@ -830,12 +862,12 @@ export class ListViewRenderer extends SignalWatcher(
       // WR-01: capture the previous row's own text length BEFORE the join
       // so the cursor can be restored at the merge boundary, not the
       // absolute end of the merged text.
-      const prevModel = this.std.store.getBlock(prevRowId)?.model;
+      const prevModel = std.store.getBlock(prevRowId)?.model;
       const prevTextLengthBeforeJoin = prevModel?.text?.length ?? 0;
       event.preventDefault();
       event.stopImmediatePropagation();
       event.stopPropagation();
-      mergeWithPrev(this.std.host, model);
+      mergeWithPrev(std.host, model);
       this.focusRowTitle(prevRowId, prevTextLengthBeforeJoin);
       return;
     }
@@ -844,8 +876,9 @@ export class ListViewRenderer extends SignalWatcher(
         return;
       }
       const range = this.getInlineRange(event.currentTarget as HTMLElement);
-      const model = this.std?.store.getBlock(rowId)?.model;
-      if (!model || !this.std) {
+      const std = this.rowStd;
+      const model = std?.store.getBlock(rowId)?.model;
+      if (!model || !std) {
         return;
       }
       if (!range || range.length !== 0) {
@@ -860,7 +893,7 @@ export class ListViewRenderer extends SignalWatcher(
       if (!nextRowId) {
         return;
       }
-      const nextModel = this.std.store.getBlock(nextRowId)?.model;
+      const nextModel = std.store.getBlock(nextRowId)?.model;
       if (!nextModel) {
         return;
       }
@@ -869,7 +902,7 @@ export class ListViewRenderer extends SignalWatcher(
       // own merge target via a pure block-tree walk starting from
       // `nextModel`. Only proceed when the filtered neighbor is also the
       // real block-tree-adjacent next row.
-      const parent = this.std.store.getParent(model);
+      const parent = std.store.getParent(model);
       const modelIndex = parent?.children.findIndex(c => c.id === rowId) ?? -1;
       const blockTreeNextId =
         modelIndex >= 0 ? parent?.children[modelIndex + 1]?.id : undefined;
@@ -883,7 +916,7 @@ export class ListViewRenderer extends SignalWatcher(
       event.preventDefault();
       event.stopImmediatePropagation();
       event.stopPropagation();
-      mergeWithPrev(this.std.host, nextModel);
+      mergeWithPrev(std.host, nextModel);
       this.focusRowTitle(rowId, range.index);
       return;
     }
@@ -891,15 +924,32 @@ export class ListViewRenderer extends SignalWatcher(
       if (this.view.readonly$.value) {
         return;
       }
-      const model = this.std?.store.getBlock(rowId)?.model;
+      const model = this.rowStd?.store.getBlock(rowId)?.model;
       const range = this.getInlineRange(event.currentTarget as HTMLElement);
       event.preventDefault();
       event.stopImmediatePropagation();
       event.stopPropagation();
-      if ((model?.text?.length ?? 0) > 0) {
+      // Fail safe, not fail quiet: an unresolvable row model is NOT the same
+      // thing as an empty row, and must never be allowed to masquerade as
+      // one. Conflating the two is exactly how a cross-doc reference's rows
+      // (invisible to the outer page's store, see `rowStd`) got silently
+      // unindented on every Enter instead of split -- `model?.text?.length ??
+      // 0` reported 0 for a row full of text. With `rowStd` that lookup now
+      // succeeds, so this guard should be unreachable; if some future data
+      // source reintroduces a store gap, doing nothing is recoverable
+      // whereas re-leveling the user's hierarchy is not.
+      if (!model) {
+        console.error(
+          `list view: Enter pressed on row ${rowId}, but its block model ` +
+            'could not be resolved from any known store -- ignoring the ' +
+            'keypress rather than treating the row as empty.'
+        );
+        return;
+      }
+      if ((model.text?.length ?? 0) > 0) {
         // LIST-02: split at the cursor, preserving hierarchy level on the
         // new sibling.
-        this.splitRowAtCursor(rowId, range?.index ?? model!.text!.length);
+        this.splitRowAtCursor(rowId, range?.index ?? model.text!.length);
         return;
       }
       // Empty row.
