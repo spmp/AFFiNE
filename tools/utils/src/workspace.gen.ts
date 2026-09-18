@@ -205,6 +205,7 @@ export const PackageList = [
     workspaceDependencies: [
       'blocksuite/affine/blocks/database',
       'blocksuite/affine/blocks/note-ref',
+      'blocksuite/affine/blocks/root',
       'blocksuite/affine/blocks/surface-ref',
       'blocksuite/affine/components',
       'blocksuite/affine/ext-loader',
@@ -222,6 +223,7 @@ export const PackageList = [
     workspaceDependencies: [
       'blocksuite/affine/blocks/database',
       'blocksuite/affine/blocks/database-ref',
+      'blocksuite/affine/blocks/root',
       'blocksuite/affine/components',
       'blocksuite/affine/ext-loader',
       'blocksuite/affine/model',

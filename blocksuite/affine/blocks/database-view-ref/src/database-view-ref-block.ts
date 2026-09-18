@@ -240,6 +240,24 @@ export class DatabaseViewRefBlockComponent extends BlockComponent<DatabaseViewRe
     };
 
     const nextPreviewStore = refDoc.getStore({ query });
+    // `refDoc.getStore({ query })` only *constructs* the Store — every
+    // `StoreExtension`'s own `loaded()` lifecycle hook (attaching its real
+    // event listeners, computing its own initial state) doesn't run until
+    // `Store.load()` is explicitly called, a *separate* step from
+    // `Doc.load()`. Confirmed live as (half of) the root cause of a real
+    // bug: undo (Mod-z) silently did nothing for edits made inside a
+    // cross-doc List view (Journal Todo), even though the edits themselves
+    // genuinely landed on the real source doc. `HistoryExtension`
+    // (`store.ts`'s own `_history` getter) is exactly such an extension —
+    // its `_canUndo`/`_canRedo` signals (what `Store.canUndo`/`.canRedo`
+    // actually read) stay frozen at their construction-time default
+    // (`false`) forever unless `loaded()` runs, regardless of how many
+    // real, undo-stack-worthy edits happen afterward, since the event
+    // listeners that would update them are *also* only attached inside
+    // that same `loaded()` call. `database-ref-block.ts`'s and
+    // `note-ref-block.ts`'s own `_maybeRefreshPreview` both already have
+    // this identical fix — this file was the one sibling that missed it.
+    nextPreviewStore.load();
     installDeleteRedirect(
       nextPreviewStore,
       targetModel.id,
