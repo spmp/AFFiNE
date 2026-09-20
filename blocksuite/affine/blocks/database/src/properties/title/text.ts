@@ -235,14 +235,33 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
     }
 
     const selectAll = (e: KeyboardEvent) => {
-      if (e.key === 'a' && (IS_MAC ? e.metaKey : e.ctrlKey)) {
+      // `toLowerCase()`, not `=== 'a'`: a real Cmd/Ctrl+A delivers `key: 'a'`,
+      // but the identical keystroke delivers `key: 'A'` (with `shiftKey`
+      // still false) when Caps Lock is on, and a case-sensitive match left
+      // those users with no select-all at all. Mirrors the `key.toLowerCase()`
+      // comparison `_handleKeyDown` below already uses for Mod-z/Mod-y.
+      if (e.key.toLowerCase() === 'a' && (IS_MAC ? e.metaKey : e.ctrlKey)) {
         e.stopPropagation();
         e.preventDefault();
         this.inlineEditor?.selectAll();
       }
     };
 
-    this.disposables.addFromEvent(this, 'keydown', selectAll);
+    // CAPTURE phase is load-bearing, not a detail. This listener sits on the
+    // cell, but the cell's own child `<rich-text>` handles keydown first in
+    // bubble phase (`_onRichTextKeyDown` -> `_handleKeyDown` below) and calls
+    // `event.stopPropagation()` for every key except Escape/Mod-z/Mod-y. A
+    // bubble-phase listener here therefore never ran for Cmd/Ctrl+A at all —
+    // confirmed live: a probe on this element saw the capture-phase keydown
+    // but never the bubble-phase one, and `selectAll()` was called zero times.
+    //
+    // The user-visible result was that Cmd/Ctrl+A silently collapsed the caret
+    // to index 0 instead of selecting the title, so Backspace appeared to do
+    // nothing (nothing sits behind index 0) while Delete forward-deleted a
+    // single character. Capture runs parent-before-child, so this now fires
+    // before `<rich-text>` can stop the event.
+    // Regression test: tests/affine-local/e2e/row-delete-select-all.spec.ts
+    this.disposables.addFromEvent(this, 'keydown', selectAll, true);
   }
 
   private readonly _handleKeyDown = (event: KeyboardEvent) => {
