@@ -393,6 +393,7 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
       contenteditable="false"
       class=${`${titleTaskCheckboxStyle} ${this.readonly ? 'readonly' : ''}`}
       data-testid="task-status-checkbox"
+      data-title-leading
       @click=${onClick}
     >
       ${checked
@@ -438,14 +439,16 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
       return;
     }
     if (this.docId$.value) {
-      return html` <div class="${headerAreaIconStyle}">
+      return html` <div class="${headerAreaIconStyle}" data-title-leading>
         ${LinkedPageIcon({})}
       </div>`;
     }
     const icon = this.icon$.value;
     if (!icon) return;
 
-    return html` <div class="${headerAreaIconStyle}">${icon}</div>`;
+    return html` <div class="${headerAreaIconStyle}" data-title-leading>
+      ${icon}
+    </div>`;
   }
 
   private readonly richText = createRef<RichText>();

@@ -320,6 +320,26 @@ export class ListViewRenderer extends SignalWatcher(
       cursor: grab;
       visibility: hidden;
       opacity: 0;
+      /* Load-bearing, not cosmetic. This handle is CHROME, not content: it holds
+         a bare decorative grip div and no selectable text. Without this it can
+         still anchor a native text selection, and because it sits immediately
+         left of character 0 of the title, a click-drag begun anywhere in its
+         12px hit area produced a selection whose ANCHOR was here (outside the
+         title's inline root) while its focus was inside it. A selection that
+         straddles the editable boundary has no single editing host, so the
+         browser emits NO beforeinput event at all -- and beforeinput is the only
+         channel through which BlockSuite's inline editor applies any edit.
+         The result was that Backspace, Delete AND typing a replacement all
+         silently did nothing, with no handler ever running and nothing calling
+         preventDefault. Measured directly: the event log for such a Backspace is
+         [keydown] and nothing else, while the identical selection anchored one
+         pixel further right logs [keydown -> beforeinput -> delete applied].
+         It was reported as "any selection including the first character fails"
+         because the gutter is the only thing left of character 0 -- you can only
+         begin a drag here when index 0 ends up in the selection.
+         Regression test: tests/affine-local/e2e/row-index0-anchor-origin.spec.ts */
+      user-select: none;
+      -webkit-user-select: none;
     }
 
     .affine-data-view-list-row:hover .affine-data-view-list-drag-handle {
@@ -329,6 +349,13 @@ export class ListViewRenderer extends SignalWatcher(
 
     .affine-data-view-list-indent-spacer {
       flex-shrink: 0;
+      /* Same reason as the drag handle above: this spacer is pure layout chrome
+         sitting in the row's leading gutter, left of character 0. Left
+         selectable, it becomes the next available out-of-root anchor once the
+         handle stops being one, which would reintroduce the identical dead
+         keystroke a few pixels over. */
+      user-select: none;
+      -webkit-user-select: none;
     }
 
     ${IS_MOBILE ? mobileListActionStyles : css``}
