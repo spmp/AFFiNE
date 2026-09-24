@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7-labs
 # Build stage - Complete AFFiNE build process
 #
 # Originally based on work by Sander Sneekes:
@@ -5,11 +6,18 @@
 FROM node:22-bookworm-slim AS builder
 
 # Build arguments
-ARG GIT_REPO=https://github.com/spmp/AFFiNE.git
-ARG GIT_TAG=pr/N-build
-ARG GIT_DEPTH=0
+##ARG GIT_REPO=https://github.com/spmp/AFFiNE.git
+##ARG GIT_TAG=pr/N-build
+##ARG GIT_DEPTH=0
 ARG BUILD_VERSION=
 ARG BUILD_TYPE=canary
+# Real commit SHA to embed in the built HTML (GIT_SHORT_SHA), since this image
+# is no longer built from a git clone and has no .git of its own to read one
+# from. Pass e.g. --build-arg GITHUB_SHA=$(git rev-parse HEAD). If omitted,
+# the frontend build falls back to an 'unknown' placeholder rather than
+# failing (see tools/cli/src/rspack-shared/html-plugin.ts).
+ARG GITHUB_SHA=
+ENV GITHUB_SHA=${GITHUB_SHA}
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -36,12 +44,22 @@ WORKDIR /affine
 
 ARG PRE_TOOLING_RND=AsDfJkL
 
-# Clone repository (full history by default for robust patch 3-way apply)
-RUN if [ "${GIT_DEPTH}" = "0" ]; then \
-      git clone --branch ${GIT_TAG} ${GIT_REPO} .; \
-    else \
-      git clone --depth ${GIT_DEPTH} --branch ${GIT_TAG} ${GIT_REPO} .; \
-    fi
+# Build from the local build context instead of a fresh git clone.
+# (.dockerignore already excludes .git, node_modules, /target, yarn cache/unplugged
+# and test artifacts, so this doesn't drag in stale local build output.)
+#
+# The web/mobile/admin apps' OWN source (`src/`) is excluded here and copied
+# back in later, right before their build steps -- this is what lets a
+# frontend-only source change skip the native (Rust) and server build layers
+# above instead of invalidating the whole build from one shared `COPY . .`.
+# Their package.json/tsconfig.json ARE copied now (not excluded): Yarn Berry's
+# workspace resolution needs every workspace's manifest present for
+# `yarn install`/`workspaces focus` to resolve correctly, even for workspaces
+# it isn't building yet.
+COPY --exclude=packages/frontend/apps/web/src \
+     --exclude=packages/frontend/apps/mobile/src \
+     --exclude=packages/frontend/admin/src \
+     . .
 
 # Optionally override package versions with a valid SemVer value.
 # Do NOT use floating labels like "canary" here; many runtime checks require SemVer.
@@ -109,6 +127,17 @@ RUN yarn workspace @affine/server build
 
 # Reinstall ALL dependencies for frontend builds
 RUN yarn install --inline-builds
+
+# Bring in the web/mobile/admin apps' actual source, deferred from the COPY
+# above so a source-only change here doesn't bust the native/server layers.
+# WEB_CACHEBUST: bump via --build-arg (e.g. --build-arg WEB_CACHEBUST=$(date +%s))
+# to force this layer, and everything after it, to rebuild even when none of
+# the copied files changed -- everything above this line stays cached either way.
+ARG WEB_CACHEBUST=1
+RUN echo "web/mobile/admin cache generation: ${WEB_CACHEBUST}"
+COPY packages/frontend/apps/web/src ./packages/frontend/apps/web/src
+COPY packages/frontend/apps/mobile/src ./packages/frontend/apps/mobile/src
+COPY packages/frontend/admin/src ./packages/frontend/admin/src
 
 # Build frontend components (now all dependencies should be available)
 # Note: @affine/mobile is built even though its bundle is only *served* when
