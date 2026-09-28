@@ -1,14 +1,17 @@
-import { User } from '@prisma/client';
 import ava, { TestFn } from 'ava';
 import Sinon from 'sinon';
 
-import { createTestingApp, type TestingApp } from '../../../__tests__/utils';
+import {
+  createTestingApp,
+  type TestingApp,
+  type TestUser,
+} from '../../../__tests__/utils';
 import { Config } from '../../../base';
 import { MobileDebugLogService } from '../service';
 
 interface Context {
   app: TestingApp;
-  user: User;
+  user: TestUser;
 }
 
 const test = ava.serial as TestFn<Context>;
