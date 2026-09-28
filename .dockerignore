@@ -3,7 +3,7 @@
 .gitignore
 
 # Local dependency/build artifacts
-/node_modules
+**/node_modules
 /target
 
 # Yarn v4 artifacts (not needed for image packaging)
