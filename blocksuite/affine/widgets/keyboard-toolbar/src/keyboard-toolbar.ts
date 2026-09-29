@@ -275,16 +275,35 @@ export class AffineKeyboardToolbar extends SignalWatcher(
           this.keyboard.visible$.value
         );
         this.toggleAttribute('data-panel-open', this.panelOpened);
-        // Phase 4 (MOBILE-15, Bug B, D-09): actively track the real
-        // on-screen-keyboard height via the already-bridged
-        // visible$/height$/appTabSafeArea$ signals (see
-        // KeyboardToolbarExtension in packages/frontend/core), instead of
-        // relying solely on native 100dvh recompute, which iOS Safari
-        // doesn't always perform promptly. No new visualViewport listener
-        // is introduced here.
-        this.style.bottom = this.keyboard.visible$.value
-          ? `${this.keyboard.height$.value}px`
-          : this.keyboard.appTabSafeArea$.value;
+        // keyboard-toolbar-y-jump: do NOT set `this.style.bottom` here.
+        //
+        // The host stays at `bottom: 0` (styles.ts) and the reserved
+        // bottom offset is supplied *once*, by the always-present
+        // `<affine-keyboard-tool-panel>` spacer, whose inline `height` is
+        // `panelHeight` (== keyboard.height$ while the keyboard is visible,
+        // staticHeight$ while a panel is open, appTabSafeArea$ otherwise).
+        // That spacer is what lifts the icon bar onto the keyboard's top
+        // edge -- so the live keyboard height is already actively tracked
+        // and no `100dvh` recompute is relied upon (this element is
+        // `position: fixed`).
+        //
+        // Commit d6c2537e40 additionally wrote that same offset into
+        // `style.bottom`, which double-counted it: the icon bar rendered
+        // 2 x height$ above the viewport bottom, i.e. floating one whole
+        // keyboard-height above the keyboard. Because height$ is recomputed
+        // per un-debounced visualViewport event on iOS, the excess varied
+        // continuously, which is why the defect presented as a random
+        // Y-jump rather than a fixed gap. Geometry is asserted by
+        // keyboard-toolbar-geometry-touch.spec.ts.
+        console.debug('[MobileDebugLog] keyboard-toolbar-style-bottom', {
+          timestampMs: Date.now(),
+          keyboardVisible: this.keyboard.visible$.value,
+          keyboardHeight: this.keyboard.height$.value,
+          appTabSafeArea: this.keyboard.appTabSafeArea$.value,
+          panelOpened: this.panelOpened,
+          panelHeight: this.panelHeight,
+          hostStyleBottom: getComputedStyle(this).bottom,
+        });
       })
     );
 

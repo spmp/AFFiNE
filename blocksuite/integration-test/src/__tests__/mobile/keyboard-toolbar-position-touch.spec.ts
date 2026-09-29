@@ -7,12 +7,23 @@ import { addNote } from '../utils/edgeless.js';
 import { setupEditor } from '../utils/setup.js';
 import { createStubVirtualKeyboardExtension } from './utils.js';
 
-// Phase 4 (MOBILE-15, Bug B, D-09): proves `AffineKeyboardToolbar`'s host
-// `style.bottom` reactively tracks the stub `VirtualKeyboardProvider`'s
+// Phase 4 (MOBILE-15, Bug B, D-09): proves `AffineKeyboardToolbar`'s bottom
+// offset reactively tracks the stub `VirtualKeyboardProvider`'s
 // `visible$`/`height$`/`appTabSafeArea$` signals -- the exact same signal
 // chain the real app bridges from `app.tsx`'s existing `visualViewport`
-// listener via `KeyboardToolbarExtension` (packages/frontend/core) -- with
-// zero new listener code and zero changes to styles.ts's static fallback.
+// listener via `KeyboardToolbarExtension` (packages/frontend/core).
+//
+// FALSE-CONFIDENCE RECORD (keyboard-toolbar-y-jump, 2026-09-28): this spec
+// originally asserted `toolbar.style.bottom` directly, because commit
+// d6c2537e40 had added a `this.style.bottom = ...` write to the widget and
+// the spec was written to cover that write. It passed, yet the toolbar was
+// visibly wrong on-device: the reserved offset was ALSO supplied by the
+// `<affine-keyboard-tool-panel>` spacer's inline height, so the icon bar
+// rendered at 2 x the offset. Asserting the property a fix touches cannot
+// detect double-counting by a second mechanism -- only rendered geometry
+// can. The assertions below therefore measure the spacer that actually
+// produces the offset; the absolute placement invariant lives in
+// `keyboard-toolbar-geometry-touch.spec.ts`.
 describe('keyboard-toolbar bottom position touch reachability (Phase 4, MOBILE-15)', () => {
   beforeEach(async () => {
     const cleanup = await setupEditor('page', [
@@ -43,13 +54,21 @@ describe('keyboard-toolbar bottom position touch reachability (Phase 4, MOBILE-1
     return { paragraphId };
   }
 
-  test('host bottom style reactively tracks keyboard.height$/visible$/appTabSafeArea$', async () => {
+  test('reserved bottom offset reactively tracks keyboard.height$/visible$/appTabSafeArea$', async () => {
     await focusFreshParagraph();
 
     const toolbar = document.querySelector<HTMLElement>(
       'affine-keyboard-toolbar'
     );
     expect(toolbar).toBeTruthy();
+
+    // The spacer whose height IS the reserved bottom offset. Measuring its
+    // rendered height (not a style string) is what makes this a real
+    // geometry assertion.
+    const spacer = toolbar!.querySelector<HTMLElement>(
+      'affine-keyboard-tool-panel'
+    );
+    expect(spacer).toBeTruthy();
 
     const keyboard = (
       toolbar as unknown as {
@@ -61,16 +80,24 @@ describe('keyboard-toolbar bottom position touch reachability (Phase 4, MOBILE-1
       }
     ).keyboard;
 
-    // (1) keyboard hidden: bottom falls back to the stub's appTabSafeArea$.
-    keyboard.visible$.value = false;
-    await wait();
-    expect(toolbar!.style.bottom).toBe(keyboard.appTabSafeArea$.value);
+    keyboard.appTabSafeArea$.value = '60px';
 
-    // (2) keyboard visible with a live height: bottom updates reactively,
-    // proving this is a live binding, not a one-time read.
+    // (1) keyboard hidden: the offset falls back to appTabSafeArea$.
+    keyboard.visible$.value = false;
+    keyboard.height$.value = 0;
+    await wait();
+    expect(spacer!.getBoundingClientRect().height).toBeCloseTo(60, 0);
+
+    // (2) keyboard visible with a live height: the offset updates
+    // reactively, proving this is a live binding, not a one-time read.
     keyboard.visible$.value = true;
     keyboard.height$.value = 300;
     await wait();
-    expect(toolbar!.style.bottom).toBe('300px');
+    expect(spacer!.getBoundingClientRect().height).toBeCloseTo(300, 0);
+
+    // (3) The host itself must contribute NO offset of its own -- otherwise
+    // (2)'s offset is applied twice. This is the regression guard for
+    // keyboard-toolbar-y-jump.
+    expect(getComputedStyle(toolbar!).bottom).toBe('0px');
   });
 });
