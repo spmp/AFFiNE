@@ -29,6 +29,25 @@ import type { VirtualKeyboardProvider } from '@affine/core/mobile/modules/virtua
  * for both event types (unchanged) — it is the exact instrumentation that
  * produced those captures, and remains valuable for future on-device
  * diagnosis.
+ *
+ * keyboard-focus-tabbar-coordination: `window.innerHeight` is not itself a
+ * stable "no keyboard" baseline on real iOS Safari — its own dynamic
+ * toolbar (URL bar) collapsing/expanding changes `window.innerHeight`
+ * independently of the on-screen keyboard, and can do so across a long run
+ * of *genuine* `resize` events (not the `scroll` noise the resize-only fix
+ * above already filters). `affine-dev-MobileDebugLog-new-row-enter-5.log`
+ * captured `visualViewport.height` staying essentially constant (~385, the
+ * keyboard's own occupied height was correct and stable) while
+ * `window.innerHeight` swung between 539 and 762 and back across ~2 seconds
+ * of resize events, producing negative and wildly inconsistent computed
+ * heights that got written straight into the keyboard-toolbar/tab-bar's CSS
+ * offset — the reported mis-stacking/keyboard-covering-both-bars symptom.
+ * Track the largest `window.innerHeight` observed so far (seeded lazily
+ * from the first real event this listener sees, not at registration time —
+ * registration can happen well before any layout has settled) as a
+ * self-calibrating baseline instead of trusting the live, possibly
+ * chrome-collapsed value on every event, and never report a negative
+ * height.
  */
 export function createVisualViewportVirtualKeyboardProvider(): VirtualKeyboardProvider {
   return {
@@ -38,9 +57,15 @@ export function createVisualViewportVirtualKeyboardProvider(): VirtualKeyboardPr
         return () => {};
       }
 
+      let maxWindowHeight: number | undefined;
+
       const listener = (event: Event) => {
         if (!visualViewport) return;
-        const windowHeight = window.innerHeight;
+        maxWindowHeight =
+          maxWindowHeight === undefined
+            ? window.innerHeight
+            : Math.max(maxWindowHeight, window.innerHeight);
+        const windowHeight = maxWindowHeight;
 
         /**
          * ┌───────────────┐ - window top
@@ -55,6 +80,12 @@ export function createVisualViewportVirtualKeyboardProvider(): VirtualKeyboardPr
          * │               │                       │ visualViewport.offsetTop
          * └───────────────┘ - window bottom       --
          */
+        const visible = windowHeight - visualViewport.height > 0;
+        const height = Math.max(
+          0,
+          windowHeight - visualViewport.height - visualViewport.offsetTop
+        );
+
         console.debug('[MobileDebugLog] visualViewport-event', {
           type: event.type,
           timestampMs: Date.now(),
@@ -64,9 +95,8 @@ export function createVisualViewportVirtualKeyboardProvider(): VirtualKeyboardPr
           visualViewportOffsetTop: visualViewport.offsetTop,
           visualViewportOffsetLeft: visualViewport.offsetLeft,
           visualViewportScale: visualViewport.scale,
-          computedVisible: window.innerHeight - visualViewport.height > 0,
-          computedHeight:
-            windowHeight - visualViewport.height - visualViewport.offsetTop,
+          computedVisible: visible,
+          computedHeight: height,
         });
 
         // `scroll` never carries a legitimate keyboard-size signal, only
@@ -74,11 +104,7 @@ export function createVisualViewportVirtualKeyboardProvider(): VirtualKeyboardPr
         // the visible/height computation.
         if (event.type !== 'resize') return;
 
-        callback({
-          visible: window.innerHeight - visualViewport.height > 0,
-          height:
-            windowHeight - visualViewport.height - visualViewport.offsetTop,
-        });
+        callback({ visible, height });
       };
 
       visualViewport.addEventListener('resize', listener);

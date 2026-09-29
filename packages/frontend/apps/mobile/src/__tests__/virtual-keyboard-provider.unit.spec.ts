@@ -141,6 +141,85 @@ describe('createVisualViewportVirtualKeyboardProvider', () => {
     );
   });
 
+  // Modeled on affine-dev-MobileDebugLog-new-row-enter-5.log (see
+  // .planning/debug/keyboard-focus-tabbar-coordination.md): a real
+  // continuous keyboard-open transition where `visualViewport.height`
+  // stays essentially rock-steady (~385) the entire time (the keyboard's
+  // own occupied height is correctly stable), but `window.innerHeight`
+  // itself swings between 539 and 762 and back down again across ~2
+  // seconds of genuine `resize` events (Safari's dynamic toolbar
+  // collapsing/expanding independently of the keyboard) -- the prior
+  // resize-only fix (keyboard-scroll-noise.md) does not help here since
+  // every one of these is already a real `resize`, not `scroll`, event.
+  // Feeding the live, chrome-collapse-affected `window.innerHeight`
+  // straight into the height computation on every event produces
+  // negative computed heights mid-transition, which get written directly
+  // into the keyboard-toolbar/tab-bar CSS offset -- the reported
+  // mis-stacking/covering symptom.
+  const newRowEnter5ResizeSequence: [
+    windowInnerHeight: number,
+    visualViewportHeight: number,
+    visualViewportOffsetTop: number,
+  ][] = [
+    [559, 384.984375, 203.328125],
+    [563, 385, 198.65625],
+    [595, 384.984375, 192.328125],
+    [623, 385, 202.65625],
+    [617, 384.984375, 209.328125],
+    [630, 385, 213],
+    [619, 384.984375, 221.328125],
+    [596, 385, 224.65625],
+    [568, 384.984375, 226.328125],
+    [539, 385, 225.65625],
+    [540, 384.984375, 222.328125],
+    [541, 385, 220.65625],
+    [545, 384.984375, 217.328125],
+    [546, 385, 216],
+    [549, 384.984375, 213.328125],
+    [550, 385, 212],
+    [556, 384.984375, 206.328125],
+    [559, 385, 202.65625],
+    [578, 384.984375, 201.328125],
+    [600, 385, 199.65625],
+    [629, 384.984375, 194.328125],
+    [665, 385, 193],
+    [706, 384.984375, 189.328125],
+    [752, 385, 188],
+    [762, 384.984375, 186.328125],
+    [727, 385, 304.65625],
+    [762, 762, 0],
+    [598, 385, 209.65625],
+  ];
+
+  it('never reports a negative keyboard height while window.innerHeight fluctuates mid-transition (Safari chrome-collapse noise)', () => {
+    const provider = createVisualViewportVirtualKeyboardProvider();
+    const callback = vi.fn();
+    dispose = provider.onChange(callback);
+
+    for (const [
+      windowInnerHeight,
+      height,
+      offsetTop,
+    ] of newRowEnter5ResizeSequence) {
+      fireViewportEvent(
+        viewport,
+        'resize',
+        { height, offsetTop },
+        windowInnerHeight
+      );
+    }
+
+    expect(callback).toHaveBeenCalledTimes(newRowEnter5ResizeSequence.length);
+    for (const call of callback.mock.calls) {
+      const [{ height }] = call as [{ visible: boolean; height: number }];
+      expect(height).toBeGreaterThanOrEqual(0);
+    }
+
+    // The sequence's genuine keyboard-close event (762/762/0) must still be
+    // reported correctly.
+    expect(callback).toHaveBeenNthCalledWith(27, { visible: false, height: 0 });
+  });
+
   it('a correct resize event still updates visible/height as before (no regression)', () => {
     const provider = createVisualViewportVirtualKeyboardProvider();
     const callback = vi.fn();
