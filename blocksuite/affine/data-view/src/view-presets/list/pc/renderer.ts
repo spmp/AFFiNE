@@ -122,10 +122,31 @@ export class ListViewRenderer extends SignalWatcher(
    * (when the just-created row's DOM hasn't mounted yet) via a plain
    * microtask instead, so every attempt stays as close as possible to the
    * original gesture.
+   *
+   * keyboard-focus-tabbar-coordination (round 2): the synchronous-first-
+   * attempt fix above only ever helps the re-focus-an-EXISTING-row paths
+   * (Backspace/Delete merge) -- a row freshly created by `addRowAfter`/
+   * `splitRowAtCursor` (the Enter path, the one fresh on-device reports
+   * say is STILL broken) never exists in the DOM yet at attempt 0. The
+   * underlying reactive row list already reflects the new row
+   * synchronously (Yjs mutation observers fire synchronously), but Lit's
+   * own re-render (the `repeat()` directive that mounts the row) is
+   * scheduled onto a microtask by default, so this path always fell
+   * through to the microtask retry below -- which does not reliably
+   * preserve iOS's keyboard-summon gesture window either. Force Lit's own
+   * pending update to commit synchronously (bypassing its microtask
+   * scheduler) so the just-created row's DOM exists before this first
+   * attempt, keeping the eventual `.focus()`/`.focusEnd()` call in the
+   * same call stack as the triggering keydown.
    */
   private focusRowTitle(rowId: string, offset?: number) {
     const focus = (attempt = 0) => {
-      const row = this.querySelector<HTMLElement>(`[data-row-id="${rowId}"]`);
+      let row = this.querySelector<HTMLElement>(`[data-row-id="${rowId}"]`);
+      if (!row && attempt === 0) {
+        this.requestUpdate();
+        this.performUpdate();
+        row = this.querySelector<HTMLElement>(`[data-row-id="${rowId}"]`);
+      }
       const titleCell = row?.querySelector<HTMLElement>(
         'data-view-header-area-text'
       ) as

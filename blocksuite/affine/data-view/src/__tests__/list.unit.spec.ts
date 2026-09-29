@@ -702,6 +702,89 @@ describe('list view preset', () => {
         globalThis.requestAnimationFrame = originalRaf;
       }
     });
+
+    // Round 2 (fresh on-device report, "Enter still creates a new row and
+    // hides the keyboard; clicking into the new row is still problematic" —
+    // the round-1 fix above did NOT fully resolve this). Diagnosis: for a
+    // row freshly created by `addRowAfter`/`splitRowAtCursor`, the
+    // underlying reactive row list (`rowIds$`/`rows$`) already reflects the
+    // new row synchronously (the Yjs mutation's observers fire
+    // synchronously), but Lit's own DOM re-render (the `repeat()`
+    // directive that would actually mount `[data-row-id="new-row"]`) is
+    // scheduled onto a microtask by default — so attempt 0 (the
+    // synchronous-first-attempt fix from round 1) ALWAYS finds `row ===
+    // null` for a just-created row specifically, and the fix above only
+    // ever benefited the re-focus-an-EXISTING-row paths (Backspace/Delete
+    // merge). The Enter-new-row path always fell through to the microtask
+    // retry, which fresh on-device evidence shows does not reliably
+    // preserve iOS's keyboard-summon gesture window either. Force Lit's
+    // own pending update to commit synchronously (a standard, documented
+    // Lit pattern: `requestUpdate()` then `performUpdate()` directly,
+    // bypassing the microtask scheduler) so the just-created row's DOM
+    // exists before the very first (synchronous, same-call-stack-as-the-
+    // keydown) focus attempt, instead of relying on the microtask retry.
+    test('forces a synchronous Lit re-render (not a microtask wait) to focus a row created in the same tick, e.g. by addRowAfter', () => {
+      const renderer = new ListViewRenderer();
+
+      const rafSpy = vi.fn();
+      const originalRaf = globalThis.requestAnimationFrame;
+      globalThis.requestAnimationFrame = rafSpy as never;
+
+      let attached: {
+        row: HTMLElement;
+        focusCalls: unknown[];
+        focusEndCalls: unknown[];
+      } | null = null;
+      const requestUpdateSpy = vi.fn();
+      // Simulate Lit's real behavior when forced: a direct `performUpdate()`
+      // call synchronously commits the pending re-render that would
+      // otherwise land on a microtask -- attaching the just-created row's
+      // DOM right here, in the same tick.
+      const performUpdateSpy = vi.fn(() => {
+        attached = attachRow(renderer, 'new-row');
+      });
+      (renderer as unknown as { requestUpdate: () => void }).requestUpdate =
+        requestUpdateSpy;
+      (renderer as unknown as { performUpdate: () => void }).performUpdate =
+        performUpdateSpy;
+
+      try {
+        (
+          renderer as unknown as { focusRowTitle: (rowId: string) => void }
+        ).focusRowTitle('new-row');
+
+        // No await, no microtask turn elapsed -- these assertions run
+        // synchronously, in the same tick/call stack as the triggering
+        // keydown.
+        expect(requestUpdateSpy).toHaveBeenCalledTimes(1);
+        expect(performUpdateSpy).toHaveBeenCalledTimes(1);
+        expect(attached).not.toBeNull();
+        expect(attached!.focusCalls).toEqual([true]);
+        expect(attached!.focusEndCalls).toEqual([true]);
+        expect(rafSpy).not.toHaveBeenCalled();
+      } finally {
+        globalThis.requestAnimationFrame = originalRaf;
+      }
+    });
+
+    test('does not force a synchronous re-render when the target row DOM already exists (no redundant flush)', () => {
+      const renderer = new ListViewRenderer();
+      attachRow(renderer, 'row-1');
+
+      const requestUpdateSpy = vi.fn();
+      const performUpdateSpy = vi.fn();
+      (renderer as unknown as { requestUpdate: () => void }).requestUpdate =
+        requestUpdateSpy;
+      (renderer as unknown as { performUpdate: () => void }).performUpdate =
+        performUpdateSpy;
+
+      (
+        renderer as unknown as { focusRowTitle: (rowId: string) => void }
+      ).focusRowTitle('row-1');
+
+      expect(requestUpdateSpy).not.toHaveBeenCalled();
+      expect(performUpdateSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('Story 2.8: row drag-to-reorder and drag-to-reindent', () => {
