@@ -41,3 +41,33 @@ export function formatTime(date: Date) {
   const strTime = `${month}-${day} ${hours}:${minutes}`;
   return strTime;
 }
+
+/**
+ * keyboard-focus-tabbar-coordination (round 2): the widget's fallback
+ * `show`/`hide` keyboard actions (`widget.ts`, used whenever the platform's
+ * `VirtualKeyboardProvider` does not itself implement `show`/`hide` -- true
+ * on BOTH the PWA `createVisualViewportVirtualKeyboardProvider` and the
+ * native iOS Capacitor provider, per that file's own "Keyboard.show() is
+ * not implemented" comment) only take effect when the widget's own
+ * `rootComponent` -- the page/note ROOT block's component, not any specific
+ * row -- IS `document.activeElement`. Real on-device capture
+ * (`affine-dev-MobileDebugLog_debug-plus-1.log`) shows a
+ * `keyboard-toolbar-inputmode-toggle` event fired with `isActiveElement:
+ * false, inputModeBefore: "", inputModeAfter: ""` -- a confirmed silent
+ * no-op -- while editing a Journal Todo row, whose actual focused element
+ * (the row itself, or its title cell's inline editor, per
+ * `list/pc/renderer.ts`'s `focusRowTitle`) is never literally
+ * `rootComponent`, even though it IS a DOM descendant of it (this package
+ * uses `ShadowlessElement` throughout -- no shadow-root boundary blocks a
+ * `.contains()` check). Exact equality was too strict for row/cell-level
+ * editing contexts; membership in the root's own subtree is the correct
+ * test for "the editor area currently has focus." This is the confirmed
+ * mechanism behind both the "+' button doesn't collapse the keyboard" and
+ * "keyboard-toggle button doesn't (re)open the keyboard" reports.
+ */
+export function isRootComponentActive(
+  rootComponent: HTMLElement | null | undefined,
+  activeElement: Element | null
+): boolean {
+  return !!rootComponent && rootComponent.contains(activeElement);
+}

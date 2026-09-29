@@ -41,6 +41,9 @@
     "@toeverything/theme": "^1.1.23",
     "lit": "^3.2.0"
   },
+  "devDependencies": {
+    "vitest": "^4.1.8"
+  },
   "exports": {
     ".": "./src/index.ts",
     "./view": "./src/view.ts"

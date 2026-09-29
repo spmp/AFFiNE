@@ -209,15 +209,144 @@ describe('createVisualViewportVirtualKeyboardProvider', () => {
       );
     }
 
-    expect(callback).toHaveBeenCalledTimes(newRowEnter5ResizeSequence.length);
+    // round 2 (keyboard-focus-tabbar-coordination): with the
+    // visualViewport.height-change gate added on top of this fix, almost
+    // every event in this sequence has visualViewport.height alternating
+    // between 384.984375/385 (sub-pixel jitter, well under the 1px
+    // epsilon) — none of those are genuine keyboard transitions, so they
+    // are now suppressed entirely instead of each producing its own
+    // (merely non-negative, but still bouncing) callback call. Only 3
+    // calls should fire: the seed (event 1), the sequence's genuine
+    // keyboard-close event (event 27, 762/762/0), and the genuine reopen
+    // that follows it (event 28).
+    expect(callback).toHaveBeenCalledTimes(3);
     for (const call of callback.mock.calls) {
       const [{ height }] = call as [{ visible: boolean; height: number }];
       expect(height).toBeGreaterThanOrEqual(0);
     }
 
-    // The sequence's genuine keyboard-close event (762/762/0) must still be
-    // reported correctly.
-    expect(callback).toHaveBeenNthCalledWith(27, { visible: false, height: 0 });
+    expect(callback).toHaveBeenNthCalledWith(1, { visible: true, height: 0 });
+    expect(callback).toHaveBeenNthCalledWith(2, { visible: false, height: 0 });
+    expect(callback).toHaveBeenNthCalledWith(3, {
+      visible: true,
+      height: expect.closeTo(167.34375, 3),
+    });
+  });
+
+  // Modeled on affine-dev-MobileDebugLog-new-row-enter-6.log (round 2, see
+  // .planning/debug/keyboard-focus-tabbar-coordination.md "Current Focus
+  // (Round 2)" for the fresh on-device report this replays). Here
+  // `window.innerHeight` stays perfectly constant (812) — fix 2b's own
+  // failure mode does not apply — and `visualViewport.height` (the
+  // keyboard's own occupied footprint) also stays rock-steady (~435,
+  // sub-pixel jitter only) for the entire real capture, yet
+  // `visualViewport.offsetTop` swings from 0 up to 370px via a run of
+  // GENUINE `resize` events (not `scroll` — the pre-existing resize-only
+  // filter does not help here) as the user scrolls the page with the
+  // keyboard open. This is the confirmed mechanism behind the "keyboard
+  // toolbar creeps/lifts away while scrolling" report.
+  it('does not let a genuine resize event with an unchanged visualViewport.height corrupt the reported height (new-row-enter-6.log offsetTop swing)', () => {
+    const provider = createVisualViewportVirtualKeyboardProvider();
+    const callback = vi.fn();
+    dispose = provider.onChange(callback);
+
+    const sixLogResizeSequence: [
+      windowInnerHeight: number,
+      visualViewportHeight: number,
+      visualViewportOffsetTop: number,
+    ][] = [
+      [812, 434.984375, 0], // settled baseline: height ~377.02
+      [812, 435, 0],
+      [812, 434.984375, 0],
+      [812, 435, 0],
+      [812, 434.984375, 187.328125], // offsetTop starts swinging...
+      [812, 434.984375, 286.328125],
+      [812, 435, 338],
+      [812, 434.984375, 354.328125],
+      [812, 435, 370], // ...almost back to a keyboard-height-sized offsetTop
+      [812, 434.984375, 377.015625],
+      [812, 435, 377],
+    ];
+
+    for (const [windowInnerHeight, height, offsetTop] of sixLogResizeSequence) {
+      fireViewportEvent(
+        viewport,
+        'resize',
+        { height, offsetTop },
+        windowInnerHeight
+      );
+    }
+
+    // Only the seed event produces a callback — every later event in this
+    // real 370px offsetTop swing carries the same (within rounding noise)
+    // visualViewport.height, so none of them are genuine keyboard-footprint
+    // changes.
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback).toHaveBeenNthCalledWith(1, {
+      visible: true,
+      height: expect.closeTo(377.015625, 3),
+    });
+  });
+
+  // Modeled on
+  // affine-dev-MobileDebugLog_debug-top-to-bottom-jump-on-row-click-attempt-1.log
+  // (round 2) — the same offsetTop-swing-via-resize mechanism as the test
+  // above, but composited with a SIMULTANEOUS window.innerHeight dip
+  // (492/547/577/...) of the kind fix 2b already guards against, exactly
+  // as they co-occurred on-device. Proves the two guards compose
+  // correctly: neither the windowInnerHeight dip nor the offsetTop swing
+  // is allowed to move the reported height away from its last genuine
+  // value while visualViewport.height itself never changes.
+  it('does not let a genuine resize event with an unchanged visualViewport.height corrupt the reported height (top-to-bottom-jump.log offsetTop swing + windowInnerHeight dip)', () => {
+    const provider = createVisualViewportVirtualKeyboardProvider();
+    const callback = vi.fn();
+    dispose = provider.onChange(callback);
+
+    fireViewportEvent(viewport, 'resize', { height: 385, offsetTop: 0 }, 762);
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback).toHaveBeenLastCalledWith({ visible: true, height: 377 });
+
+    const jumpLogResizeSequence: [
+      windowInnerHeight: number,
+      visualViewportHeight: number,
+      visualViewportOffsetTop: number,
+    ][] = [
+      [762, 384.984375, 377.015625],
+      [762, 385, 377],
+      [762, 384.984375, 300.328125],
+      [762, 385, 257.671875],
+      [492, 384.984375, 325.328125],
+      [547, 385, 269.65625],
+      [577, 384.984375, 240.328125],
+      [604, 385, 213],
+      [630, 384.984375, 187.328125],
+      [642, 385, 175],
+      [753, 384.984375, 64.328125],
+      [762, 385, 33],
+      [762, 384.984375, 12.328125],
+      [762, 385, 0],
+      [762, 384.984375, 0],
+      [762, 385, 0],
+    ];
+
+    for (const [
+      windowInnerHeight,
+      height,
+      offsetTop,
+    ] of jumpLogResizeSequence) {
+      fireViewportEvent(
+        viewport,
+        'resize',
+        { height, offsetTop },
+        windowInnerHeight
+      );
+    }
+
+    // None of these 16 further genuine resize events change
+    // visualViewport.height by more than the epsilon, despite offsetTop
+    // swinging up to 377px AND windowInnerHeight dipping to 492 along the
+    // way — still exactly the one call from the seed above.
+    expect(callback).toHaveBeenCalledTimes(1);
   });
 
   it('a correct resize event still updates visible/height as before (no regression)', () => {

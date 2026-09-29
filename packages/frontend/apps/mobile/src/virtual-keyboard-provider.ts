@@ -48,7 +48,34 @@ import type { VirtualKeyboardProvider } from '@affine/core/mobile/modules/virtua
  * self-calibrating baseline instead of trusting the live, possibly
  * chrome-collapsed value on every event, and never report a negative
  * height.
+ *
+ * keyboard-focus-tabbar-coordination (round 2): the baseline fix above
+ * only guards against `window.innerHeight` instability. Two more real
+ * on-device captures (`affine-dev-MobileDebugLog-new-row-enter-6.log` and
+ * `..._debug-top-to-bottom-jump-on-row-click-attempt-1.log`) show a
+ * SIBLING failure mode — a long run of genuine `resize` events (already
+ * passing the resize-only filter) where `visualViewport.height` (the
+ * keyboard's own occupied footprint — the one quantity that should only
+ * change on a real keyboard open/close/resize) stays rock-steady
+ * (sub-pixel jitter only) while `visualViewport.offsetTop` swings by
+ * hundreds of pixels as the user scrolls the page with the keyboard open.
+ * Feeding that swing straight into the height formula (exactly like the
+ * `window.innerHeight` noise fixed above, just via a different input
+ * variable) reproduces the same class of bogus, direction-proportional
+ * swing in the reported height — the confirmed mechanism behind the
+ * "keyboard-toolbar creeps upward while typing" and "lifts away from the
+ * keyboard while scrolling, sticks at its own height" reports, and a
+ * plausible contributor to the "scrolling to the top jumps back to the
+ * bottom" report (the toolbar's reserved spacer height swinging by
+ * hundreds of px mid-scroll perturbs the page's own scroll metrics).
+ * Only accept a `resize` event as a genuine keyboard transition when
+ * `visualViewport.height` itself has changed by more than a small
+ * rounding-noise epsilon since the last accepted sample; otherwise keep
+ * reporting the last known-good value instead of recomputing from
+ * whichever OTHER quantity happened to be noisy on this event.
  */
+const VISUAL_VIEWPORT_HEIGHT_EPSILON_PX = 1;
+
 export function createVisualViewportVirtualKeyboardProvider(): VirtualKeyboardProvider {
   return {
     onChange: callback => {
@@ -58,6 +85,7 @@ export function createVisualViewportVirtualKeyboardProvider(): VirtualKeyboardPr
       }
 
       let maxWindowHeight: number | undefined;
+      let lastAcceptedVisualViewportHeight: number | undefined;
 
       const listener = (event: Event) => {
         if (!visualViewport) return;
@@ -103,6 +131,21 @@ export function createVisualViewportVirtualKeyboardProvider(): VirtualKeyboardPr
         // `resize` does — see module doc comment. Do not feed `scroll` into
         // the visible/height computation.
         if (event.type !== 'resize') return;
+
+        // round 2: a `resize` event whose own `visualViewport.height` did
+        // not meaningfully change from the last accepted sample is not a
+        // genuine keyboard transition — see module doc comment. Keep
+        // reporting the last known-good value rather than one corrupted by
+        // whichever OTHER quantity (window.innerHeight, offsetTop) was
+        // noisy on this particular event.
+        if (
+          lastAcceptedVisualViewportHeight !== undefined &&
+          Math.abs(visualViewport.height - lastAcceptedVisualViewportHeight) <=
+            VISUAL_VIEWPORT_HEIGHT_EPSILON_PX
+        ) {
+          return;
+        }
+        lastAcceptedVisualViewportHeight = visualViewport.height;
 
         callback({ visible, height });
       };

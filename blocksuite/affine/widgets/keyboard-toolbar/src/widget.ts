@@ -16,6 +16,7 @@ import {
   defaultKeyboardToolbarConfig,
   KeyboardToolbarConfigExtension,
 } from './config.js';
+import { isRootComponentActive } from './utils.js';
 
 export const AFFINE_KEYBOARD_TOOLBAR_WIDGET = 'affine-keyboard-toolbar-widget';
 
@@ -33,15 +34,39 @@ export class AffineKeyboardToolbarWidget extends WidgetComponent<RootBlockModel>
       fallback: true,
       show: () => {
         const rootComponent = this.block?.rootComponent;
-        if (rootComponent && rootComponent === document.activeElement) {
+        const isActive = isRootComponentActive(
+          rootComponent,
+          document.activeElement
+        );
+        const inputModeBefore = rootComponent?.inputMode;
+        if (isActive && rootComponent) {
           rootComponent.inputMode = this._initialInputMode;
         }
+        console.debug('[MobileDebugLog] keyboard-toolbar-inputmode-toggle', {
+          timestampMs: Date.now(),
+          action: 'show',
+          isActiveElement: !!isActive,
+          inputModeBefore,
+          inputModeAfter: isActive ? this._initialInputMode : inputModeBefore,
+        });
       },
       hide: () => {
         const rootComponent = this.block?.rootComponent;
-        if (rootComponent && rootComponent === document.activeElement) {
+        const isActive = isRootComponentActive(
+          rootComponent,
+          document.activeElement
+        );
+        const inputModeBefore = rootComponent?.inputMode;
+        if (isActive && rootComponent) {
           rootComponent.inputMode = 'none';
         }
+        console.debug('[MobileDebugLog] keyboard-toolbar-inputmode-toggle', {
+          timestampMs: Date.now(),
+          action: 'hide',
+          isActiveElement: !!isActive,
+          inputModeBefore,
+          inputModeAfter: isActive ? 'none' : inputModeBefore,
+        });
       },
       ...provider,
     };
