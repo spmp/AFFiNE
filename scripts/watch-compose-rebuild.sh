@@ -246,21 +246,28 @@ run_rebuild() {
   recycle_builder
 
   write_status building 'Building the compose service(s).'
+  local build_version
+  build_version=$(date --utc +%Y%m%d.%H%M%S.%N)
   {
-    printf '\n=== [%s] docker compose build ===\n' "$(date -u +%FT%TZ)"
+    printf '\n=== [%s] docker compose build (BUILD_VERSION=%s) ===\n' "$(date -u +%FT%TZ)" "$build_version"
   } | tee -a "$build_log" || true
   export BUILDKIT_PROGRESS=plain
   run_stage 'Compose build failed; the trigger was retained.' "$build_log" \
-    run_compose build "${target_args[@]}" || return 1
+    run_compose build --build-arg "BUILD_VERSION=$build_version" "${target_args[@]}" || return 1
   unset BUILDKIT_PROGRESS
 
   write_status stopping 'Stopping the running stack.'
   run_stage 'Compose down failed; the trigger was retained.' "$deploy_log" \
     run_compose down || return 1
 
+  # --ignore-pull-failures: services that are only ever locally built (no
+  # registry image, e.g. this project's own `affine-dev` image tag) have
+  # nothing to pull; without this flag `docker compose pull` hard-fails the
+  # whole rebuild on "pull access denied ... repository does not exist"
+  # instead of just skipping them.
   write_status pulling 'Pulling any non-locally-built images.'
   run_stage 'Compose pull failed; the trigger was retained.' "$deploy_log" \
-    run_compose pull || return 1
+    run_compose pull --ignore-pull-failures || return 1
 
   write_status starting 'Starting the stack.'
   run_stage 'Compose up failed; the trigger was retained.' "$deploy_log" \
