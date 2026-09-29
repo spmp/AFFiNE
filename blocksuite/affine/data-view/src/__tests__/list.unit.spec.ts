@@ -1,6 +1,6 @@
 import { signal } from '@preact/signals-core';
 import { nothing } from 'lit';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import type { ViewManager } from '../core/view-manager/view-manager.js';
 import { ViewManagerBase } from '../core/view-manager/view-manager.js';
@@ -597,6 +597,111 @@ describe('list view preset', () => {
     expect(getListRendererSource()).toMatch(
       /repeat\)\(\s*(?:\/\/[^\n]*\n\s*)*this\.view\.rows\$\.value\.filter\(\s*\(?row\)? => this\.getRowDueDateState\(row\.rowId\) !== ["']hide["']\s*\),\s*\(?row\)? => row\.rowId,/
     );
+  });
+
+  describe('mobile keyboard-focus-tabbar-coordination: focusRowTitle gesture-synchronicity', () => {
+    // Real on-device iOS Safari captures (see
+    // `.planning/debug/keyboard-focus-tabbar-coordination.md`,
+    // `affine-dev-MobileDebugLog-new-row-enter-*.log`) show that after
+    // pressing Enter to create/split a row, BlockSuite's own
+    // selection/active state updates correctly (the keyboard toolbar
+    // widget re-mounts, proving focus-adjacent reactivity is fine) but the
+    // real on-screen keyboard does not reliably reopen -- sometimes taking
+    // 5+ seconds and several tap attempts to recover. Mobile WebKit only
+    // honors a programmatic `.focus()` call for virtual-keyboard summon
+    // when it happens within the synchronous (or microtask) continuation
+    // of the triggering trusted event; `requestAnimationFrame` defers to
+    // the next paint -- a full macrotask later -- which loses that
+    // activation window. `focusRowTitle` (the single choke point for the
+    // Enter/Backspace/Delete-driven refocus paths, `list/pc/renderer.ts`
+    // -- List has no separate mobile component, so this same code runs on
+    // mobile too) must not defer through `requestAnimationFrame` when
+    // there is nothing to wait for.
+    const attachRow = (
+      renderer: ListViewRenderer,
+      rowId: string
+    ): {
+      row: HTMLElement;
+      focusCalls: unknown[];
+      focusEndCalls: unknown[];
+    } => {
+      const row = document.createElement('div');
+      row.dataset.rowId = rowId;
+      const focusCalls: unknown[] = [];
+      row.focus = () => {
+        focusCalls.push(true);
+      };
+      const titleCell = document.createElement('data-view-header-area-text');
+      const focusEndCalls: unknown[] = [];
+      (
+        titleCell as unknown as {
+          inlineEditor: { focusEnd: () => void };
+        }
+      ).inlineEditor = {
+        focusEnd: () => {
+          focusEndCalls.push(true);
+        },
+      };
+      row.append(titleCell);
+      renderer.append(row);
+      return { row, focusCalls, focusEndCalls };
+    };
+
+    test('restores focus synchronously (no requestAnimationFrame) when the target row DOM already exists', () => {
+      const renderer = new ListViewRenderer();
+      const { focusCalls, focusEndCalls } = attachRow(renderer, 'row-1');
+
+      const rafSpy = vi.fn();
+      const originalRaf = globalThis.requestAnimationFrame;
+      globalThis.requestAnimationFrame = rafSpy as never;
+
+      try {
+        (
+          renderer as unknown as { focusRowTitle: (rowId: string) => void }
+        ).focusRowTitle('row-1');
+
+        // No macrotask/paint-frame boundary has been crossed here --
+        // these assertions run synchronously, in the same tick as the
+        // call, i.e. still inside the originating keydown's call stack.
+        expect(focusCalls).toEqual([true]);
+        expect(focusEndCalls).toEqual([true]);
+        expect(rafSpy).not.toHaveBeenCalled();
+      } finally {
+        globalThis.requestAnimationFrame = originalRaf;
+      }
+    });
+
+    test('retries via microtask (not requestAnimationFrame) until a just-created row mounts', async () => {
+      const renderer = new ListViewRenderer();
+
+      const rafSpy = vi.fn();
+      const originalRaf = globalThis.requestAnimationFrame;
+      globalThis.requestAnimationFrame = rafSpy as never;
+
+      try {
+        (
+          renderer as unknown as { focusRowTitle: (rowId: string) => void }
+        ).focusRowTitle('new-row');
+
+        // Simulate the new row's DOM mounting one microtask later (Lit's
+        // own signal-triggered re-render), same as a freshly-inserted row
+        // created by `addRowAfter`/`splitRowAtCursor`.
+        await Promise.resolve();
+        const { focusCalls, focusEndCalls } = attachRow(renderer, 'new-row');
+
+        // Flush a few more microtask turns for the retry loop to observe
+        // the newly-mounted row -- no timers, no requestAnimationFrame.
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(focusCalls).toEqual([true]);
+        expect(focusEndCalls).toEqual([true]);
+        expect(rafSpy).not.toHaveBeenCalled();
+      } finally {
+        globalThis.requestAnimationFrame = originalRaf;
+      }
+    });
   });
 
   describe('Story 2.8: row drag-to-reorder and drag-to-reindent', () => {

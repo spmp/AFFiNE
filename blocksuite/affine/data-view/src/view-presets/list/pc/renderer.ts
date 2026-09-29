@@ -106,6 +106,22 @@ export class ListViewRenderer extends SignalWatcher(
    * silently no-ops for them (`std.view.getBlock(id)` returns `null`),
    * leaving this caller-supplied fallback as the only place a
    * merge-boundary offset can be applied.
+   *
+   * keyboard-focus-tabbar-coordination: must not defer the first attempt
+   * through `requestAnimationFrame`. On-device iOS Safari captures (see
+   * `.planning/debug/keyboard-focus-tabbar-coordination.md`) show
+   * BlockSuite's own selection/active state updating correctly after
+   * Enter/Backspace/Delete recreate or merge a row, but the real
+   * on-screen keyboard failing to reopen -- sometimes for 5+ seconds and
+   * several tap attempts. Mobile WebKit only re-summons the virtual
+   * keyboard for a `.focus()` call that stays within the synchronous (or
+   * microtask) continuation of the triggering trusted keydown;
+   * `requestAnimationFrame` defers to the next paint -- a full macrotask
+   * later -- which loses that activation window even when the target
+   * row's DOM is already present and there is nothing to wait for. Retry
+   * (when the just-created row's DOM hasn't mounted yet) via a plain
+   * microtask instead, so every attempt stays as close as possible to the
+   * original gesture.
    */
   private focusRowTitle(rowId: string, offset?: number) {
     const focus = (attempt = 0) => {
@@ -134,10 +150,12 @@ export class ListViewRenderer extends SignalWatcher(
         richText.focus();
       }
       if (!titleCell?.inlineEditor && attempt < 5) {
-        requestAnimationFrame(() => focus(attempt + 1));
+        Promise.resolve()
+          .then(() => focus(attempt + 1))
+          .catch(console.error);
       }
     };
-    requestAnimationFrame(() => focus());
+    focus();
   }
 
   /**
