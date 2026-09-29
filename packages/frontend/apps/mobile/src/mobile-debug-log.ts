@@ -88,3 +88,55 @@ export function installMobileDebugLogCapture(): () => void {
     console.debug = originalConsoleDebug;
   };
 }
+
+/**
+ * keyboard-focus-tabbar-coordination (round 2): diagnostic-only global
+ * pointer capture, requested to help diagnose the "keyboard-toggle button
+ * only occasionally closes the keyboard, suspect clicks landing on the
+ * wrong element" report. Logs `clientX`/`clientY` plus BOTH the element
+ * that actually received the event (`event.target`) and the element a
+ * plain hit-test at that same point would find
+ * (`document.elementFromPoint`) — normally identical, but divergence (or
+ * either one not being the expected button/row) is exactly the signal
+ * needed to confirm or refute "the tap registered on the wrong element."
+ *
+ * Uses the SAME `[MobileDebugLog] ...` marker convention as every other
+ * call site in this codebase — `installMobileDebugLogCapture`'s
+ * `console.debug` monkey-patch (installed separately, in `app.tsx`)
+ * already captures and forwards ANY marker-prefixed call regardless of
+ * where it originates, so this function only needs to install the
+ * listener and log; no changes to the capture/transport pipeline itself.
+ *
+ * Listens on `document` in the CAPTURE phase so it observes every event
+ * before any handler downstream can stop its propagation, and `passive:
+ * true` (never calls `preventDefault`/`stopPropagation`) so it can never
+ * alter real event handling — this is instrumentation only, not a
+ * behavior change.
+ */
+export function installPointerDebugLogCapture(): () => void {
+  const logPointerEvent = (event: MouseEvent) => {
+    const { clientX, clientY, type } = event;
+    const target = event.target instanceof Element ? event.target : null;
+    const elementAtPoint = document.elementFromPoint(clientX, clientY);
+
+    console.debug(`${MARKER} pointer-event`, {
+      type,
+      timestampMs: Date.now(),
+      clientX,
+      clientY,
+      targetTag: target?.tagName ?? null,
+      targetId: target?.id || null,
+      elementAtPointTag: elementAtPoint?.tagName ?? null,
+      elementAtPointId: elementAtPoint?.id || null,
+    });
+  };
+
+  const options: AddEventListenerOptions = { capture: true, passive: true };
+  document.addEventListener('pointerdown', logPointerEvent, options);
+  document.addEventListener('click', logPointerEvent, options);
+
+  return () => {
+    document.removeEventListener('pointerdown', logPointerEvent, options);
+    document.removeEventListener('click', logPointerEvent, options);
+  };
+}

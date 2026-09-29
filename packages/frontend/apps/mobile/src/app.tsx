@@ -22,11 +22,15 @@ import { OpClient } from '@toeverything/infra/op';
 import { Suspense } from 'react';
 import { RouterProvider } from 'react-router-dom';
 
-import { installMobileDebugLogCapture } from './mobile-debug-log';
+import {
+  installMobileDebugLogCapture,
+  installPointerDebugLogCapture,
+} from './mobile-debug-log';
 import { createVisualViewportVirtualKeyboardProvider } from './virtual-keyboard-provider';
 
-// Debug-only tool, active for the whole app lifetime — no disposal wiring needed.
+// Debug-only tools, active for the whole app lifetime — no disposal wiring needed.
 installMobileDebugLogCapture();
+installPointerDebugLogCapture();
 
 let storeManagerClient: StoreManagerClient;
 
