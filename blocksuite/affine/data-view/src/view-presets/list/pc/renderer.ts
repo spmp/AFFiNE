@@ -158,9 +158,39 @@ export class ListViewRenderer extends SignalWatcher(
                 length: number;
               }) => void;
             };
+            requestUpdate?: () => void;
+            performUpdate?: () => void;
           })
         | null;
-      const richText = row?.querySelector<HTMLElement>('rich-text');
+      // keyboard-enter-focus-loss: the row-level flush above only commits
+      // ListViewRenderer's own template -- enough to append a fresh
+      // HeaderAreaTextCell instance into the DOM for a brand-new row, but
+      // that instance is its OWN separate LitElement whose first render()
+      // (the one that creates <rich-text>, the only thing carrying a real
+      // contenteditable) is independently scheduled on Lit's default
+      // microtask scheduler, not flushed by the row's own performUpdate().
+      // Force it synchronously too, on the first attempt, mirroring the
+      // exact same pattern one level up -- otherwise titleCell.inlineEditor
+      // is never ready on attempt 0 for a genuinely new row. See
+      // .planning/debug/keyboard-enter-focus-loss.md.
+      if (attempt === 0 && titleCell && !titleCell.inlineEditor) {
+        titleCell.requestUpdate?.();
+        titleCell.performUpdate?.();
+      }
+      const richText = row?.querySelector<
+        HTMLElement & {
+          requestUpdate?: () => void;
+          performUpdate?: () => void;
+        }
+      >('rich-text');
+      // Same gap, one level deeper still: <rich-text> is itself a separate
+      // LitElement whose own render() (the thing that actually creates the
+      // contenteditable div `inlineEditor` needs to summon a keyboard for)
+      // is likewise deferred to a microtask unless forced.
+      if (attempt === 0 && richText && !titleCell?.inlineEditor) {
+        richText.requestUpdate?.();
+        richText.performUpdate?.();
+      }
       row?.focus();
       if (offset != null && titleCell?.inlineEditor?.setInlineRange) {
         titleCell.inlineEditor.setInlineRange({ index: offset, length: 0 });
@@ -168,7 +198,14 @@ export class ListViewRenderer extends SignalWatcher(
         titleCell?.inlineEditor?.focusEnd?.();
       }
       if (!titleCell?.inlineEditor && richText) {
-        richText.focus();
+        // <rich-text> itself is not contenteditable (its own render() puts
+        // that on a descendant div) -- focusing the wrapper is a no-op that
+        // leaves DOM focus wherever it already was, which is why this
+        // fallback previously never actually reached a real editable node
+        // for a brand-new row.
+        const editable =
+          richText.querySelector<HTMLElement>('[contenteditable]');
+        (editable ?? richText).focus();
       }
       if (!titleCell?.inlineEditor && attempt < 5) {
         Promise.resolve()
