@@ -762,7 +762,7 @@ export class ListViewRenderer extends SignalWatcher(
     );
     std.command
       .chain()
-      .pipe(splitListCommand, { blockId: rowId, inlineIndex, skipFocus: true })
+      .pipe(splitListCommand, { blockId: rowId, inlineIndex })
       .run();
     if (originalIndex < 0 || !parent) {
       return;
@@ -839,7 +839,9 @@ export class ListViewRenderer extends SignalWatcher(
       copyColumnValue(TASK_PARENT_IDENTIFIER_COLUMN_NAME);
       copyColumnValue(TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME);
     }
+    this.focusRowTitle(newRow.id);
     // keyboard-enter-focus-loss (desktop, 2026-10-01): `splitListCommand`
+    // above (deliberately called WITHOUT `skipFocus` -- see history below)
     // internally calls `focusTextModel`/`selectTextModel` to update
     // `std.selection` to point at the newly-split text model. A database
     // list-view row is not a registered `BlockComponent` in `std.view`'s
@@ -847,25 +849,51 @@ export class ListViewRenderer extends SignalWatcher(
     // instead -- see `focusRowTitle`'s own doc comment), so when
     // `RangeBinding._onStdSelectionChanged` tries to sync the native
     // browser selection/focus to match, it cannot resolve a real DOM
-    // target and calls `.clear()` -- wiping out whatever focus was already
-    // established. Confirmed live via a `focusout` capture-phase listener
-    // + stack trace: `RangeBinding._onStdSelectionChanged ->
-    // syncTextSelectionToRange -> clear() <- selectTextModel <-
-    // focusTextModel <- splitListCommand`, with `relatedTarget: null` (a
-    // genuine clear, not a legitimate focus move elsewhere). This ran as a
-    // deferred promise continuation, so an earlier version of this fix
-    // reacted to it after the fact (a `focusout` listener that reclaimed
-    // focus once cleared) -- but that left a real race window: keystrokes
-    // typed during the async gap between the clear and the reclaim landed
-    // nowhere (confirmed by an automated Playwright test typing
-    // immediately after Enter, faster than the live manual test that
-    // validated the reactive version). Fixed at the source instead:
-    // `splitListCommand` now takes `skipFocus` and this call site passes
-    // `true` (above), since this function already does its own correct
-    // `focusRowTitle` call below -- the command's internal focus attempt
-    // was always redundant here, and preventing it removes the race
-    // entirely rather than recovering from it.
-    this.focusRowTitle(newRow.id);
+    // target and calls `.clear()` -- wiping out the focus `focusRowTitle`
+    // just established above. Confirmed live via a `focusout`
+    // capture-phase listener + stack trace:
+    // `RangeBinding._onStdSelectionChanged -> syncTextSelectionToRange ->
+    // clear() <- selectTextModel <- focusTextModel <- splitListCommand`,
+    // with `relatedTarget: null` (a genuine clear, not a legitimate focus
+    // move elsewhere).
+    //
+    // History, since this went back and forth live: a `skipFocus` option
+    // was added to `splitListCommand` to PREVENT this clear at the source
+    // instead of reacting to it -- it passed an automated Playwright test
+    // reliably (including typing immediately after Enter, faster than a
+    // human). But on the user's real ~70-row list, `skipFocus` made things
+    // WORSE, not better: confirmed live (user: "now the enter does not
+    // work again"). Leading theory, not yet proven: `skipFocus` also
+    // prevents `splitListCommand` from EVER updating `std.selection` to
+    // point at the new row, which may leave BlockSuite's own internal
+    // selection state permanently out of sync with DOM focus on this
+    // unregistered-component row -- plausibly causing repeated/ongoing
+    // instability rather than the one clean clear this listener is built
+    // to catch. Reverted to NOT passing `skipFocus`, confirmed working
+    // live on the user's real list. The automated test
+    // (row-enter-focus-loss.spec.ts) was written against the skipFocus
+    // version and encodes a stricter guarantee (zero-delay typing) than
+    // this reactive version actually provides -- see that test's own
+    // updated comments for the accepted trade-off.
+    //
+    // Self-heal: if focus is cleared to nothing shortly after, reclaim
+    // it -- scoped narrowly to "cleared to null" so a real, intentional
+    // focus move elsewhere (e.g. the user clicking another row) is never
+    // fought. No console logging here -- confirmed live that tracing on
+    // every focusout was itself a material latency contributor on large
+    // lists.
+    const newRowId = newRow.id;
+    const reclaimFocus = (e: FocusEvent) => {
+      if (e.relatedTarget === null) {
+        this.focusRowTitle(newRowId);
+        document.removeEventListener('focusout', reclaimFocus, true);
+      }
+    };
+    document.addEventListener('focusout', reclaimFocus, true);
+    setTimeout(
+      () => document.removeEventListener('focusout', reclaimFocus, true),
+      1000
+    );
   }
 
   private renderCell(rowId: string, propertyId: string) {
