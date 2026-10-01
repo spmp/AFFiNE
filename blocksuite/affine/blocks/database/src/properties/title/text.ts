@@ -7,7 +7,7 @@ import {
 } from '@blocksuite/affine-shared/services';
 import { getViewportElement } from '@blocksuite/affine-shared/utils';
 import { BaseCellRenderer } from '@blocksuite/data-view';
-import { IS_MAC } from '@blocksuite/global/env';
+import { IS_MAC, IS_MOBILE } from '@blocksuite/global/env';
 import {
   CheckBoxCheckSolidIcon,
   CheckBoxUnIcon,
@@ -209,13 +209,18 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
   override connectedCallback() {
     super.connectedCallback();
     this.classList.add(titleCellStyle);
-    // `contentEditable = 'false'` here is load-bearing, not decoration —
+    // `contentEditable = 'false'` here is load-bearing, not decoration --
     // same nested-contenteditable boundary fix as `NoteBlockComponent`
-    // (see its `connectedCallback()` doc comment). This title cell's own
-    // descendant rich-text div independently sets `contenteditable="true"`
+    // (see its `connectedCallback()` doc comment, including why this is
+    // now gated to `IS_MOBILE`). This title cell's own descendant
+    // rich-text div independently sets `contenteditable="true"`
     // (`rich-text.ts`), so without an explicit boundary here native tap
-    // hit-testing can briefly resolve to the outer page root instead.
-    this.contentEditable = 'false';
+    // hit-testing can briefly resolve to the outer page root instead --
+    // but only on mobile touch devices; desktop mouse drag-selection
+    // across sibling blocks needs the single continuous editable region.
+    if (IS_MOBILE) {
+      this.contentEditable = 'false';
+    }
 
     this.ensureTodoListRowWhenMounted();
 
