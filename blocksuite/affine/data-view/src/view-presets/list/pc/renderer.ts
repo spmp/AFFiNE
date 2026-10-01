@@ -762,7 +762,7 @@ export class ListViewRenderer extends SignalWatcher(
     );
     std.command
       .chain()
-      .pipe(splitListCommand, { blockId: rowId, inlineIndex })
+      .pipe(splitListCommand, { blockId: rowId, inlineIndex, skipFocus: true })
       .run();
     if (originalIndex < 0 || !parent) {
       return;
@@ -839,6 +839,32 @@ export class ListViewRenderer extends SignalWatcher(
       copyColumnValue(TASK_PARENT_IDENTIFIER_COLUMN_NAME);
       copyColumnValue(TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME);
     }
+    // keyboard-enter-focus-loss (desktop, 2026-10-01): `splitListCommand`
+    // internally calls `focusTextModel`/`selectTextModel` to update
+    // `std.selection` to point at the newly-split text model. A database
+    // list-view row is not a registered `BlockComponent` in `std.view`'s
+    // registry (it's rendered by this class's own `repeat()` directive
+    // instead -- see `focusRowTitle`'s own doc comment), so when
+    // `RangeBinding._onStdSelectionChanged` tries to sync the native
+    // browser selection/focus to match, it cannot resolve a real DOM
+    // target and calls `.clear()` -- wiping out whatever focus was already
+    // established. Confirmed live via a `focusout` capture-phase listener
+    // + stack trace: `RangeBinding._onStdSelectionChanged ->
+    // syncTextSelectionToRange -> clear() <- selectTextModel <-
+    // focusTextModel <- splitListCommand`, with `relatedTarget: null` (a
+    // genuine clear, not a legitimate focus move elsewhere). This ran as a
+    // deferred promise continuation, so an earlier version of this fix
+    // reacted to it after the fact (a `focusout` listener that reclaimed
+    // focus once cleared) -- but that left a real race window: keystrokes
+    // typed during the async gap between the clear and the reclaim landed
+    // nowhere (confirmed by an automated Playwright test typing
+    // immediately after Enter, faster than the live manual test that
+    // validated the reactive version). Fixed at the source instead:
+    // `splitListCommand` now takes `skipFocus` and this call site passes
+    // `true` (above), since this function already does its own correct
+    // `focusRowTitle` call below -- the command's internal focus attempt
+    // was always redundant here, and preventing it removes the race
+    // entirely rather than recovering from it.
     this.focusRowTitle(newRow.id);
   }
 
