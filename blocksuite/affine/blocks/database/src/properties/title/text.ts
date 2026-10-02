@@ -7,7 +7,7 @@ import {
 } from '@blocksuite/affine-shared/services';
 import { getViewportElement } from '@blocksuite/affine-shared/utils';
 import { BaseCellRenderer } from '@blocksuite/data-view';
-import { IS_MAC, IS_MOBILE } from '@blocksuite/global/env';
+import { IS_MAC } from '@blocksuite/global/env';
 import {
   CheckBoxCheckSolidIcon,
   CheckBoxUnIcon,
@@ -209,18 +209,6 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
   override connectedCallback() {
     super.connectedCallback();
     this.classList.add(titleCellStyle);
-    // `contentEditable = 'false'` here is load-bearing, not decoration --
-    // same nested-contenteditable boundary fix as `NoteBlockComponent`
-    // (see its `connectedCallback()` doc comment, including why this is
-    // now gated to `IS_MOBILE`). This title cell's own descendant
-    // rich-text div independently sets `contenteditable="true"`
-    // (`rich-text.ts`), so without an explicit boundary here native tap
-    // hit-testing can briefly resolve to the outer page root instead --
-    // but only on mobile touch devices; desktop mouse drag-selection
-    // across sibling blocks needs the single continuous editable region.
-    if (IS_MOBILE) {
-      this.contentEditable = 'false';
-    }
 
     this.ensureTodoListRowWhenMounted();
 
@@ -339,6 +327,18 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
   }
 
   protected override render(): unknown {
+    // `contentEditable` here is load-bearing, not decoration -- mirrors
+    // `NoteBlockComponent`'s own boundary (see its `renderBlock()` doc
+    // comment): the page root is always `contenteditable="false"`, so this
+    // title cell needs its own `true` to restore editability for its
+    // descendant rich-text div, which independently sets its own
+    // `contenteditable="true"` (`rich-text.ts`). A previous version of this
+    // fix set `false` HERE (gated to `IS_MOBILE`) to resolve the original
+    // MOBILE-14 tap hit-testing jump -- but that isolated each row's title
+    // from its siblings and blocked native cross-row/cross-block
+    // drag-selection. The page-root-level fix removes the ambiguous tap
+    // target at its source, so this cell just needs ordinary editability.
+    this.contentEditable = String(!this.readonly);
     return html`${this.renderTaskStatusCheckbox()}${this.renderIcon()}${this.renderBlockText()}`;
   }
 

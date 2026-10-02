@@ -13,10 +13,7 @@ import {
 type InlineEditorLike = {
   setInlineRange: (range: { index: number; length: number }) => void;
   getInlineRange: () => { index: number; length: number } | null;
-  insertText: (
-    range: { index: number; length: number },
-    text: string
-  ) => void;
+  insertText: (range: { index: number; length: number }, text: string) => void;
 };
 
 type RichTextElement = HTMLElement & {
@@ -72,15 +69,22 @@ async function switchToListView(databaseId: string) {
   return dbEl;
 }
 
-// Phase 4, Plan 03 (MOBILE-14, D-08, Bug A): proves the `contentEditable =
-// 'false'` boundary added to `NoteBlockComponent`/`HeaderAreaTextCell`
-// (reusing `note-ref-block.ts`'s already-shipped pattern for the identical
-// cross-doc case) resolves the same unguarded nested-contenteditable
-// ambiguity between `PageRootBlockComponent`'s page-wide
-// `contentEditable="true"` (`page-root-block.ts`) and each block's own
-// independently-`true` descendant rich-text div (`rich-text.ts`), for
-// ordinary (same-scope, non-nested) note blocks and database rows -- the
-// gap `note-ref-block.ts`'s own fix never covered.
+// Phase 4, Plan 03 (MOBILE-14, D-08, Bug A): proves the nested-contenteditable
+// ambiguity between `PageRootBlockComponent` and each block's own
+// independently-`true` descendant rich-text div (`rich-text.ts`) is resolved.
+//
+// UPDATED (2026-10-01, cross-block-selection-regression): the original fix
+// put `contentEditable = 'false'` on `NoteBlockComponent`/`HeaderAreaTextCell`
+// themselves. That resolved the tap-hit-testing ambiguity but ALSO isolated
+// every sibling block's rich-text into its own `contenteditable="true"`
+// island (true -> false -> true, true, true...), which blocked native
+// drag-selection from extending across paragraphs/list items/database rows
+// on every platform. The boundary now lives on `PageRootBlockComponent`
+// itself instead (always `contenteditable="false"`, see its `renderBlock()`
+// doc comment) -- removing the ambiguous tap target at its actual source
+// while keeping every block inside a note as one continuous editable region.
+// `NoteBlockComponent`/`HeaderAreaTextCell` now restore ordinary
+// `contenteditable="true"` (respecting doc readonly) one level down.
 describe('contenteditable boundary for note blocks and database title cells (Phase 4, MOBILE-14)', () => {
   beforeEach(async () => {
     const cleanup = await setupEditor('page', [
@@ -89,20 +93,25 @@ describe('contenteditable boundary for note blocks and database title cells (Pha
     return cleanup;
   });
 
-  // Behavior (1): affine-note's own host carries contenteditable="false",
-  // while its descendant paragraph's own rich-text div (which
-  // independently sets its own contenteditable per rich-text.ts:422-423)
-  // remains focusable/editable -- typed text lands in the model's Y.Text.
-  // `addNote` already seeds its note with exactly one paragraph -- reused
-  // here directly rather than adding a second, unrelated one.
-  test('affine-note host carries contenteditable="false" while its descendant paragraph rich-text remains independently editable', async () => {
+  // Behavior (1): affine-page-root carries contenteditable="false" (the
+  // single boundary, moved here from affine-note), while affine-note itself
+  // and its descendant paragraph's own rich-text div (which independently
+  // sets its own contenteditable per rich-text.ts:422-423) remain
+  // focusable/editable -- typed text lands in the model's Y.Text. `addNote`
+  // already seeds its note with exactly one paragraph -- reused here
+  // directly rather than adding a second, unrelated one.
+  test('affine-page-root carries contenteditable="false" while affine-note and its descendant paragraph rich-text remain editable', async () => {
     const noteId = addNote(doc);
     const paragraphId = doc.getBlocksByFlavour('affine:paragraph')[0]!.id;
     await wait();
 
+    const pageRootEl = document.querySelector('affine-page-root');
+    expect(pageRootEl).toBeTruthy();
+    expect(pageRootEl!.getAttribute('contenteditable')).toBe('false');
+
     const noteEl = document.querySelector('affine-note');
     expect(noteEl).toBeTruthy();
-    expect(noteEl!.getAttribute('contenteditable')).toBe('false');
+    expect(noteEl!.getAttribute('contenteditable')).toBe('true');
 
     const richText = noteEl!.querySelector(
       'rich-text'
@@ -120,12 +129,13 @@ describe('contenteditable boundary for note blocks and database title cells (Pha
     expect(doc.getModelById(noteId)).toBeTruthy();
   });
 
-  // Behavior (2): the same boundary + still-editable proof for a database
-  // row's title cell -- `HeaderAreaTextCell` (`data-view-header-area-text`,
-  // the actual custom-element tag registered in text.ts's own `declare
-  // global` block) is shared across List/Table/Kanban, so this single
-  // component fix closes the gap for all three view types at once.
-  test('data-view-header-area-text host carries contenteditable="false" while its own descendant rich-text remains independently editable', async () => {
+  // Behavior (2): the same boundary (now at affine-page-root) + still-editable
+  // proof for a database row's title cell -- `HeaderAreaTextCell`
+  // (`data-view-header-area-text`, the actual custom-element tag registered
+  // in text.ts's own `declare global` block) is shared across List/Table/
+  // Kanban, so this single component fix closes the gap for all three view
+  // types at once.
+  test('data-view-header-area-text carries contenteditable="true" (page root carries the false boundary) and its descendant rich-text remains independently editable', async () => {
     enableMobileDatabaseEditing(doc);
     const noteId = addNote(doc);
     const databaseId = doc.addBlock('affine:database', {}, noteId);
@@ -138,9 +148,13 @@ describe('contenteditable boundary for note blocks and database title cells (Pha
 
     await switchToListView(databaseId);
 
+    const pageRootEl = document.querySelector('affine-page-root');
+    expect(pageRootEl).toBeTruthy();
+    expect(pageRootEl!.getAttribute('contenteditable')).toBe('false');
+
     const titleCellEl = document.querySelector('data-view-header-area-text');
     expect(titleCellEl).toBeTruthy();
-    expect(titleCellEl!.getAttribute('contenteditable')).toBe('false');
+    expect(titleCellEl!.getAttribute('contenteditable')).toBe('true');
 
     const richText = titleCellEl!.querySelector(
       'rich-text'
@@ -159,9 +173,9 @@ describe('contenteditable boundary for note blocks and database title cells (Pha
 
   // Behavior (3): from a paragraph's own rich-text div, `.closest(
   // '[contenteditable]')` resolves to that rich-text div itself (the
-  // nearest explicit boundary) -- never `affine-page-root` -- proving the
-  // ambiguity the outer page-wide `contentEditable="true"` used to create
-  // is genuinely resolved, not just visually masked.
+  // nearest explicit boundary) -- never `affine-page-root` -- proving a tap
+  // on the rich-text's own editable region can never ambiguously resolve up
+  // to the (now explicitly non-editable) page root.
   test('.closest("[contenteditable]") from a paragraph rich-text div resolves to the rich-text div itself, never affine-page-root', async () => {
     addNote(doc);
     await wait();
@@ -234,9 +248,7 @@ describe('contenteditable boundary for note blocks and database title cells (Pha
       // Small tolerance (<=1px) allows for legitimate sub-pixel layout
       // rounding, per this task's own acceptance criteria -- not a relaxed
       // pass condition for a genuine jump.
-      expect(Math.abs(scrollTopAfter - scrollTopBefore)).toBeLessThanOrEqual(
-        1
-      );
+      expect(Math.abs(scrollTopAfter - scrollTopBefore)).toBeLessThanOrEqual(1);
       expect(
         Math.abs(windowScrollYAfter - windowScrollYBefore)
       ).toBeLessThanOrEqual(1);
@@ -282,9 +294,7 @@ describe('contenteditable boundary for note blocks and database title cells (Pha
       await wait();
 
       const scrollTopAfter = viewport.scrollTop;
-      expect(Math.abs(scrollTopAfter - scrollTopBefore)).toBeLessThanOrEqual(
-        1
-      );
+      expect(Math.abs(scrollTopAfter - scrollTopBefore)).toBeLessThanOrEqual(1);
     });
   });
 });
