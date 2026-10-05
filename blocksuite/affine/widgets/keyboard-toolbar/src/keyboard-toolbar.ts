@@ -1,5 +1,6 @@
 import { getSelectedModelsCommand } from '@blocksuite/affine-shared/commands';
 import { type VirtualKeyboardProviderWithAction } from '@blocksuite/affine-shared/services';
+import { getViewportElement } from '@blocksuite/affine-shared/utils';
 import { SignalWatcher, WithDisposable } from '@blocksuite/global/lit';
 import { ArrowLeftBigIcon, KeyboardIcon } from '@blocksuite/icons/lit';
 import {
@@ -136,8 +137,26 @@ export class AffineKeyboardToolbar extends SignalWatcher(
 
         if (y2 < y1 + gap) return;
 
-        scrollTo({
-          top: window.scrollY + y2 - y1 + gap,
+        // keyboard-toolbar-window-scroll-bug: this used to call the global
+        // `scrollTo()`, i.e. `window.scrollTo()` -- scrolling the WHOLE
+        // DOCUMENT instead of the actual scroll container
+        // (`getViewportElement`'s `.affine-page-viewport`). On mobile, with
+        // the keyboard open, that produced exactly the symptom reported:
+        // window.scrollY and visualViewport.offsetTop swinging by hundreds
+        // of px (confirmed live via the mobile-debug-eval channel), with the
+        // fixed-position toolbar visibly dragging along with it on every
+        // selection change this effect re-fires for -- not a one-time
+        // settle, but continuous churn. Two browser-level mitigations
+        // (locking `<html>`'s overflow, `interactive-widget=resizes-content`)
+        // were tried and both failed to help, because the real scroll was
+        // never browser-chrome-driven in the first place -- it was this
+        // line, explicitly scrolling `window`. Scrolling the correct
+        // container instead removes the window-scroll entirely.
+        const viewportEl = getViewportElement(this.std.host);
+        if (!viewportEl) return;
+
+        viewportEl.scrollTo({
+          top: viewportEl.scrollTop + y2 - y1 + gap,
           behavior: 'instant',
         });
       })
