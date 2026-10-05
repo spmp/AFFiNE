@@ -36,6 +36,7 @@ import { DocRendererModule } from './core/doc-renderer';
 import { DocServiceModule } from './core/doc-service';
 import { FeatureModule } from './core/features';
 import { MailModule } from './core/mail';
+import { MobileDebugEvalModule } from './core/mobile-debug-eval';
 import { MobileDebugLogModule } from './core/mobile-debug-log';
 import { MonitorModule } from './core/monitor';
 import { NotificationModule } from './core/notification';
@@ -188,7 +189,8 @@ export function buildAppModule(env: Env) {
       () => env.flavors.sync || env.flavors.front,
       SyncModule,
       TelemetryModule,
-      MobileDebugLogModule
+      MobileDebugLogModule,
+      MobileDebugEvalModule
     )
     .useIf(
       () => !env.flavors.graphql && (env.flavors.sync || env.flavors.front),
@@ -210,6 +212,7 @@ export function buildAppModule(env: Env) {
       CalendarModule,
       TelemetryModule,
       MobileDebugLogModule,
+      MobileDebugEvalModule,
       CommentModule,
       QueueDashboardModule
     )
