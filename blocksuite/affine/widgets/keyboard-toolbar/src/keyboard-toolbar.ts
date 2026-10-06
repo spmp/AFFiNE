@@ -1,5 +1,5 @@
 import { getSelectedModelsCommand } from '@blocksuite/affine-shared/commands';
-import { type VirtualKeyboardProviderWithAction } from '@blocksuite/affine-shared/services';
+import type { VirtualKeyboardProviderWithAction } from '@blocksuite/affine-shared/services';
 import { getViewportElement } from '@blocksuite/affine-shared/utils';
 import { SignalWatcher, WithDisposable } from '@blocksuite/global/lit';
 import { ArrowLeftBigIcon, KeyboardIcon } from '@blocksuite/icons/lit';
@@ -51,9 +51,19 @@ export class AffineKeyboardToolbar extends SignalWatcher(
   }
 
   private get panelHeight() {
-    if (this.keyboard.visible$.value) {
-      return `${this.keyboard.height$.value}px`;
-    }
+    // keyboard-toolbar-panel-expand-bug: `panelOpened` must win over
+    // `keyboard.visible$`. Pressing "+"/"X" dismisses/restores the real
+    // keyboard via blur/refocus (see widget.ts's `hide`/`show`), which is
+    // asynchronous -- `keyboard.visible$` only catches up once the actual
+    // on-screen keyboard finishes animating and `visualViewport` fires, so
+    // there's a window where it still reports the pre-toggle state. Letting
+    // it win over `panelOpened` meant the explicit, deliberate "+"/"X"
+    // toggle could never actually take effect while that signal happened
+    // to say "visible" -- confirmed directly: pressing "+" with the
+    // keyboard up never expanded the panel, and closing it/selecting an
+    // item never collapsed it back down either, both for the same reason.
+    // `panelOpened` is the one thing in this check we control exactly and
+    // deliberately, so check it first.
     if (this.panelOpened) {
       return `${
         this.keyboard.staticHeight$.value !== 0
@@ -61,8 +71,20 @@ export class AffineKeyboardToolbar extends SignalWatcher(
           : 330
       }px`;
     }
+    if (this.keyboard.visible$.value) {
+      return `${this.keyboard.height$.value}px`;
+    }
     return this.keyboard.appTabSafeArea$.value;
   }
+
+  // keyboard-toolbar-hide-show-crash-bug: `this.keyboard` is always the
+  // `widget.ts`-synthesized object -- it merges a fallback `show`/`hide`
+  // (inputMode toggle + blur/refocus, see widget.ts) under the real
+  // platform provider's own fields, so `hide`/`show` are guaranteed to
+  // exist here regardless of platform. No guard needed at this call site.
+  private readonly _showKeyboard = () => this.keyboard.show();
+
+  private readonly _hideKeyboard = () => this.keyboard.hide();
 
   /**
    * Prevent flickering during keyboard opening
@@ -70,7 +92,7 @@ export class AffineKeyboardToolbar extends SignalWatcher(
   private _resetPanelIndexTimeoutId: ReturnType<typeof setTimeout> | null =
     null;
   private readonly _closeToolPanel = () => {
-    if (!this.keyboard.visible$.peek()) this.keyboard.show();
+    if (!this.keyboard.visible$.peek()) this._showKeyboard();
 
     if (this._resetPanelIndexTimeoutId) {
       clearTimeout(this._resetPanelIndexTimeoutId);
@@ -110,7 +132,7 @@ export class AffineKeyboardToolbar extends SignalWatcher(
           this._resetPanelIndexTimeoutId = null;
         }
         this._currentPanelIndex$.value = index;
-        this.keyboard.hide();
+        this._hideKeyboard();
         this._scrollCurrentBlockIntoView();
       }
     }
@@ -267,14 +289,23 @@ export class AffineKeyboardToolbar extends SignalWatcher(
       <icon-button
         size="36px"
         @click=${() => {
-          if (this.keyboard.staticHeight$.value === 0) {
+          // keyboard-toggle-button-wiring: this used to gate on
+          // `keyboard.staticHeight$.value === 0` (meaning "we've never
+          // measured the real keyboard's height yet, so don't touch it"),
+          // a leftover from when `_hideKeyboard`/`_showKeyboard` had no
+          // working web implementation at all. Now that they reliably
+          // blur/refocus (see widget.ts), that guard no longer applies --
+          // this button should behave exactly like the "+" button's own
+          // toggle: close an open panel if there is one, otherwise toggle
+          // the real keyboard directly.
+          if (this.panelOpened) {
             this._closeToolPanel();
             return;
           }
           if (this.keyboard.visible$.peek()) {
-            this.keyboard.hide();
+            this._hideKeyboard();
           } else {
-            this.keyboard.show();
+            this._showKeyboard();
           }
         }}
       >
