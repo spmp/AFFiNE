@@ -69,6 +69,7 @@ import {
   updateCell,
   updateCells,
   updateProperty,
+  updateTaskStatusState,
   updateView,
 } from './utils/block-utils.js';
 import {
@@ -1424,10 +1425,7 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       provenance: next.provenance ?? current.provenance,
       manualLock: next.manualLock ?? current.manualLock,
     };
-    this._model.props.taskStatusState = {
-      ...this._model.props.taskStatusState,
-      [rowId]: merged,
-    };
+    updateTaskStatusState(this._model, rowId, merged);
   }
 
   private resolveSelectStatusValue(value: unknown): string | undefined {
@@ -3529,25 +3527,19 @@ export const convertToDatabase = (host: EditorHost, viewType: string) => {
           columnId: statusColumnId,
           value: 'done',
         });
-        databaseModel.props.taskStatusState = {
-          ...databaseModel.props.taskStatusState,
-          [row.id]: {
-            provenance: 'manual',
-            manualLock: 'done_locked',
-          },
-        };
+        updateTaskStatusState(databaseModel, row.id, {
+          provenance: 'manual',
+          manualLock: 'done_locked',
+        });
       } else if (notDoneTagLabel) {
         updateCell(databaseModel, row.id, {
           columnId: statusColumnId,
           value: 'not_done',
         });
-        databaseModel.props.taskStatusState = {
-          ...databaseModel.props.taskStatusState,
-          [row.id]: {
-            provenance: 'manual',
-            manualLock: 'none',
-          },
-        };
+        updateTaskStatusState(databaseModel, row.id, {
+          provenance: 'manual',
+          manualLock: 'none',
+        });
       }
       updateCell(databaseModel, row.id, {
         columnId: hierarchyLevelColumnId,
