@@ -71,3 +71,32 @@ export function isRootComponentActive(
 ): boolean {
   return !!rootComponent && rootComponent.contains(activeElement);
 }
+
+/**
+ * 999.1 A-2: `std.selection` can name a block the user has already left.
+ * Database rows (Journal Todo) are data-view output, not block-tree
+ * components, so focusing one never updates `std.selection`; the selection
+ * keeps pointing at the paragraph the user was in before. The toolbar's
+ * scroll-into-view then scrolled the page to that stale paragraph whenever
+ * it re-ran (e.g. the toolbar re-mounting on a tap of the already-focused
+ * row), while focus stayed in the row.
+ *
+ * The selection is stale when an editable element has focus and is not
+ * inside the selected block. With nothing editable focused, keep the
+ * existing behaviour (not stale).
+ */
+export function isSelectionStaleForFocus(
+  selectedBlock: Element,
+  activeElement: Element | null | undefined
+): boolean {
+  if (!activeElement) return false;
+  const tag = activeElement.tagName;
+  const editable =
+    tag === 'INPUT' ||
+    tag === 'TEXTAREA' ||
+    (activeElement instanceof HTMLElement &&
+      (activeElement.isContentEditable ||
+        activeElement.getAttribute('contenteditable') === 'true'));
+  if (!editable) return false;
+  return !selectedBlock.contains(activeElement);
+}

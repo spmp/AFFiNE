@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { isRootComponentActive } from '../utils';
+import { isRootComponentActive, isSelectionStaleForFocus } from '../utils';
 
 describe('isRootComponentActive', () => {
   // keyboard-focus-tabbar-coordination (round 2): real on-device capture
@@ -60,5 +60,50 @@ describe('isRootComponentActive', () => {
     document.body.append(rootComponent, unrelated);
 
     expect(isRootComponentActive(rootComponent, unrelated)).toBe(false);
+  });
+});
+
+describe('isSelectionStaleForFocus', () => {
+  // 999.1 A-2 (db-row-toolbar-scroll): database rows never update
+  // std.selection, so after moving from a paragraph into a Journal Todo row
+  // the selection still names the paragraph. Tapping the already-focused row
+  // re-mounts the toolbar, whose scroll-into-view then scrolled the page to
+  // that stale paragraph while focus stayed in the row.
+  function editable() {
+    const el = document.createElement('div');
+    el.contentEditable = 'true';
+    return el;
+  }
+
+  it('is stale when an editable element outside the selected block has focus (row focused, paragraph selected)', () => {
+    const paragraph = document.createElement('div');
+    const rowTitle = editable();
+    expect(isSelectionStaleForFocus(paragraph, rowTitle)).toBe(true);
+  });
+
+  it('is not stale when focus is inside the selected block', () => {
+    const paragraph = document.createElement('div');
+    const inline = editable();
+    paragraph.append(inline);
+    expect(isSelectionStaleForFocus(paragraph, inline)).toBe(false);
+  });
+
+  it('is not stale when nothing editable has focus (keeps existing behaviour)', () => {
+    const paragraph = document.createElement('div');
+    expect(isSelectionStaleForFocus(paragraph, null)).toBe(false);
+    expect(isSelectionStaleForFocus(paragraph, document.body)).toBe(false);
+    expect(
+      isSelectionStaleForFocus(paragraph, document.createElement('button'))
+    ).toBe(false);
+  });
+
+  it('treats a focused input/textarea outside the block as stale', () => {
+    const paragraph = document.createElement('div');
+    expect(
+      isSelectionStaleForFocus(paragraph, document.createElement('textarea'))
+    ).toBe(true);
+    expect(
+      isSelectionStaleForFocus(paragraph, document.createElement('input'))
+    ).toBe(true);
   });
 });

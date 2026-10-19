@@ -29,6 +29,7 @@ import {
   isKeyboardSubToolBarConfig,
   isKeyboardToolBarActionItem,
   isKeyboardToolPanelConfig,
+  isSelectionStaleForFocus,
 } from './utils';
 
 export const AFFINE_KEYBOARD_TOOLBAR = 'affine-keyboard-toolbar';
@@ -152,6 +153,9 @@ export class AffineKeyboardToolbar extends SignalWatcher(
 
         const block = this.std.view.getBlock(selectedModels[0].id);
         if (!block) return;
+        // 999.1 A-2: never scroll to a selection the user has already left
+        // (e.g. focus moved into a database row) -- see utils.ts.
+        if (isSelectionStaleForFocus(block, document.activeElement)) return;
 
         const { y: y1 } = this.getBoundingClientRect();
         const { bottom: y2 } = block.getBoundingClientRect();
