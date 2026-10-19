@@ -680,6 +680,70 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     this.hidePropertyInViews(columnIds, [viewId]);
   }
 
+  /**
+   * Re-applies the *unconditionally* hidden plumbing columns to every view
+   * this data source can see — not just to views being created right now.
+   *
+   * Story 2.11 (live bug report, third follow-up — the "Note color field is
+   * visibly exposed" half of the auto-selected-today report): the four
+   * columns below have no user-facing affordance at all, so there is no
+   * legitimate state in which any view shows them. Yet two existing
+   * mechanisms between them still leave gaps, because `Note color` — unlike
+   * Hierarchy Level/Parent/Ancestor and unlike Status/Done date/Note/Due
+   * date — is created *lazily*, the first time any row anywhere gets a
+   * colour attached (`ensureNoteColorColumn`):
+   *
+   *  - `hideDefaultHiddenColumnsForNewView` only runs when a view is
+   *    *created*, so it cannot help a view that already existed before the
+   *    column did.
+   *  - `ensureNoteColorColumn`'s own `hidePropertyInViews` runs on whichever
+   *    `DatabaseBlockDataSource` instance did the attaching, and that routes
+   *    through the override-aware `viewDataList$`/`viewDataUpdate` — so it
+   *    reaches only *that* reference's own views. Every other reference to
+   *    the same canonical table (every other day's journal, the journal
+   *    template itself) keeps a view with no `hide` entry for it.
+   *
+   * So on the first-ever note-colour attach, every already-created Journal
+   * Todo reference starts rendering `Note color` as an ordinary visible
+   * field, with nothing that would ever revisit it — matching the user's
+   * report that it never self-heals and that adding a fresh, correct Journal
+   * Todo alongside it does not fix the original. Enforcing the invariant per
+   * data source, once, on construction makes every reference self-correct the
+   * next time it renders.
+   *
+   * Deliberately limited to these four: Status/Done date/Note/Due date are
+   * *conditionally* hidden (by view mode, or by the "Show Due date" setting)
+   * and a user can legitimately have them visible, so re-stamping those
+   * would override real user intent.
+   */
+  enforceAlwaysHiddenPlumbingColumns() {
+    const alwaysHiddenNames = new Set([
+      TASK_HIERARCHY_LEVEL_COLUMN_NAME,
+      TASK_PARENT_IDENTIFIER_COLUMN_NAME,
+      TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME,
+      TASK_NOTE_COLOR_COLUMN_NAME,
+    ]);
+    const columnIds = this._model.props.columns
+      .filter(column => alwaysHiddenNames.has(column.name))
+      .map(column => column.id);
+    if (columnIds.length === 0) {
+      return;
+    }
+    for (const view of this.viewDataList$.value) {
+      const columns = (view as ViewDataWithColumns).columns ?? [];
+      // Only write when something actually needs changing.
+      // `hidePropertyInOneView` rebuilds the `columns` array even when the
+      // entry is already `hide: true`, and this runs during a render path —
+      // an unguarded write would be a redundant Yjs update every mount.
+      const needHiding = columnIds.filter(
+        id => columns.find(column => column.id === id)?.hide !== true
+      );
+      for (const id of needHiding) {
+        this.hidePropertyInOneView(view.id, view.mode, id);
+      }
+    }
+  }
+
   private hidePropertyInViews(columnId: string | string[], viewIds?: string[]) {
     const columnIds = Array.isArray(columnId) ? columnId : [columnId];
     const views = viewIds

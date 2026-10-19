@@ -3,7 +3,10 @@ import {
   DatabaseBlockModel,
   DatabaseViewRefBlockModel,
 } from '@blocksuite/affine-model';
-import { waitForBlockInDoc } from '@blocksuite/affine-shared/utils';
+import {
+  waitForBlockInDoc,
+  waitForDocInWorkspace,
+} from '@blocksuite/affine-shared/utils';
 import type { Filter, FilterGroup } from '@blocksuite/data-view';
 import type {
   AfterImportBlockPayload,
@@ -50,6 +53,80 @@ function rewriteDoneDateLiteral(
 }
 
 /**
+ * Re-points every `isNotOneOf` condition on `statusColumnId` at the
+ * canonical's CURRENT 'done' option id.
+ *
+ * Story 2.11 (live bug, third follow-up): the first clause of the Journal
+ * Todo filter is `status isNotOneOf [<done option id>]`, and that id is baked
+ * in as a literal when the filter is authored. `rewriteDoneDateLiteral` only
+ * ever touched the done-DATE literal, so if the canonical's 'done' option id
+ * no longer matches the one frozen into the template, done rows stop matching
+ * this clause, it evaluates TRUE, and every previously-completed task stays
+ * visible no matter how correct the date cutoff is.
+ */
+function rewriteDoneOptionLiteral(
+  node: Filter,
+  statusColumnId: string,
+  doneOptionId: string
+): { node: Filter; changed: boolean } {
+  if (node.type === 'group') {
+    let changed = false;
+    const conditions = node.conditions.map(child => {
+      const result = rewriteDoneOptionLiteral(
+        child,
+        statusColumnId,
+        doneOptionId
+      );
+      if (result.changed) changed = true;
+      return result.node;
+    });
+    return changed
+      ? { node: { ...node, conditions }, changed: true }
+      : { node, changed: false };
+  }
+  if (
+    node.function === 'isNotOneOf' &&
+    node.left.type === 'ref' &&
+    node.left.name === statusColumnId
+  ) {
+    const current = node.args[0];
+    const alreadyCorrect =
+      current?.type === 'literal' &&
+      Array.isArray(current.value) &&
+      current.value.length === 1 &&
+      current.value[0] === doneOptionId;
+    if (alreadyCorrect) return { node, changed: false };
+    return {
+      node: { ...node, args: [{ type: 'literal', value: [doneOptionId] }] },
+      changed: true,
+    };
+  }
+  return { node, changed: false };
+}
+
+/** Whether `node` already contains an `after` condition on `columnId`. */
+function hasDoneDateClause(node: Filter, columnId: string): boolean {
+  if (node.type === 'group') {
+    return node.conditions.some(child => hasDoneDateClause(child, columnId));
+  }
+  return (
+    node.function === 'after' &&
+    node.left.type === 'ref' &&
+    node.left.name === columnId
+  );
+}
+
+/** The grace clause exactly as a fresh `/Journal Todo` insertion builds it. */
+function buildDoneDateClause(doneDateColumnId: string, nowMs: number): Filter {
+  return {
+    type: 'filter',
+    left: { type: 'ref', name: doneDateColumnId },
+    function: 'after',
+    args: [{ type: 'literal', value: nowMs - 1 }],
+  } as Filter;
+}
+
+/**
  * Ensures `columnId` has a `hide: true` entry in this one view's own
  * `columns` array — the same effect `DatabaseBlockDataSource`'s private
  * `hidePropertyInOneView` produces, reimplemented directly against a
@@ -92,6 +169,10 @@ function applyJournalTodoRefresh(
   const dataSource = new DatabaseBlockDataSource(canonicalModel);
   const doneDateColumnId = dataSource.getDoneDateColumn()?.id;
   const noteColorColumnId = dataSource.getNoteColorColumn()?.id;
+  const statusColumnId = dataSource.getTaskStatusColumn()?.id;
+  const doneOptionId = statusColumnId
+    ? dataSource.getTaskStatusTargetOption('done', statusColumnId)?.id
+    : undefined;
   if (!doneDateColumnId && !noteColorColumnId) return;
 
   const nowMs = Date.now();
@@ -101,15 +182,85 @@ function applyJournalTodoRefresh(
     let current = view;
 
     if (doneDateColumnId && current.filter) {
-      const result = rewriteDoneDateLiteral(
-        current.filter,
-        doneDateColumnId,
-        nowMs
-      );
+      // Kept in step with `current.filter`: reassigning `current` below
+      // would otherwise drop TypeScript's narrowing of `current.filter`.
+      let filter: FilterGroup = current.filter;
+      const result = rewriteDoneDateLiteral(filter, doneDateColumnId, nowMs);
       if (result.changed) {
-        current = { ...current, filter: result.node as FilterGroup };
+        filter = result.node as FilterGroup;
+        current = { ...current, filter };
         anyChanged = true;
       }
+
+      // Story 2.11 (third follow-up) — re-point the status clause at the
+      // canonical's CURRENT 'done' option id. See
+      // `rewriteDoneOptionLiteral`.
+      if (statusColumnId && doneOptionId) {
+        const optionResult = rewriteDoneOptionLiteral(
+          filter,
+          statusColumnId,
+          doneOptionId
+        );
+        if (optionResult.changed) {
+          filter = optionResult.node as FilterGroup;
+          current = { ...current, filter };
+          anyChanged = true;
+        }
+      }
+
+      // ...and add the grace clause if it is missing entirely. Only safe to
+      // append into a top-level `or` group: appending into an `and` group
+      // would narrow the filter rather than widen it, changing semantics the
+      // user may have set deliberately.
+      if (
+        filter.type === 'group' &&
+        filter.op === 'or' &&
+        !hasDoneDateClause(filter, doneDateColumnId)
+      ) {
+        current = {
+          ...current,
+          filter: {
+            ...filter,
+            conditions: [
+              ...filter.conditions,
+              buildDoneDateClause(doneDateColumnId, nowMs),
+            ],
+          } as FilterGroup,
+        };
+        anyChanged = true;
+      }
+    } else if (doneDateColumnId && statusColumnId && doneOptionId) {
+      // Story 2.11 (third follow-up) — GAP: a duplicated view that arrived
+      // with NO filter at all was previously left completely untouched,
+      // because the rewrite above is guarded on `current.filter` existing. A
+      // filterless Journal Todo view shows EVERY row, including every
+      // previously-completed task, forever. A view reaches that state by a
+      // user clearing the filter, by predating the grace clause, or via an
+      // insertion path that never built one.
+      //
+      // Install exactly what a fresh `/Journal Todo` insertion would have
+      // produced at this moment (see `insertJournalTodoReference` in
+      // `configs/slash-menu.ts`), which is what this middleware's contract
+      // already claims to guarantee. Requires BOTH the status column and the
+      // 'done' option to be resolvable — installing the grace clause alone
+      // would hide every *undone* task, since those have no done date.
+      current = {
+        ...current,
+        filter: {
+          type: 'group',
+          op: 'or',
+          conditions: [
+            {
+              type: 'filter',
+              left: { type: 'ref', name: statusColumnId },
+              function: 'isNotOneOf',
+              args: [{ type: 'literal', value: [doneOptionId] }],
+            },
+            buildDoneDateClause(doneDateColumnId, nowMs),
+          ],
+        } as unknown as FilterGroup,
+      };
+      anyChanged = true;
     }
 
     if (noteColorColumnId) {
@@ -193,6 +344,106 @@ export const refreshJournalTodoOnDuplicateMiddleware =
   (): TransformerMiddleware =>
   ({ slots }) => {
     let disposed = false;
+
+    const attemptRefresh = (
+      model: DatabaseViewRefBlockModel,
+      mayWaitForDoc: boolean
+    ) => {
+      try {
+        const targetDocId = model.props.refDocId || model.store.id;
+        const workspace = model.store.workspace;
+        const refDoc = workspace.getDoc(targetDocId);
+        if (!refDoc) {
+          // Story 2.11 (third follow-up) — GAP: this used to be a bare
+          // `return`, i.e. a permanent, silent give-up, and it is one
+          // readiness stage EARLIER than the `waitForBlockInDoc` retry
+          // below. `Workspace.getDoc` resolves against a
+          // `blockCollections` Map that `_bindDocMetaEvents()` fills
+          // *reactively* from `meta.docMetaAdded` as the workspace root
+          // doc's own metadata syncs — so on the first journal action of a
+          // cold session the canonical's handle can legitimately not exist
+          // yet for a doc that does exist and is about to appear. Bailing
+          // there skipped BOTH fixes with no retry, which is why the
+          // reported symptoms only ever showed up on the very first
+          // (auto-selected-today) journal creation of a session and never
+          // when a date was picked later, once the doc list had filled in.
+          if (!mayWaitForDoc) return;
+          waitForDocInWorkspace(workspace, targetDocId)
+            .then(found => {
+              if (!found || disposed) return;
+              // Re-run the whole resolution now the handle exists; the
+              // content-loading retry below still applies from there.
+              attemptRefresh(model, false);
+            })
+            .catch(error => {
+              console.error(
+                '[database-view-ref] failed waiting for canonical doc to appear in workspace',
+                error
+              );
+            });
+          return;
+        }
+        const isSameDoc = refDoc === model.store.doc;
+        const targetStore = isSameDoc
+          ? model.store
+          : refDoc.getStore({ id: refDoc.id });
+        const canonicalModel = targetStore.getBlock(
+          model.props.refBlockId
+        )?.model;
+        if (canonicalModel instanceof DatabaseBlockModel) {
+          applyJournalTodoRefresh(model, canonicalModel);
+          return;
+        }
+
+        // A same-doc reference's store is always the doc currently being
+        // duplicated into — already guaranteed loaded, so a missing block
+        // there means something else is wrong (e.g. a genuinely broken
+        // ref), not a loading race. Only retry the genuinely cross-doc
+        // case below.
+        if (isSameDoc) return;
+
+        // `workspace.getDoc()` returning a handle does NOT mean its
+        // content has loaded yet: `refDoc.getStore()` (see `DocImpl` in
+        // `packages/frontend/core/src/modules/workspace/impls/doc.ts`)
+        // has no readiness guard and just reads whatever is currently in
+        // the doc's Y.Map, which stays empty until `load()` is called and
+        // nbstore streams its content in asynchronously. Per
+        // `insertJournalTodoReference`'s own cross-doc branch in
+        // `configs/slash-menu.ts` (identical resolution problem, already
+        // solved there), the fix is to kick off loading and wait for the
+        // block to actually appear rather than giving up permanently on
+        // one synchronous check. This is the common case, not a rare
+        // fluke: the canonical Journal Todo database "essentially never"
+        // lives inside the day's own journal page (see that same file's
+        // comment), so every daily duplication is a cross-doc resolution,
+        // most likely to be hit cold on the first Journal-Todo-related
+        // action of a session (e.g. auto-selecting today and creating
+        // today's journal from template before anything else has warmed
+        // this doc into memory).
+        waitForBlockInDoc(refDoc, model.props.refBlockId)
+          .then(found => {
+            if (!found || disposed) return;
+            const resolvedModel = targetStore.getBlock(
+              model.props.refBlockId
+            )?.model;
+            if (resolvedModel instanceof DatabaseBlockModel) {
+              applyJournalTodoRefresh(model, resolvedModel);
+            }
+          })
+          .catch(error => {
+            console.error(
+              '[database-view-ref] failed to load canonical to refresh Journal Todo state on duplicate',
+              error
+            );
+          });
+      } catch (error) {
+        console.error(
+          '[database-view-ref] failed to refresh Journal Todo state on duplicate',
+          error
+        );
+      }
+    };
+
     const subscription = slots.afterImport
       .pipe(
         rxFilter((p): p is AfterImportBlockPayload => p.type === 'block'),
@@ -202,72 +453,7 @@ export const refreshJournalTodoOnDuplicateMiddleware =
             model instanceof DatabaseViewRefBlockModel
         )
       )
-      .subscribe(model => {
-        try {
-          const targetDocId = model.props.refDocId || model.store.id;
-          const workspace = model.store.workspace;
-          const refDoc = workspace.getDoc(targetDocId);
-          if (!refDoc) return;
-          const isSameDoc = refDoc === model.store.doc;
-          const targetStore = isSameDoc
-            ? model.store
-            : refDoc.getStore({ id: refDoc.id });
-          const canonicalModel = targetStore.getBlock(
-            model.props.refBlockId
-          )?.model;
-          if (canonicalModel instanceof DatabaseBlockModel) {
-            applyJournalTodoRefresh(model, canonicalModel);
-            return;
-          }
-
-          // A same-doc reference's store is always the doc currently being
-          // duplicated into — already guaranteed loaded, so a missing block
-          // there means something else is wrong (e.g. a genuinely broken
-          // ref), not a loading race. Only retry the genuinely cross-doc
-          // case below.
-          if (isSameDoc) return;
-
-          // `workspace.getDoc()` returning a handle does NOT mean its
-          // content has loaded yet: `refDoc.getStore()` (see `DocImpl` in
-          // `packages/frontend/core/src/modules/workspace/impls/doc.ts`)
-          // has no readiness guard and just reads whatever is currently in
-          // the doc's Y.Map, which stays empty until `load()` is called and
-          // nbstore streams its content in asynchronously. Per
-          // `insertJournalTodoReference`'s own cross-doc branch in
-          // `configs/slash-menu.ts` (identical resolution problem, already
-          // solved there), the fix is to kick off loading and wait for the
-          // block to actually appear rather than giving up permanently on
-          // one synchronous check. This is the common case, not a rare
-          // fluke: the canonical Journal Todo database "essentially never"
-          // lives inside the day's own journal page (see that same file's
-          // comment), so every daily duplication is a cross-doc resolution,
-          // most likely to be hit cold on the first Journal-Todo-related
-          // action of a session (e.g. auto-selecting today and creating
-          // today's journal from template before anything else has warmed
-          // this doc into memory).
-          waitForBlockInDoc(refDoc, model.props.refBlockId)
-            .then(found => {
-              if (!found || disposed) return;
-              const resolvedModel = targetStore.getBlock(
-                model.props.refBlockId
-              )?.model;
-              if (resolvedModel instanceof DatabaseBlockModel) {
-                applyJournalTodoRefresh(model, resolvedModel);
-              }
-            })
-            .catch(error => {
-              console.error(
-                '[database-view-ref] failed to load canonical to refresh Journal Todo state on duplicate',
-                error
-              );
-            });
-        } catch (error) {
-          console.error(
-            '[database-view-ref] failed to refresh Journal Todo state on duplicate',
-            error
-          );
-        }
-      });
+      .subscribe(model => attemptRefresh(model, true));
     return () => {
       disposed = true;
       subscription.unsubscribe();

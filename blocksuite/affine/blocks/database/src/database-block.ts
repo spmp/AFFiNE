@@ -331,6 +331,19 @@ export class DatabaseBlockComponent extends CaptionedBlockComponent<DatabaseBloc
         );
       }
     });
+    // Must run AFTER the `init` callback above, not inside it: the
+    // `DatabaseViewLocalOverrideProvider` set in there is what makes
+    // `viewDataList$` resolve to *this reference's own* per-instance views
+    // rather than the canonical's shared ones, and this invariant has to be
+    // enforced against the former. See
+    // `enforceAlwaysHiddenPlumbingColumns`'s own comment for why a
+    // creation-time hide is not sufficient — in short, `Note color` is
+    // created lazily on the first note-colour attach anywhere, so every
+    // reference that already existed at that moment would otherwise render
+    // it as a visible field forever. Self-correcting here means any such
+    // reference fixes itself the next time it renders. No-ops entirely when
+    // nothing needs changing, so this is not a write on every mount.
+    dataSource.enforceAlwaysHiddenPlumbingColumns();
     // Skip when rendered nested inside a `database-ref` wrapper: `this.model`
     // there is the *shared* canonical table, the same object for every
     // reference to it, so applying/persisting a "last used view" through it
