@@ -27,6 +27,23 @@ import type { ListViewUILogic } from '../list-view-ui-logic.js';
 // actually render once dropped.
 const LEVEL_INDENT_PX = 24;
 
+/**
+ * 999.4: index of the row under a pointer at `y` -- the row whose
+ * [top, bottom) contains it, else the first row below it (gaps), else -1.
+ *
+ * Must be coordinate-based: during a TOUCH drag the pointer is implicitly
+ * captured to the drag handle the gesture started on, so `pointermove`'s
+ * `evt.target` stays inside the dragged row for the whole gesture and
+ * `evt.target.closest(row)` always resolved the dragged row itself (rows
+ * could not be moved above/below others or re-levelled on mobile).
+ */
+export function pickRowIndexAtY(
+  rows: ReadonlyArray<{ top: number; bottom: number }>,
+  y: number
+): number {
+  return rows.findIndex(row => y < row.bottom);
+}
+
 const clamp = (value: number, min: number, max: number) =>
   Math.min(Math.max(value, min), max);
 
@@ -178,24 +195,14 @@ export class ListDragController implements ReactiveController {
       };
     };
 
-    const hoveredRow =
-      evt.target instanceof Element
-        ? (evt.target.closest(
-            '.affine-data-view-list-row'
-          ) as HTMLElement | null)
-        : null;
-    if (hoveredRow) {
-      return resolve(hoveredRow);
-    }
-
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows.item(i);
-      const rect = row.getBoundingClientRect();
-      if (y < rect.bottom) {
-        return resolve(row);
-      }
-    }
-    return;
+    // 999.4: by coordinates, never `evt.target` -- see pickRowIndexAtY.
+    const rowList = Array.from(rows);
+    const index = pickRowIndexAtY(
+      rowList.map(row => row.getBoundingClientRect()),
+      y
+    );
+    const row = rowList[index];
+    return row ? resolve(row) : undefined;
   };
 
   showIndicator = (evt: MouseEvent) => {
