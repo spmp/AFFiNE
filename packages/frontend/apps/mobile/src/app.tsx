@@ -23,6 +23,7 @@ import { Suspense } from 'react';
 import { RouterProvider } from 'react-router-dom';
 
 import { installMobileDebugEvalPoll } from './mobile-debug-eval';
+import { installMobileDebugFrameworkHandle } from './mobile-debug-framework';
 import {
   installMobileDebugLogCapture,
   installPointerDebugLogCapture,
@@ -117,6 +118,10 @@ framework.impl(
   createVisualViewportVirtualKeyboardProvider()
 );
 const frameworkProvider = framework.provider();
+
+// Debug-build-only handle for Playwright/`mobile-debug-eval` — see that
+// module's comment for why mobile E2E needs it.
+installMobileDebugFrameworkHandle(frameworkProvider);
 
 // setup application lifecycle events, and emit application start event
 window.addEventListener('focus', () => {
