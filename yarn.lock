@@ -3180,6 +3180,7 @@ __metadata:
     "@preact/signals-core": "npm:^1.8.0"
     "@toeverything/theme": "npm:^1.1.23"
     lit: "npm:^3.2.0"
+    vitest: "npm:^4.1.8"
   languageName: unknown
   linkType: soft
 
