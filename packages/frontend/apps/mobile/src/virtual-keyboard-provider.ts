@@ -86,8 +86,20 @@ import type { VirtualKeyboardProvider } from '@affine/core/mobile/modules/virtua
  * reports `innerHeight` == `height` during keyboard-open document pans, but
  * always with a large `offsetTop` (checkpoint #1). Known limitation: a
  * spike while the keyboard is open stays latched until the next close.
+ *
+ * db-row-toolbar-scroll (bug 1): the round-2 gate also swallows *legitimate*
+ * offset-only changes. iOS pans the visual viewport without changing its
+ * height when it centres a tapped row, on Enter, and on document drags, so
+ * the keyboard top's distance from the layout bottom really does change
+ * while the reported height stays stale by exactly the pan (on-device: 54-
+ * 151px too high after text -> row, 199px behind the keyboard after a drag
+ * back). Rather than recomputing per event (the round-2 noise/feedback
+ * hazard), recompute once after the viewport has been quiet for
+ * `SETTLE_DELAY_MS`, from the then-live values, and only while the keyboard
+ * is open and the result differs from the last reported height.
  */
 const VISUAL_VIEWPORT_HEIGHT_EPSILON_PX = 1;
+const SETTLE_DELAY_MS = 150;
 
 export function createVisualViewportVirtualKeyboardProvider(): VirtualKeyboardProvider {
   return {
@@ -99,9 +111,39 @@ export function createVisualViewportVirtualKeyboardProvider(): VirtualKeyboardPr
 
       let maxWindowHeight: number | undefined;
       let lastAcceptedVisualViewportHeight: number | undefined;
+      let lastReported: { visible: boolean; height: number } | undefined;
+      let settleTimer: ReturnType<typeof setTimeout> | undefined;
+
+      const report = (state: { visible: boolean; height: number }) => {
+        lastReported = state;
+        callback(state);
+      };
+
+      // bug 1: see module doc comment.
+      const settle = () => {
+        settleTimer = undefined;
+        if (!visualViewport || !lastReported?.visible) return;
+        const windowHeight = maxWindowHeight ?? window.innerHeight;
+        if (windowHeight - visualViewport.height <= 0) return;
+        const height = Math.max(
+          0,
+          windowHeight - visualViewport.height - visualViewport.offsetTop
+        );
+        if (
+          Math.abs(height - lastReported.height) <=
+          VISUAL_VIEWPORT_HEIGHT_EPSILON_PX
+        ) {
+          return;
+        }
+        report({ visible: true, height });
+      };
 
       const listener = (event: Event) => {
         if (!visualViewport) return;
+        if (lastReported?.visible) {
+          clearTimeout(settleTimer);
+          settleTimer = setTimeout(settle, SETTLE_DELAY_MS);
+        }
         maxWindowHeight =
           maxWindowHeight === undefined
             ? window.innerHeight
@@ -173,12 +215,13 @@ export function createVisualViewportVirtualKeyboardProvider(): VirtualKeyboardPr
         }
         lastAcceptedVisualViewportHeight = visualViewport.height;
 
-        callback({ visible, height });
+        report({ visible, height });
       };
 
       visualViewport.addEventListener('resize', listener);
       visualViewport.addEventListener('scroll', listener);
       return () => {
+        clearTimeout(settleTimer);
         visualViewport?.removeEventListener('resize', listener);
         visualViewport?.removeEventListener('scroll', listener);
       };

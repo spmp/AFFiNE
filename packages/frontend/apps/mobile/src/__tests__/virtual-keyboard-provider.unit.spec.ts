@@ -613,4 +613,129 @@ describe('createVisualViewportVirtualKeyboardProvider', () => {
       { visible: true, height: expect.closeTo(265.34375, 3) },
     ]);
   });
+  describe('offset-only settle (db-row-toolbar-scroll bug 1)', () => {
+    // Bug 1: iOS pans the visual viewport (offsetTop) without changing its
+    // height -- focus-follow centring of a tapped row, Enter, or a document
+    // drag. The round-2 gate ignores those events, so the reported height
+    // (= keyboard top's distance from the layout bottom) went stale by
+    // exactly the pan. Values below model the on-device recordings
+    // (iOS 18.6 Safari, innerHeight 628, keyboard-open vv height 363).
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('re-places the toolbar once the viewport settles after iOS centres a tapped row (text -> row: was 94px too high)', () => {
+      const provider = createVisualViewportVirtualKeyboardProvider();
+      const callback = vi.fn();
+      dispose = provider.onChange(callback);
+
+      fireViewportEvent(viewport, 'resize', { height: 628, offsetTop: 0 }, 628);
+      fireViewportEvent(
+        viewport,
+        'resize',
+        { height: 363, offsetTop: 12 },
+        628
+      );
+      expect(callback).toHaveBeenLastCalledWith({ visible: true, height: 253 });
+
+      // focus-follow pan: offsetTop 12 -> 106 with height unchanged
+      fireViewportEvent(viewport, 'scroll', { offsetTop: 60 }, 628);
+      fireViewportEvent(viewport, 'scroll', { offsetTop: 106 }, 628);
+      vi.advanceTimersByTime(200);
+
+      expect(callback).toHaveBeenLastCalledWith({ visible: true, height: 159 });
+    });
+
+    it('re-places the toolbar after a document drag back down (paragraph run 1: was 199px behind the keyboard)', () => {
+      const provider = createVisualViewportVirtualKeyboardProvider();
+      const callback = vi.fn();
+      dispose = provider.onChange(callback);
+
+      fireViewportEvent(viewport, 'resize', { height: 628, offsetTop: 0 }, 628);
+      fireViewportEvent(
+        viewport,
+        'resize',
+        { height: 363, offsetTop: 199 },
+        628
+      );
+      expect(callback).toHaveBeenLastCalledWith({ visible: true, height: 66 });
+
+      // drag back: genuine resize events with an unchanged height, swinging
+      // offsetTop (the round-2 gate swallows these by design)
+      fireViewportEvent(
+        viewport,
+        'resize',
+        { height: 363.2, offsetTop: 120 },
+        628
+      );
+      fireViewportEvent(
+        viewport,
+        'resize',
+        { height: 363, offsetTop: 0.5 },
+        628
+      );
+      vi.advanceTimersByTime(200);
+
+      expect(callback).toHaveBeenLastCalledWith({
+        visible: true,
+        height: expect.closeTo(264.5, 3),
+      });
+    });
+
+    it('does not report anything mid-pan -- only after the viewport has been quiet (round-2 noise protection preserved)', () => {
+      const provider = createVisualViewportVirtualKeyboardProvider();
+      const callback = vi.fn();
+      dispose = provider.onChange(callback);
+
+      fireViewportEvent(viewport, 'resize', { height: 628, offsetTop: 0 }, 628);
+      fireViewportEvent(viewport, 'resize', { height: 363, offsetTop: 0 }, 628);
+      const callsAfterOpen = callback.mock.calls.length;
+
+      for (let i = 1; i <= 10; i++) {
+        fireViewportEvent(viewport, 'scroll', { offsetTop: i * 20 }, 628);
+        vi.advanceTimersByTime(50);
+      }
+      expect(callback).toHaveBeenCalledTimes(callsAfterOpen);
+
+      vi.advanceTimersByTime(200);
+      expect(callback).toHaveBeenCalledTimes(callsAfterOpen + 1);
+      expect(callback).toHaveBeenLastCalledWith({ visible: true, height: 65 });
+    });
+
+    it('does nothing while the keyboard is closed, and nothing when the settled value is unchanged', () => {
+      const provider = createVisualViewportVirtualKeyboardProvider();
+      const callback = vi.fn();
+      dispose = provider.onChange(callback);
+
+      fireViewportEvent(viewport, 'resize', { height: 628, offsetTop: 0 }, 628);
+      const callsClosed = callback.mock.calls.length;
+      fireViewportEvent(viewport, 'scroll', { offsetTop: 40 }, 628);
+      vi.advanceTimersByTime(500);
+      expect(callback).toHaveBeenCalledTimes(callsClosed);
+
+      viewport.offsetTop = 0;
+      fireViewportEvent(viewport, 'resize', { height: 363, offsetTop: 0 }, 628);
+      const callsOpen = callback.mock.calls.length;
+      fireViewportEvent(viewport, 'scroll', { offsetTop: 0.4 }, 628);
+      vi.advanceTimersByTime(500);
+      expect(callback).toHaveBeenCalledTimes(callsOpen);
+    });
+
+    it('cancels a pending settle on dispose', () => {
+      const provider = createVisualViewportVirtualKeyboardProvider();
+      const callback = vi.fn();
+      const d = provider.onChange(callback);
+
+      fireViewportEvent(viewport, 'resize', { height: 628, offsetTop: 0 }, 628);
+      fireViewportEvent(viewport, 'resize', { height: 363, offsetTop: 0 }, 628);
+      const calls = callback.mock.calls.length;
+      fireViewportEvent(viewport, 'scroll', { offsetTop: 80 }, 628);
+      d();
+      vi.advanceTimersByTime(500);
+      expect(callback).toHaveBeenCalledTimes(calls);
+    });
+  });
 });
