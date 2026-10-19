@@ -73,6 +73,19 @@ import type { VirtualKeyboardProvider } from '@affine/core/mobile/modules/virtua
  * rounding-noise epsilon since the last accepted sample; otherwise keep
  * reporting the last known-good value instead of recomputing from
  * whichever OTHER quantity happened to be noisy on this event.
+ *
+ * db-row-toolbar-scroll (checkpoint #2): the running max above must not be
+ * unbounded. With the keyboard closed, Safari's bottom bar collapsed for
+ * a moment (`window.innerHeight` 628 -> 710 = 100lvh -> 628). The never-reset
+ * max latched 710 for the rest of the page session, so the toolbar sat 82px
+ * above the screen bottom with no keyboard, and 82px above the keyboard
+ * once it opened. On every `resize` where the visual viewport exactly fills
+ * the layout viewport (`height` == `innerHeight` and `offsetTop` == 0, each
+ * within 1px), the keyboard is provably closed, so the max is re-seeded to
+ * the live `innerHeight`. The `offsetTop` clause is required: iOS also
+ * reports `innerHeight` == `height` during keyboard-open document pans, but
+ * always with a large `offsetTop` (checkpoint #1). Known limitation: a
+ * spike while the keyboard is open stays latched until the next close.
  */
 const VISUAL_VIEWPORT_HEIGHT_EPSILON_PX = 1;
 
@@ -93,6 +106,19 @@ export function createVisualViewportVirtualKeyboardProvider(): VirtualKeyboardPr
           maxWindowHeight === undefined
             ? window.innerHeight
             : Math.max(maxWindowHeight, window.innerHeight);
+        // db-row-toolbar-scroll: re-seed the running max whenever the
+        // keyboard is provably closed, so a transient bottom-bar collapse
+        // is not latched for the session (see module doc comment). Must run
+        // before the round-2 gate, which can swallow the final settle sample.
+        if (
+          event.type === 'resize' &&
+          Math.abs(visualViewport.height - window.innerHeight) <=
+            VISUAL_VIEWPORT_HEIGHT_EPSILON_PX &&
+          Math.abs(visualViewport.offsetTop) <=
+            VISUAL_VIEWPORT_HEIGHT_EPSILON_PX
+        ) {
+          maxWindowHeight = window.innerHeight;
+        }
         const windowHeight = maxWindowHeight;
 
         /**

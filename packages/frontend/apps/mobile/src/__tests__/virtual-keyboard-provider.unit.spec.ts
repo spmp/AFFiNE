@@ -363,4 +363,254 @@ describe('createVisualViewportVirtualKeyboardProvider', () => {
     expect(callback).toHaveBeenNthCalledWith(2, { visible: true, height: 62 });
     expect(callback).toHaveBeenNthCalledWith(3, { visible: false, height: 0 });
   });
+
+  // Modeled on checkpoint #2 of .planning/debug/db-row-toolbar-scroll.md
+  // (recorder v2 on a real iPhone, iOS 18.6.2 Safari, tapping a database row
+  // title). With the keyboard still CLOSED, Safari's bottom bar collapsed
+  // for a moment: window.innerHeight, and visualViewport.height with it,
+  // jumped 628 -> 710 (= 100lvh) and decayed back to 628 over ~330ms as the
+  // bar re-expanded. About 39s later the keyboard opened normally
+  // (visualViewport.height 362.65625, offsetTop 0, innerHeight 628).
+  // The 710 is a transient, not the layout height. The visual viewport
+  // filled the layout viewport on every one of these samples (keyboard
+  // closed), and the real keyboard height afterwards is
+  // 628 - 362.65625 = 265.34375.
+  // Rows are the recorded `resize` events only (the provider ignores
+  // `scroll`). Full precision is recovered from the recorded panel heights
+  // (35.671875 / 72.671875 / 80.671875px give the +-0.328125 offsetTop
+  // jitter). The last 628 row is within the 1px gate of the 629 row before
+  // it, so the last ACCEPTED transient sample is 629/629, as on-device.
+  const dbRowBottomBarTransientSequence: [
+    windowInnerHeight: number,
+    visualViewportHeight: number,
+    visualViewportOffsetTop: number,
+  ][] = [
+    [710, 710, 0],
+    [706, 706, 0],
+    [674, 674, 0.328125],
+    [665, 665, 0],
+    [657, 657, 0],
+    [650, 650, 0],
+    [645, 645, 0],
+    [641, 641, 0],
+    [637, 637, 0.328125],
+    [635, 635, 0],
+    [633, 633, 0],
+    [632, 632, -0.328125],
+    [631, 631, 0],
+    [630, 630, 0],
+    [629, 629, 0.328125],
+    [628, 628, 0.328125],
+  ];
+
+  it('does not latch a transient window.innerHeight spike into the keyboard height (db-row-toolbar-scroll checkpoint #2: Safari bottom bar collapse 628 -> 710 -> 628 with the keyboard closed)', () => {
+    const provider = createVisualViewportVirtualKeyboardProvider();
+    const callback =
+      vi.fn<(info: { visible: boolean; height: number }) => void>();
+    dispose = provider.onChange(callback);
+
+    // Settled, keyboard closed.
+    fireViewportEvent(viewport, 'resize', { height: 628, offsetTop: 0 }, 628);
+    expect(callback).toHaveBeenLastCalledWith({ visible: false, height: 0 });
+    const callsBeforeTransient = callback.mock.calls.length;
+
+    for (const [
+      windowInnerHeight,
+      height,
+      offsetTop,
+    ] of dbRowBottomBarTransientSequence) {
+      fireViewportEvent(
+        viewport,
+        'resize',
+        { height, offsetTop },
+        windowInnerHeight
+      );
+    }
+    const liftedWithKeyboardClosed = callback.mock.calls
+      .slice(callsBeforeTransient)
+      .map(([info]) => info)
+      .filter(info => info.visible || info.height !== 0);
+    const afterTransient = callback.mock.lastCall?.[0];
+
+    // The keyboard opens.
+    fireViewportEvent(
+      viewport,
+      'resize',
+      { height: 620.65625, offsetTop: 0 },
+      628
+    );
+    fireViewportEvent(
+      viewport,
+      'resize',
+      { height: 362.65625, offsetTop: 0 },
+      628
+    );
+    const afterKeyboardOpen = callback.mock.lastCall?.[0];
+
+    // A single assertion, so a failure shows all three at once. With the
+    // buggy latched 710 baseline: every transient sample after the 710 one
+    // lifts the toolbar with no keyboard (up to 80.671875px), it stays
+    // lifted at rest, and the open keyboard reads 347.34375 (82px too tall).
+    expect({
+      liftedWithKeyboardClosed,
+      afterTransient,
+      afterKeyboardOpen,
+    }).toEqual({
+      liftedWithKeyboardClosed: [],
+      afterTransient: { visible: false, height: 0 },
+      afterKeyboardOpen: {
+        visible: true,
+        height: expect.closeTo(265.34375, 3),
+      },
+    });
+  });
+
+  // Modeled on checkpoint #1 of .planning/debug/db-row-toolbar-scroll.md
+  // (recorder v2, same iPhone, a paragraph with the keyboard OPEN the whole
+  // time). During the keyboard-open document pans (drags B and C), iOS
+  // reported window.innerHeight == visualViewport.height (229, 276, 310, 347)
+  // while the layout height was still 628, but always with a LARGE
+  // offsetTop (height + offsetTop ~= 628). The offsetTop clause is the only
+  // thing that tells these rows apart from a closed keyboard, so they must
+  // not re-seed the baseline. Rows are the recorded `resize` events
+  // verbatim (the recorder rounds visualViewport fields to 0.1px).
+  const paragraphKeyboardOpenPanSequence: [
+    windowInnerHeight: number,
+    visualViewportHeight: number,
+    visualViewportOffsetTop: number,
+  ][] = [
+    [628, 362.7, 19.7], // within the 1px gate of 362.7, ignored
+    [229, 229, 399],
+    [276, 276, 352],
+    [310, 310, 318],
+    [347, 347, 281],
+    [429, 362.7, 199.3],
+  ];
+
+  it('keeps reporting the keyboard as open during a keyboard-open document pan where innerHeight == visualViewport.height (db-row-toolbar-scroll checkpoint #1: the re-seed must not fire)', () => {
+    const provider = createVisualViewportVirtualKeyboardProvider();
+    const callback =
+      vi.fn<(info: { visible: boolean; height: number }) => void>();
+    dispose = provider.onChange(callback);
+
+    fireViewportEvent(viewport, 'resize', { height: 628, offsetTop: 0 }, 628);
+    fireViewportEvent(viewport, 'resize', { height: 620.7, offsetTop: 0 }, 628);
+    fireViewportEvent(viewport, 'resize', { height: 362.7, offsetTop: 0 }, 628);
+    expect(callback).toHaveBeenLastCalledWith({
+      visible: true,
+      height: expect.closeTo(265.3, 3),
+    });
+    const callsBeforePan = callback.mock.calls.length;
+
+    for (const [
+      windowInnerHeight,
+      height,
+      offsetTop,
+    ] of paragraphKeyboardOpenPanSequence) {
+      fireViewportEvent(
+        viewport,
+        'resize',
+        { height, offsetTop },
+        windowInnerHeight
+      );
+    }
+    const duringPan = callback.mock.calls
+      .slice(callsBeforePan)
+      .map(([info]) => info);
+
+    // 5 accepted samples (the first row is gated). Re-seeding on any of the
+    // innerHeight == height rows would report the open keyboard as closed.
+    // The heights during the pan are the round-2 gate / offsetTop issue
+    // (cause 1 in the debug session) and are deliberately not asserted here.
+    expect(duringPan).toHaveLength(5);
+    expect(duringPan.filter(info => !info.visible)).toEqual([]);
+  });
+
+  // Known limitation of the re-seed (db-row-toolbar-scroll): the baseline is
+  // only re-seeded while the keyboard is provably closed. A spike that
+  // arrives while the keyboard is OPEN (hypothetical; checkpoint #2's spike
+  // came with the keyboard closed) is still latched and shows up on the
+  // next accepted resize. The next real keyboard close clears it.
+  it('known limitation: a window.innerHeight spike while the keyboard is open stays latched until the next keyboard close, which clears it', () => {
+    const provider = createVisualViewportVirtualKeyboardProvider();
+    const callback =
+      vi.fn<(info: { visible: boolean; height: number }) => void>();
+    dispose = provider.onChange(callback);
+
+    fireViewportEvent(viewport, 'resize', { height: 628, offsetTop: 0 }, 628);
+    fireViewportEvent(
+      viewport,
+      'resize',
+      { height: 362.65625, offsetTop: 0 },
+      628
+    );
+
+    // The spike, with the keyboard open. visualViewport.height does not
+    // move, so both rows are gated, but the running max still latches 710.
+    fireViewportEvent(
+      viewport,
+      'resize',
+      { height: 362.65625, offsetTop: 0 },
+      710
+    );
+    fireViewportEvent(
+      viewport,
+      'resize',
+      { height: 362.65625, offsetTop: 0 },
+      628
+    );
+
+    // A later genuine keyboard-height change (cp2 also recorded vvH 317.7
+    // with the keyboard open on this device).
+    fireViewportEvent(
+      viewport,
+      'resize',
+      { height: 317.65625, offsetTop: 0 },
+      628
+    );
+    const afterKeyboardResize = callback.mock.lastCall?.[0];
+
+    fireViewportEvent(viewport, 'resize', { height: 628, offsetTop: 0 }, 628);
+    const afterClose = callback.mock.lastCall?.[0];
+
+    fireViewportEvent(
+      viewport,
+      'resize',
+      { height: 362.65625, offsetTop: 0 },
+      628
+    );
+    const afterReopen = callback.mock.lastCall?.[0];
+
+    expect({ afterKeyboardResize, afterClose, afterReopen }).toEqual({
+      // Latched: 710 - 317.65625. The true value is 628 - 317.65625 = 310.34375.
+      afterKeyboardResize: {
+        visible: true,
+        height: expect.closeTo(392.34375, 3),
+      },
+      afterClose: { visible: false, height: 0 },
+      afterReopen: { visible: true, height: expect.closeTo(265.34375, 3) },
+    });
+  });
+
+  it('plain keyboard open/close with no innerHeight spike is unchanged by the re-seed (control)', () => {
+    const provider = createVisualViewportVirtualKeyboardProvider();
+    const callback =
+      vi.fn<(info: { visible: boolean; height: number }) => void>();
+    dispose = provider.onChange(callback);
+
+    for (const height of [
+      628, 620.65625, 362.65625, 620.65625, 628, 362.65625,
+    ]) {
+      fireViewportEvent(viewport, 'resize', { height, offsetTop: 0 }, 628);
+    }
+
+    expect(callback.mock.calls.map(([info]) => info)).toEqual([
+      { visible: false, height: 0 },
+      { visible: true, height: expect.closeTo(7.34375, 3) },
+      { visible: true, height: expect.closeTo(265.34375, 3) },
+      { visible: true, height: expect.closeTo(7.34375, 3) },
+      { visible: false, height: 0 },
+      { visible: true, height: expect.closeTo(265.34375, 3) },
+    ]);
+  });
 });
