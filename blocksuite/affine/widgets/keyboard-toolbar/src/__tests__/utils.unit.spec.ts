@@ -3,7 +3,11 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { isRootComponentActive, isSelectionStaleForFocus } from '../utils';
+import {
+  isRootComponentActive,
+  isSelectionStaleForFocus,
+  panelPaddingBottom,
+} from '../utils';
 
 describe('isRootComponentActive', () => {
   // keyboard-focus-tabbar-coordination (round 2): real on-device capture
@@ -105,5 +109,24 @@ describe('isSelectionStaleForFocus', () => {
     expect(
       isSelectionStaleForFocus(paragraph, document.createElement('input'))
     ).toBe(true);
+  });
+});
+
+describe('panelPaddingBottom', () => {
+  // 999.1 62px floor: the spacer is box-sizing: border-box, so its
+  // tab-bar safe-area padding was a hard minimum height. With the keyboard
+  // open the real keyboard offset can be < 62px (full scroll), and the
+  // toolbar stopped 62px above the keyboard.
+  it('drops the tab-bar padding while the keyboard is open and no panel is open', () => {
+    expect(panelPaddingBottom(false, true, '62px')).toBe('0px');
+  });
+
+  it('keeps the tab-bar padding while the keyboard is closed', () => {
+    expect(panelPaddingBottom(false, false, '62px')).toBe('62px');
+  });
+
+  it('keeps the tab-bar padding while a "+" panel is open (keyboard hidden behind it)', () => {
+    expect(panelPaddingBottom(true, true, '62px')).toBe('62px');
+    expect(panelPaddingBottom(true, false, '62px')).toBe('62px');
   });
 });

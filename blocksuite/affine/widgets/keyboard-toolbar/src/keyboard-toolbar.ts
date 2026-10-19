@@ -30,6 +30,7 @@ import {
   isKeyboardToolBarActionItem,
   isKeyboardToolPanelConfig,
   isSelectionStaleForFocus,
+  panelPaddingBottom,
 } from './utils';
 
 export const AFFINE_KEYBOARD_TOOLBAR = 'affine-keyboard-toolbar';
@@ -459,7 +460,11 @@ export class AffineKeyboardToolbar extends SignalWatcher(
         .context=${this._context}
         style=${styleMap({
           height: this.panelHeight,
-          paddingBottom: this.keyboard.appTabSafeArea$.value,
+          paddingBottom: panelPaddingBottom(
+            this.panelOpened,
+            this.keyboard.visible$.value,
+            this.keyboard.appTabSafeArea$.value
+          ),
         })}
       ></affine-keyboard-tool-panel>
     `;

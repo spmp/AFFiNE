@@ -100,3 +100,19 @@ export function isSelectionStaleForFocus(
   if (!editable) return false;
   return !selectedBlock.contains(activeElement);
 }
+
+/**
+ * 999.1 62px floor: bottom padding for the `<affine-keyboard-tool-panel>`
+ * spacer. The spacer is `box-sizing: border-box`, so this padding is a hard
+ * minimum height. The tab-bar safe area only matters while the keyboard is
+ * closed (or a "+" panel replaces it); with the keyboard open it made the
+ * toolbar stop `appTabSafeArea` px above the keyboard whenever the real
+ * keyboard offset was smaller (e.g. at full scroll).
+ */
+export function panelPaddingBottom(
+  panelOpened: boolean,
+  keyboardVisible: boolean,
+  appTabSafeArea: string
+): string {
+  return !panelOpened && keyboardVisible ? '0px' : appTabSafeArea;
+}
