@@ -105,3 +105,9 @@ storageState.json
 # GSD planning artifacts (local-only, not committed — see .planning/config.json commit_docs=false)
 .planning/
 .claude/
+
+# Local debugging artifacts (crash dumps, rebuild-pipeline logs/trigger, GSD runtime)
+/core
+/core.*
+/rebuild/
+/.gsd/
