@@ -407,6 +407,7 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
         this._taskTap.onPointerUp(event);
       }}
       @pointercancel=${() => this._taskTap.onPointerCancel()}
+      @touchend=${(event: TouchEvent) => this._taskTap.onTouchEnd(event)}
       @click=${(event: MouseEvent) => {
         event.preventDefault();
         event.stopPropagation();

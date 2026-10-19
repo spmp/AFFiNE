@@ -73,4 +73,24 @@ describe('createTapToggle', () => {
     tap.onPointerUp(ev('touch'));
     expect(onToggle).not.toHaveBeenCalled();
   });
+  it('cancels the touchend that follows a handled tap, so iOS does not focus the title and raise the keyboard', () => {
+    const { tap, ev, advance } = setup();
+    tap.onPointerDown(ev('touch'));
+    tap.onPointerUp(ev('touch'));
+    advance(2);
+    const touchEnd = { preventDefault: vi.fn() } as unknown as TouchEvent;
+    tap.onTouchEnd(touchEnd);
+    expect(touchEnd.preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves an unrelated touchend alone (no handled tap, or a drag)', () => {
+    const { tap, ev, advance } = setup();
+    const plain = { preventDefault: vi.fn() } as unknown as TouchEvent;
+    tap.onTouchEnd(plain);
+    tap.onPointerDown(ev('touch', 40, 180));
+    tap.onPointerUp(ev('touch', 40, 220));
+    advance(2);
+    tap.onTouchEnd(plain);
+    expect(plain.preventDefault).not.toHaveBeenCalled();
+  });
 });
