@@ -24,3 +24,16 @@
 # Sourcemaps (keep server sourcemap for backend stacktraces)
 **/*.map
 !packages/backend/server/dist/main.js.map
+
+# More stuff
+# crash dumps and local tooling/scratch
+/core
+/core.*
+/.grepai
+/.gsd
+/.planning
+/rebuild
+# build output and nested Rust targets (rebuilt inside the image)
+**/dist
+**/target
+
