@@ -246,14 +246,25 @@ run_rebuild() {
   recycle_builder
 
   write_status building 'Building the compose service(s).'
-  local build_version
-  build_version=$(date --utc +%Y%m%d.%H%M%S.%N)
+  # Deliberately do NOT pass --build-arg BUILD_VERSION here. This used to
+  # stamp a date --utc +%Y%m%d.%H%M%S.%N timestamp into every package.json's
+  # "version" field for cache-busting/traceability -- but that field is also
+  # sent as the WebSocket client's clientVersion on every space:join message
+  # (packages/common/nbstore/.../BUILD_CONFIG.appVersion), where it's compared
+  # via semver.Range (isSupportedWsClientVersion, gateway.ts). A timestamp
+  # happens to parse as three valid numeric semver identifiers, so the
+  # Dockerfile's own SemVer-shape guard can't catch it -- it silently passed
+  # realtime sync, causing every client to connect then immediately get
+  # disconnected in a loop with no error logged. Leaving BUILD_VERSION unset
+  # leaves package.json's real version (e.g. 0.27.0) intact; only pass
+  # BUILD_VERSION explicitly for an actual release build that needs a real
+  # SemVer override.
   {
-    printf '\n=== [%s] docker compose build (BUILD_VERSION=%s) ===\n' "$(date -u +%FT%TZ)" "$build_version"
+    printf '\n=== [%s] docker compose build ===\n' "$(date -u +%FT%TZ)"
   } | tee -a "$build_log" || true
   export BUILDKIT_PROGRESS=plain
   run_stage 'Compose build failed; the trigger was retained.' "$build_log" \
-    run_compose build --build-arg "BUILD_VERSION=$build_version" "${target_args[@]}" || return 1
+    run_compose build "${target_args[@]}" || return 1
   unset BUILDKIT_PROGRESS
 
   write_status stopping 'Stopping the running stack.'
