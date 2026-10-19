@@ -81,8 +81,8 @@ export function isRootComponentActive(
  * it re-ran (e.g. the toolbar re-mounting on a tap of the already-focused
  * row), while focus stayed in the row.
  *
- * The selection is stale when an editable element has focus and is not
- * inside the selected block. With nothing editable focused, keep the
+ * The selection is stale when an editable element has focus that neither
+ * contains nor is contained by the selected block. With nothing editable focused, keep the
  * existing behaviour (not stale).
  */
 export function isSelectionStaleForFocus(
@@ -98,6 +98,9 @@ export function isSelectionStaleForFocus(
       (activeElement.isContentEditable ||
         activeElement.getAttribute('contenteditable') === 'true'));
   if (!editable) return false;
+  // Ordinary text: the focused editable is the note-level contenteditable
+  // root, an ANCESTOR of the selected block -- not stale.
+  if (activeElement.contains(selectedBlock)) return false;
   return !selectedBlock.contains(activeElement);
 }
 
@@ -115,4 +118,45 @@ export function panelPaddingBottom(
   appTabSafeArea: string
 ): string {
   return !panelOpened && keyboardVisible ? '0px' : appTabSafeArea;
+}
+
+/** See `shouldRescrollAfterKeyboardChange`. */
+export const KEYBOARD_OPEN_RESCROLL_WINDOW_MS = 1000;
+
+/**
+ * 999.1: whether a keyboard height change should re-run the toolbar's
+ * scroll-into-view. Tapping text in the lower half of the screen left the
+ * caret under the toolbar: the scroll ran at tap time, while the toolbar was
+ * still at the screen bottom, and iOS's own focus pan only clears the
+ * keyboard, not the toolbar on top of it. Re-check while the keyboard opens
+ * and settles, but only within a short window after it opened -- later
+ * height changes come from the user scrolling (offset settle) and must not
+ * yank the page back to the caret.
+ */
+export function shouldRescrollAfterKeyboardChange(
+  keyboardVisible: boolean,
+  keyboardOpenedAtMs: number | undefined,
+  nowMs: number
+): boolean {
+  return (
+    keyboardVisible &&
+    keyboardOpenedAtMs !== undefined &&
+    nowMs - keyboardOpenedAtMs < KEYBOARD_OPEN_RESCROLL_WINDOW_MS
+  );
+}
+
+/**
+ * 999.1: how far to scroll the page viewport so the edit point clears the
+ * keyboard toolbar. Targets the caret when there is one -- targeting the
+ * block's bottom dragged the page for tall blocks (a whole database table)
+ * -- and falls back to the block bottom otherwise. 0 = no scroll.
+ */
+export function scrollIntoViewDelta(
+  toolbarTop: number,
+  blockBottom: number,
+  caretBottom: number | null,
+  gap: number
+): number {
+  const target = caretBottom ?? blockBottom;
+  return Math.max(0, target + gap - toolbarTop);
 }

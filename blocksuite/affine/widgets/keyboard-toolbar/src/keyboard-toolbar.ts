@@ -31,9 +31,18 @@ import {
   isKeyboardToolPanelConfig,
   isSelectionStaleForFocus,
   panelPaddingBottom,
+  scrollIntoViewDelta,
+  shouldRescrollAfterKeyboardChange,
 } from './utils';
 
 export const AFFINE_KEYBOARD_TOOLBAR = 'affine-keyboard-toolbar';
+
+function getCaretBottom(): number | null {
+  const selection = document.getSelection();
+  if (!selection?.rangeCount) return null;
+  const rect = selection.getRangeAt(0).getBoundingClientRect();
+  return rect.height > 0 ? rect.bottom : null;
+}
 
 @requiredProperties({
   config: PropTypes.object,
@@ -161,8 +170,8 @@ export class AffineKeyboardToolbar extends SignalWatcher(
         const { y: y1 } = this.getBoundingClientRect();
         const { bottom: y2 } = block.getBoundingClientRect();
         const gap = 8;
-
-        if (y2 < y1 + gap) return;
+        const delta = scrollIntoViewDelta(y1, y2, getCaretBottom(), gap);
+        if (delta === 0) return;
 
         // keyboard-toolbar-window-scroll-bug: this used to call the global
         // `scrollTo()`, i.e. `window.scrollTo()` -- scrolling the WHOLE
@@ -183,7 +192,7 @@ export class AffineKeyboardToolbar extends SignalWatcher(
         if (!viewportEl) return;
 
         viewportEl.scrollTo({
-          top: viewportEl.scrollTop + y2 - y1 + gap,
+          top: viewportEl.scrollTop + delta,
           behavior: 'instant',
         });
       })
@@ -375,6 +384,32 @@ export class AffineKeyboardToolbar extends SignalWatcher(
         requestAnimationFrame(() => {
           this._scrollCurrentBlockIntoView();
         });
+      })
+    );
+
+    // 999.1: re-check once the toolbar has moved onto the rising keyboard
+    // (see shouldRescrollAfterKeyboardChange in utils.ts).
+    let keyboardOpenedAtMs: number | undefined;
+    let wasKeyboardVisible = false;
+    this.disposables.add(
+      effect(() => {
+        const visible = this.keyboard.visible$.value;
+        void this.keyboard.height$.value;
+        const now = performance.now();
+        if (visible && !wasKeyboardVisible) keyboardOpenedAtMs = now;
+        wasKeyboardVisible = visible;
+        if (
+          !shouldRescrollAfterKeyboardChange(visible, keyboardOpenedAtMs, now)
+        )
+          return;
+        // after the spacer re-renders at the new height
+        this.updateComplete
+          .then(() => {
+            requestAnimationFrame(() => {
+              this._scrollCurrentBlockIntoView();
+            });
+          })
+          .catch(console.error);
       })
     );
 

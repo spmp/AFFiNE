@@ -7,6 +7,8 @@ import {
   isRootComponentActive,
   isSelectionStaleForFocus,
   panelPaddingBottom,
+  scrollIntoViewDelta,
+  shouldRescrollAfterKeyboardChange,
 } from '../utils';
 
 describe('isRootComponentActive', () => {
@@ -92,6 +94,21 @@ describe('isSelectionStaleForFocus', () => {
     expect(isSelectionStaleForFocus(paragraph, inline)).toBe(false);
   });
 
+  it('is not stale when the focused editable root CONTAINS the selected block (ordinary text: activeElement is affine-note)', () => {
+    const note = editable();
+    const listItem = document.createElement('div');
+    note.append(listItem);
+    expect(isSelectionStaleForFocus(listItem, note)).toBe(false);
+  });
+
+  it('is still stale for a database row title inside the same note (row focused, paragraph selected)', () => {
+    const note = document.createElement('div');
+    const paragraph = document.createElement('div');
+    const rowTitle = editable();
+    note.append(paragraph, rowTitle);
+    expect(isSelectionStaleForFocus(paragraph, rowTitle)).toBe(true);
+  });
+
   it('is not stale when nothing editable has focus (keeps existing behaviour)', () => {
     const paragraph = document.createElement('div');
     expect(isSelectionStaleForFocus(paragraph, null)).toBe(false);
@@ -128,5 +145,45 @@ describe('panelPaddingBottom', () => {
   it('keeps the tab-bar padding while a "+" panel is open (keyboard hidden behind it)', () => {
     expect(panelPaddingBottom(true, true, '62px')).toBe('62px');
     expect(panelPaddingBottom(true, false, '62px')).toBe('62px');
+  });
+});
+
+describe('shouldRescrollAfterKeyboardChange', () => {
+  // 999.1: tapping text in the lower half left the caret under the toolbar.
+  // The toolbar's scroll-into-view ran at tap time (toolbar still at the
+  // screen bottom), before the keyboard rose; nothing re-checked once the
+  // toolbar reached the keyboard. Re-check on keyboard height changes, but
+  // only shortly after the keyboard opened, so a later user scroll (which
+  // also settles a new height) is never yanked back to the caret.
+  it('re-scrolls for height changes within the window after the keyboard opened', () => {
+    expect(shouldRescrollAfterKeyboardChange(true, 1000, 1050)).toBe(true);
+    expect(shouldRescrollAfterKeyboardChange(true, 1000, 1999)).toBe(true);
+  });
+
+  it('does not re-scroll for height changes long after opening (user scroll settles)', () => {
+    expect(shouldRescrollAfterKeyboardChange(true, 1000, 2500)).toBe(false);
+  });
+
+  it('does not re-scroll while the keyboard is closed or before it ever opened', () => {
+    expect(shouldRescrollAfterKeyboardChange(false, 1000, 1050)).toBe(false);
+    expect(shouldRescrollAfterKeyboardChange(true, undefined, 1050)).toBe(
+      false
+    );
+  });
+});
+
+describe('scrollIntoViewDelta', () => {
+  // toolbarTop 317, gap 8 (on-device values: caret 336-355 under the bar)
+  it('scrolls just enough to clear the caret, not the whole block', () => {
+    expect(scrollIntoViewDelta(317, 900, 355, 8)).toBe(46);
+  });
+
+  it('falls back to the block bottom when there is no caret rect', () => {
+    expect(scrollIntoViewDelta(317, 358, null, 8)).toBe(49);
+  });
+
+  it('does not scroll when the target is already above the toolbar', () => {
+    expect(scrollIntoViewDelta(317, 900, 300, 8)).toBe(0);
+    expect(scrollIntoViewDelta(317, 300, null, 8)).toBe(0);
   });
 });
