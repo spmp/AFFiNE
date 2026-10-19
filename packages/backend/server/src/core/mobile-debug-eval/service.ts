@@ -56,11 +56,23 @@ export class MobileDebugEvalService {
     return { id };
   }
 
-  // Called by the PWA client's poll loop. Hands the pending command out
-  // exactly once (marks it consumed immediately), so a command is never
-  // re-executed by a later poll tick.
+  // Called by the PWA client's poll loop -- every 2s, from every open tab,
+  // regardless of whether this feature is enabled (there is no client-side
+  // gate, by design: see mobile-debug-eval.ts's doc comment). That makes
+  // this by far the highest-frequency call into this service, so unlike
+  // the other methods it must NOT throw when disabled: `assertEnabled()`'s
+  // ActionForbidden is a UserFriendlyError, and every UserFriendlyError
+  // gets logged at full stack-trace length by the global exception filter
+  // (base/nestjs/exception.ts's `error.log('HTTP', ...)`) -- on a 2s poll
+  // from multiple clients, that's a permanent, significant log-spam source
+  // for a condition that isn't exceptional, it's the expected steady state
+  // of this disabled-by-default tool. Return the same "nothing pending"
+  // shape a real poll would see when there's just no command queued,
+  // instead of a distinguishable error.
   consumePending(): { id: string; code: string } | null {
-    this.assertEnabled();
+    if (!this.config.mobileDebugEval.enabled) {
+      return null;
+    }
 
     const current = this.pending;
     if (!current || current.consumedAt !== null) {
