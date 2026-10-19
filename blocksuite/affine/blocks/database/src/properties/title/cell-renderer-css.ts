@@ -113,6 +113,23 @@ export const titleTaskCheckboxStyle = css({
   marginTop: '2px',
   color: cssVarV2.icon.primary,
   cursor: 'pointer',
+  // 999.3: on iOS, an element without `touch-action: manipulation` gets the
+  // double-tap-to-zoom wait -- the click arrives ~450-570ms after the touch,
+  // and a second tap inside that window turns both into a "double tap" with
+  // NO click at all. Users re-tap because nothing happened, so ticking took
+  // 4-16 taps on device (recorded: most on-target touches never produced a
+  // click).
+  touchAction: 'manipulation',
+  // 999.3: the icon is 15x15px -- far below a usable touch target. Extend
+  // it to ~27x27 (6px: stays inside its own 28px row and the 8px gap
+  // before the title text) invisibly without moving layout (this element is
+  // `position: relative`, see above). Top-level key: this is Emotion, not
+  // vanilla-extract -- a `selectors: {}` wrapper is NOT special here.
+  '&::after': {
+    content: '""',
+    position: 'absolute',
+    inset: '-6px',
+  },
   selectors: {
     '&.readonly': {
       cursor: 'default',

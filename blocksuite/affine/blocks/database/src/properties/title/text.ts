@@ -29,6 +29,7 @@ import {
   titleRichTextStyle,
   titleTaskCheckboxStyle,
 } from './cell-renderer-css.js';
+import { createTapToggle } from './tap-toggle.js';
 
 type TaskStatusDataSource = {
   ensureRowAsTodoList?: (rowId: string) => boolean;
@@ -371,9 +372,10 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
       return;
     }
 
-    const onClick = (event: MouseEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
+    // 999.3: toggling goes through `_taskTap` (touch/pen pointerup + deduped
+    // click) -- see tap-toggle.ts. Re-bound every render so it always acts
+    // on this render's `checked`.
+    this._taskToggle = target => {
       if (this.readonly) {
         return;
       }
@@ -385,8 +387,7 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
       // one shared checkbox render path for every view type (list/table/
       // kanban), so this also covers Journal Todo (which is just a list
       // view over this same component) without any view-specific code.
-      if (next) {
-        const target = event.currentTarget as HTMLElement;
+      if (next && target) {
         const { width } = target.getBoundingClientRect();
         playCheckAnimation(target, { size: width || undefined }).catch(
           console.error
@@ -399,7 +400,19 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
       class=${`${titleTaskCheckboxStyle} ${this.readonly ? 'readonly' : ''}`}
       data-testid="task-status-checkbox"
       data-title-leading
-      @click=${onClick}
+      @pointerdown=${(event: PointerEvent) =>
+        this._taskTap.onPointerDown(event)}
+      @pointerup=${(event: PointerEvent) => {
+        this._taskTapTarget = event.currentTarget as HTMLElement;
+        this._taskTap.onPointerUp(event);
+      }}
+      @pointercancel=${() => this._taskTap.onPointerCancel()}
+      @click=${(event: MouseEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this._taskTapTarget = event.currentTarget as HTMLElement;
+        this._taskTap.onClick();
+      }}
     >
       ${checked
         ? CheckBoxCheckSolidIcon({ style: 'color: #1E96EB' })
@@ -455,6 +468,14 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
       ${icon}
     </div>`;
   }
+
+  private _taskToggle: ((target: HTMLElement | null) => void) | undefined;
+
+  private _taskTapTarget: HTMLElement | null = null;
+
+  private readonly _taskTap = createTapToggle(() => {
+    this._taskToggle?.(this._taskTapTarget);
+  });
 
   private readonly richText = createRef<RichText>();
 
