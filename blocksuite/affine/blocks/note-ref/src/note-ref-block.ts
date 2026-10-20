@@ -9,6 +9,7 @@ import { css, html, nothing } from 'lit';
 import { guard } from 'lit/directives/guard.js';
 
 import { NoteRefPreviewRootOverride } from './preview-root';
+import { caretKey, shouldPlaceCaretAfterTap } from './touch-caret.js';
 
 /**
  * Every reference to the same cross-doc canonical Note shares one
@@ -1126,6 +1127,61 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
    * completes. Explicitly activating `_previewStd`'s own dispatcher here,
    * directly, removes the dependency on that timing entirely.
    */
+  /**
+   * 999.11 follow-up: on iOS a still touch tap in this linked note's text is
+   * delivered normally but WebKit does not move the caret -- see
+   * touch-caret.ts. If the caret has not moved shortly after such a tap,
+   * place it at the tap point ourselves (capture phase: inner handlers stop
+   * pointerdown from bubbling).
+   */
+  private _installTouchCaretFallback() {
+    let down: { x: number; y: number; id: number; caret: string } | null = null;
+    const onDown = (e: PointerEvent) => {
+      down =
+        e.pointerType === 'touch'
+          ? {
+              x: e.clientX,
+              y: e.clientY,
+              id: e.pointerId,
+              caret: caretKey(document.getSelection()),
+            }
+          : null;
+    };
+    const onUp = (e: PointerEvent) => {
+      const start = down;
+      down = null;
+      if (!start || e.pointerType !== 'touch' || e.pointerId !== start.id)
+        return;
+      const up = { x: e.clientX, y: e.clientY };
+      setTimeout(() => {
+        const selection = document.getSelection();
+        if (!selection) return;
+        if (!shouldPlaceCaretAfterTap(start, up, caretKey(selection))) return;
+        const range = document.caretRangeFromPoint?.(start.x, start.y);
+        if (!range) return;
+        const node = range.startContainer;
+        const element = node instanceof Element ? node : node.parentElement;
+        const editable = element?.closest<HTMLElement>(
+          '[contenteditable="true"]'
+        );
+        if (!element || !editable || !this.contains(editable)) return;
+        selection.removeAllRanges();
+        selection.addRange(range);
+        // Focus after the range exists (see _reclaimFocusAfterSelectionChange's comment).
+        const root = element.closest<HTMLElement>('affine-note') ?? editable;
+        if (!root.contains(document.activeElement)) {
+          root.focus({ preventScroll: true });
+        }
+      }, 80);
+    };
+    this.addEventListener('pointerdown', onDown, true);
+    this.addEventListener('pointerup', onUp, true);
+    this._disposables.add(() => {
+      this.removeEventListener('pointerdown', onDown, true);
+      this.removeEventListener('pointerup', onUp, true);
+    });
+  }
+
   private _stopDispatcherActivationBubbling() {
     const eventNames = [
       'pointerdown',
@@ -1240,6 +1296,7 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
       this._subscribeTargetDoc();
       this._observeForCrossDocRangeExclusion();
       this._stopDispatcherActivationBubbling();
+      this._installTouchCaretFallback();
 
       this._disposables.add(
         this.std.selection.slots.changed.subscribe(() => {
@@ -1262,6 +1319,7 @@ export class NoteRefBlockComponent extends BlockComponent<NoteRefBlockModel> {
       this._disposables.addFromEvent(this, 'focusin', () => {
         this._reclaimViewRegistration();
       });
+      this._installTouchCaretFallback();
     }
 
     this._disposables.add(
