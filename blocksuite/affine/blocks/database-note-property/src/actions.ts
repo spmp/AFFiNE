@@ -13,7 +13,11 @@ import {
   type NoteBlockModel,
 } from '@blocksuite/affine-model';
 import { CrossDocReferenceProvider } from '@blocksuite/affine-shared/services';
-import { getLastNoteBlock } from '@blocksuite/affine-shared/utils';
+import {
+  getLastNoteBlock,
+  waitForBlockInDoc,
+  waitForDocInWorkspace,
+} from '@blocksuite/affine-shared/utils';
 import { BlockSelection, type BlockStdScope } from '@blocksuite/std';
 
 // White/Transparent are poor choices for "make this row visually distinct"
@@ -164,6 +168,40 @@ function resolveCanonicalStore(std: BlockStdScope, refDocId: string) {
     : std.workspace.getDoc(refDocId)?.getStore({ id: refDocId });
 }
 
+/**
+ * 999.13: like `resolveCanonicalStore`, but for a note that may live in a
+ * doc that is not loaded yet -- e.g. an earlier day's journal after a page
+ * reload. `workspace.getDoc()` returns the handle whether or not its content
+ * has loaded, so a synchronous `getBlock` miss does NOT mean the note is
+ * gone (on device: refDoc exists, loaded=false, block not found -> "That
+ * note no longer exists."). Waits for the doc handle, loads the doc and
+ * waits for the block before giving up. Resolves `null` only when the note
+ * genuinely never appears.
+ */
+export async function resolveNoteCanonicalStore(
+  std: BlockStdScope,
+  refDocId: string,
+  refBlockId: string,
+  deps: {
+    waitForDoc: typeof waitForDocInWorkspace;
+    waitForBlock: typeof waitForBlockInDoc;
+  } = { waitForDoc: waitForDocInWorkspace, waitForBlock: waitForBlockInDoc }
+) {
+  const store = resolveCanonicalStore(std, refDocId);
+  if (store?.getBlock(refBlockId)) return store;
+  if (refDocId === std.store.id) return null;
+
+  if (!std.workspace.getDoc(refDocId)) {
+    await deps.waitForDoc(std.workspace, refDocId);
+  }
+  const doc = std.workspace.getDoc(refDocId);
+  if (!doc) return null;
+  const canonical = doc.getStore({ id: refDocId });
+  if (canonical.getBlock(refBlockId)) return canonical;
+  const found = await deps.waitForBlock(doc, refBlockId);
+  return found ? doc.getStore({ id: refDocId }) : null;
+}
+
 function noteRefExistsOnCurrentPage(
   std: BlockStdScope,
   refDocId: string,
@@ -260,6 +298,14 @@ export function revealOrInsertNoteForRow(
   dataSource: DatabaseBlockDataSource,
   rowId: string
 ): void {
+  revealOrInsertNoteForRowAsync(std, dataSource, rowId).catch(console.error);
+}
+
+async function revealOrInsertNoteForRowAsync(
+  std: BlockStdScope,
+  dataSource: DatabaseBlockDataSource,
+  rowId: string
+): Promise<void> {
   const ref = dataSource.getNoteRef(rowId);
   if (!ref) return;
 
@@ -276,7 +322,13 @@ export function revealOrInsertNoteForRow(
   // A carryover onto a since-deleted canonical would otherwise insert a
   // dangling `note-ref` with nothing to render — check the target still
   // resolves before inserting anything.
-  if (!resolveCanonicalStore(std, ref.refDocId)?.getBlock(ref.refBlockId)) {
+  // 999.13: the note's doc may simply not be loaded yet -- wait for it.
+  const canonicalStore = await resolveNoteCanonicalStore(
+    std,
+    ref.refDocId,
+    ref.refBlockId
+  );
+  if (!canonicalStore) {
     toast(std.host, 'That note no longer exists.');
     return;
   }
