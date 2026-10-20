@@ -32,10 +32,15 @@ import {
   isSelectionStaleForFocus,
   panelPaddingBottom,
   scrollIntoViewDelta,
+  selectionKey,
   shouldRescrollAfterKeyboardChange,
+  shouldScrollForSelectionChange,
 } from './utils';
 
 export const AFFINE_KEYBOARD_TOOLBAR = 'affine-keyboard-toolbar';
+
+// 999.11: shared by all toolbar instances -- see shouldScrollForSelectionChange.
+const lastSelectionKeyByRoot = new WeakMap<object, string>();
 
 function getCaretBottom(): number | null {
   const selection = document.getSelection();
@@ -376,10 +381,21 @@ export class AffineKeyboardToolbar extends SignalWatcher(
       e.preventDefault();
     });
 
+    // 999.11: only a selection that actually changed scrolls -- a touch to
+    // scroll the page re-emits the same selection, and this toolbar may be a
+    // freshly re-created instance (see shouldScrollForSelectionChange).
     this.disposables.add(
       effect(() => {
         const std = this.rootComponent.std;
-        void std.selection.value;
+        const key = selectionKey(std.selection.value);
+        if (
+          !shouldScrollForSelectionChange(
+            lastSelectionKeyByRoot,
+            this.rootComponent,
+            key
+          )
+        )
+          return;
         // wait cursor updated
         requestAnimationFrame(() => {
           this._scrollCurrentBlockIntoView();
@@ -390,7 +406,9 @@ export class AffineKeyboardToolbar extends SignalWatcher(
     // 999.1: re-check once the toolbar has moved onto the rising keyboard
     // (see shouldRescrollAfterKeyboardChange in utils.ts).
     let keyboardOpenedAtMs: number | undefined;
-    let wasKeyboardVisible = false;
+    // 999.11: a toolbar (re-)mounted while the keyboard is already up must
+    // not treat that as the keyboard opening.
+    let wasKeyboardVisible = this.keyboard.visible$.peek();
     this.disposables.add(
       effect(() => {
         const visible = this.keyboard.visible$.value;
@@ -473,15 +491,10 @@ export class AffineKeyboardToolbar extends SignalWatcher(
     );
   }
 
-  override firstUpdated() {
-    // workaround for the virtual keyboard showing transition animation
-    const timeoutId = setTimeout(() => {
-      this._scrollCurrentBlockIntoView();
-    }, 700);
-    this.disposables.add(() => {
-      clearTimeout(timeoutId);
-    });
-  }
+  // 999.11: the former firstUpdated 700ms scroll ("workaround for the
+  // virtual keyboard showing transition animation") is gone: it re-scrolled
+  // on every toolbar re-mount, and the keyboard-open re-check above now
+  // covers the opening animation.
 
   override render() {
     return html`

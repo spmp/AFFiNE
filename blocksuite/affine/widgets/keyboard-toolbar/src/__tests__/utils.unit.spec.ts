@@ -8,7 +8,9 @@ import {
   isSelectionStaleForFocus,
   panelPaddingBottom,
   scrollIntoViewDelta,
+  selectionKey,
   shouldRescrollAfterKeyboardChange,
+  shouldScrollForSelectionChange,
 } from '../utils';
 
 describe('isRootComponentActive', () => {
@@ -185,5 +187,65 @@ describe('scrollIntoViewDelta', () => {
   it('does not scroll when the target is already above the toolbar', () => {
     expect(scrollIntoViewDelta(317, 900, 300, 8)).toBe(0);
     expect(scrollIntoViewDelta(317, 300, null, 8)).toBe(0);
+  });
+});
+
+describe('selectionKey', () => {
+  // 999.11: touching the page to scroll re-emits the SAME selection; the
+  // toolbar's selection effect treated every emission as a caret move and
+  // scrolled the caret's block (in the linked notes) back into view on every
+  // touchstart, so the user could never scroll up to the Journal Todo.
+  const text = (blockId: string, index: number, length = 0) => ({
+    toJSON: () => ({
+      type: 'text',
+      from: { blockId, index, length },
+      to: null,
+    }),
+  });
+
+  it('is equal for a re-emitted identical selection', () => {
+    expect(selectionKey([text('p1', 3)])).toBe(selectionKey([text('p1', 3)]));
+  });
+
+  it('differs when the caret moves or the block changes', () => {
+    expect(selectionKey([text('p1', 3)])).not.toBe(
+      selectionKey([text('p1', 4)])
+    );
+    expect(selectionKey([text('p1', 3)])).not.toBe(
+      selectionKey([text('p2', 3)])
+    );
+  });
+
+  it('handles an empty selection', () => {
+    expect(selectionKey([])).toBe('[]');
+  });
+});
+
+describe('shouldScrollForSelectionChange', () => {
+  // 999.11: the keyboard toolbar is torn down and re-created on every touch
+  // inside a linked note's nested editor (recorded: 19 mounts in a few
+  // touches). A per-instance "last selection" was reset by every re-mount,
+  // so each new toolbar scrolled the unchanged caret back into view. The
+  // memory must outlive the toolbar instance -- keyed by the editor root.
+  it('scrolls for the first selection seen for an editor root', () => {
+    const memory = new WeakMap<object, string>();
+    expect(shouldScrollForSelectionChange(memory, {}, 'k1')).toBe(true);
+  });
+
+  it('does not scroll again for the same selection, even from a new toolbar instance', () => {
+    const memory = new WeakMap<object, string>();
+    const root = {};
+    shouldScrollForSelectionChange(memory, root, 'k1');
+    // a re-mounted toolbar shares the module-level memory and the same root
+    expect(shouldScrollForSelectionChange(memory, root, 'k1')).toBe(false);
+  });
+
+  it('scrolls when the selection changes, and tracks editor roots separately', () => {
+    const memory = new WeakMap<object, string>();
+    const a = {};
+    const b = {};
+    shouldScrollForSelectionChange(memory, a, 'k1');
+    expect(shouldScrollForSelectionChange(memory, a, 'k2')).toBe(true);
+    expect(shouldScrollForSelectionChange(memory, b, 'k2')).toBe(true);
   });
 });

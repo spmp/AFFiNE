@@ -160,3 +160,33 @@ export function scrollIntoViewDelta(
   const target = caretBottom ?? blockBottom;
   return Math.max(0, target + gap - toolbarTop);
 }
+
+/**
+ * 999.11: comparable key for a `std.selection` value. Touching the page to
+ * scroll re-emits the SAME selection, and the toolbar's selection effect used
+ * to treat every emission as a caret move -- scrolling the caret's block
+ * back into view on every touchstart (the page "jumped back" to linked notes
+ * whenever the user tried to scroll up). Only a changed key should scroll.
+ */
+export function selectionKey(
+  selections: ReadonlyArray<{ toJSON: () => unknown }>
+): string {
+  return JSON.stringify(selections.map(selection => selection.toJSON()));
+}
+
+/**
+ * 999.11: whether a selection emission should scroll the edit point into
+ * view. The keyboard toolbar is re-created on every touch inside a linked
+ * note's nested editor, so the "last selection" memory must outlive the
+ * toolbar instance: it is keyed by the editor root and shared by all
+ * instances (a WeakMap, so roots are not retained). Records `key`.
+ */
+export function shouldScrollForSelectionChange(
+  memory: WeakMap<object, string>,
+  root: object,
+  key: string
+): boolean {
+  if (memory.get(root) === key) return false;
+  memory.set(root, key);
+  return true;
+}
