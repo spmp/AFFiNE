@@ -573,15 +573,17 @@ export class ListViewRenderer extends SignalWatcher(
       </div>`;
     }
 
-    const color = dataSource.getResolvedNoteColor?.(std, rowId);
     const onClick = (e: MouseEvent) => {
       e.stopPropagation();
       dataSource.revealOrInsertNoteForRow?.(std, rowId);
     };
+    // 999.9: standard icon colour, same as the due-date button beside it. It
+    // used to be tinted with the note's own (pale pastel) colour, which made
+    // it nearly invisible on dark themes; the row background already shows
+    // the note colour.
     return html`<div
       class="affine-data-view-list-note-action"
       data-testid="note-action-open"
-      style=${color ? `color: ${color};` : ''}
       @click=${onClick}
     >
       ${PageIcon()}

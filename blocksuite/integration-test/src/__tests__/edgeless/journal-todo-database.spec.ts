@@ -761,6 +761,11 @@ describe('journal todo database slash-menu command', () => {
       '[data-testid="note-action-open"]'
     ) as HTMLElement | null;
     expect(openButton).toBeTruthy();
+    // 999.9: the open-note button keeps the standard icon colour (same as the
+    // due-date button next to it). Tinting it with the pale note colour made
+    // it nearly invisible on dark themes; the row background already carries
+    // the colour cue (asserted above).
+    expect(openButton?.style.color).toBe('');
     openButton?.click();
     await wait();
 
