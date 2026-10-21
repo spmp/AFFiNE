@@ -11,6 +11,7 @@ import { AboutGroup } from './about';
 import { AppearanceGroup } from './appearance';
 import { DevicesGroup } from './devices';
 import { ExperimentalFeatureSetting } from './experimental';
+import { FullSettingsGroup } from './full-settings';
 import { OthersGroup } from './others';
 import * as styles from './style.css';
 import { UserSubscription } from './subscription';
@@ -29,6 +30,7 @@ const MobileSetting = () => {
       <UserSubscription />
       <UserUsage />
       {status === 'authenticated' ? <DevicesGroup /> : null}
+      <FullSettingsGroup />
       <AppearanceGroup />
       <AboutGroup />
       <ExperimentalFeatureSetting />
