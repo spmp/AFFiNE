@@ -490,6 +490,88 @@ export const GenericDatabaseViewRefSlashMenuConfigExtension =
   );
 
 /**
+ * "New Journal Todo Table": create a visible Journal Todo table right after
+ * `model` and point the workspace-wide Journal Todo source at it. Shared by
+ * the desktop slash menu and the mobile keyboard toolbar (999.20), where
+ * the slash menu never mounts.
+ */
+export function createJournalTodoSourceTable(
+  std: BlockStdScope,
+  model: BlockModel
+): void {
+  const journalTodo = std.getOptional(JournalTodoDatabaseProvider);
+  if (!journalTodo) return;
+  const store = std.store;
+  // Story 2.11 (post-review): re-check at click time, not just when
+  // the menu was built — the list-level filter below only decides
+  // whether this item is *offered*; without this, a doc's template
+  // status flipping between menu-open and click (or a resolved-items
+  // array reused/cached by some caller not in view here) would let
+  // this slip through unguarded. Mirrors
+  // `journalTodoDatabaseSlashMenuConfig`'s own action-time re-check.
+  if (safeIsTemplateDoc(journalTodo, store.id)) {
+    toast(
+      std.host,
+      'This doc is a template, so a new Journal Todo table can’t be created here.'
+    );
+    return;
+  }
+  const hadPriorSource = !!journalTodo.getJournalTodoDatabaseRef();
+
+  store.captureSync();
+  // Unlike `journalTodoDatabaseSlashMenuConfig`'s own silent
+  // first-use auto-create (hidden in a pre-promoted note), this is a
+  // deliberate, visible user action — the new table is inserted
+  // directly at the cursor (as a sibling of the slash command's own
+  // anchor block), not hidden.
+  let databaseId: string | undefined;
+  try {
+    [databaseId] = store.addSiblingBlocks(
+      model,
+      [
+        {
+          flavour: 'affine:database',
+          title: new Text('Journal Todo'),
+        },
+      ],
+      'after'
+    );
+  } catch (error) {
+    console.error('[journal-todo-source] failed to create table', error);
+  }
+  if (!databaseId) {
+    toast(std.host, 'Could not create a new table here.');
+    return;
+  }
+  const databaseModel = store.getBlock(databaseId)?.model as DatabaseBlockModel;
+  new DatabaseBlockDataSource(databaseModel).ensureTaskStatusColumn();
+
+  journalTodo.setJournalTodoDatabaseRef({
+    refDocId: store.id,
+    refBlockId: databaseId,
+  });
+  toast(
+    std.host,
+    hadPriorSource
+      ? 'Replaced your previous Journal Todo source with a new "Journal Todo" table.'
+      : '"Journal Todo" is now your Journal Todo source.'
+  );
+  std.selection.set([
+    std.selection.create(BlockSelection, { blockId: databaseId }),
+  ]);
+}
+
+/**
+ * Whether "New Journal Todo Table" may be offered in the current doc: never
+ * inside a template doc (Story 2.11), where it would fork a new canonical
+ * into every future daily journal.
+ */
+export function canCreateJournalTodoSourceTable(std: BlockStdScope): boolean {
+  const journalTodo = std.getOptional(JournalTodoDatabaseProvider);
+  return !!journalTodo && !safeIsTemplateDoc(journalTodo, std.store.id);
+}
+
+/**
  * Story 2.5.5: lets the user explicitly set (or create) "the current
  * journal todo database" pointer (`JournalTodoDatabaseProvider`) themselves,
  * instead of only ever getting whatever `journalTodoDatabaseSlashMenuConfig`
@@ -602,65 +684,7 @@ export const journalTodoSourceSlashMenuConfig: SlashMenuConfig = {
       icon: DatabaseTableViewIcon(),
       group: `7_Database@${index++}`,
       action: () => {
-        const store = std.store;
-        // Story 2.11 (post-review): re-check at click time, not just when
-        // the menu was built — the list-level filter below only decides
-        // whether this item is *offered*; without this, a doc's template
-        // status flipping between menu-open and click (or a resolved-items
-        // array reused/cached by some caller not in view here) would let
-        // this slip through unguarded. Mirrors
-        // `journalTodoDatabaseSlashMenuConfig`'s own action-time re-check.
-        if (safeIsTemplateDoc(journalTodo, store.id)) {
-          toast(
-            std.host,
-            'This doc is a template, so a new Journal Todo table can’t be created here.'
-          );
-          return;
-        }
-        const hadPriorSource = !!journalTodo.getJournalTodoDatabaseRef();
-
-        store.captureSync();
-        // Unlike `journalTodoDatabaseSlashMenuConfig`'s own silent
-        // first-use auto-create (hidden in a pre-promoted note), this is a
-        // deliberate, visible user action — the new table is inserted
-        // directly at the cursor (as a sibling of the slash command's own
-        // anchor block), not hidden.
-        let databaseId: string | undefined;
-        try {
-          [databaseId] = store.addSiblingBlocks(
-            model,
-            [
-              {
-                flavour: 'affine:database',
-                title: new Text('Journal Todo'),
-              },
-            ],
-            'after'
-          );
-        } catch (error) {
-          console.error('[journal-todo-source] failed to create table', error);
-        }
-        if (!databaseId) {
-          toast(std.host, 'Could not create a new table here.');
-          return;
-        }
-        const databaseModel = store.getBlock(databaseId)
-          ?.model as DatabaseBlockModel;
-        new DatabaseBlockDataSource(databaseModel).ensureTaskStatusColumn();
-
-        journalTodo.setJournalTodoDatabaseRef({
-          refDocId: store.id,
-          refBlockId: databaseId,
-        });
-        toast(
-          std.host,
-          hadPriorSource
-            ? 'Replaced your previous Journal Todo source with a new "Journal Todo" table.'
-            : '"Journal Todo" is now your Journal Todo source.'
-        );
-        std.selection.set([
-          std.selection.create(BlockSelection, { blockId: databaseId }),
-        ]);
+        createJournalTodoSourceTable(std, model);
       },
     };
 
