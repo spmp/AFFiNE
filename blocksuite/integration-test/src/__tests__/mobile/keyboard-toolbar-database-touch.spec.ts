@@ -1,8 +1,12 @@
+import { DatabaseBlockDataSource } from '@blocksuite/affine/blocks/database';
 import type {
   DatabaseBlockModel,
   DatabaseViewRefBlockModel,
 } from '@blocksuite/affine/model';
-import { JournalTodoDatabaseProvider } from '@blocksuite/affine/shared/services';
+import {
+  JournalTodoDatabaseProvider,
+  NotificationProvider,
+} from '@blocksuite/affine/shared/services';
 import {
   defaultKeyboardToolbarConfig,
   type KeyboardToolPanelConfig,
@@ -10,6 +14,7 @@ import {
 } from '@blocksuite/affine-widget-keyboard-toolbar';
 import { viewPresets } from '@blocksuite/data-view/view-presets';
 import { type BlockComponent, TextSelection } from '@blocksuite/std';
+import { Text } from '@blocksuite/store';
 import { beforeEach, describe, expect, test } from 'vitest';
 
 import { wait } from '../utils/common.js';
@@ -121,9 +126,15 @@ describe('keyboard-toolbar database tool group touch reachability (Phase 2, MOBI
   // read/write pointer seam), not a real DI registration.
   function createStubStdForJournalTodo(
     journalDate: string,
-    isTemplateDoc = false
+    isTemplateDoc = false,
+    options: {
+      initialRef?: { refDocId: string; refBlockId: string };
+      confirm?: () => Promise<boolean>;
+    } = {}
   ) {
-    let ref: { refDocId: string; refBlockId: string } | undefined;
+    let ref: { refDocId: string; refBlockId: string } | undefined =
+      options.initialRef;
+    const confirms: string[] = [];
     const stub = new Proxy(editor.std, {
       get(target, prop, receiver) {
         if (prop === 'getOptional') {
@@ -136,6 +147,15 @@ describe('keyboard-toolbar database tool group touch reachability (Phase 2, MOBI
                   ref = newRef;
                 },
                 isTemplateDoc: () => isTemplateDoc,
+              };
+            }
+            if (identifier === NotificationProvider && options.confirm) {
+              return {
+                toast: () => {},
+                confirm: (opts: { message: string }) => {
+                  confirms.push(String(opts.message));
+                  return options.confirm!();
+                },
               };
             }
             return undefined;
@@ -153,7 +173,7 @@ describe('keyboard-toolbar database tool group touch reachability (Phase 2, MOBI
         return Reflect.get(target, prop, receiver);
       },
     });
-    return { stub, getRef: () => ref };
+    return { stub, getRef: () => ref, confirms };
   }
 
   test('the keyboard-toolbar\'s "Journal Todo" item inserts a correctly-seeded database-view-ref block via insertJournalTodoReference', async () => {
@@ -243,5 +263,98 @@ describe('keyboard-toolbar database tool group touch reachability (Phase 2, MOBI
         closeToolPanel: () => {},
       })
     ).toBe(false);
+  });
+
+  // 999.19: replacing an existing source table asks whether to copy its
+  // undone tasks into the new one (copy, not move: the old table is left
+  // untouched as a record).
+  async function createPreviousSourceTable(
+    tasks: { text: string; done: boolean }[]
+  ) {
+    const noteId = addNote(doc);
+    const tableId = doc.addBlock(
+      'affine:database',
+      { title: new Text('Old Journal Todo') },
+      noteId
+    );
+    const table = doc.getModelById(tableId) as DatabaseBlockModel;
+    const dataSource = new DatabaseBlockDataSource(table);
+    dataSource.ensureTaskStatusColumn();
+    for (const task of tasks) {
+      const rowId = doc.addBlock(
+        'affine:paragraph',
+        { text: new Text(task.text) },
+        tableId
+      );
+      dataSource.setTaskStatusChecked(rowId, task.done);
+    }
+    await wait();
+    return table;
+  }
+
+  async function runNewJournalTodoTable(confirm: () => Promise<boolean>) {
+    const previous = await createPreviousSourceTable([
+      { text: 'undone one', done: false },
+      { text: 'already done', done: true },
+      { text: 'undone two', done: false },
+    ]);
+    await selectFreshParagraph();
+    const { stub, getRef, confirms } = createStubStdForJournalTodo(
+      '2026-10-28',
+      false,
+      {
+        initialRef: { refDocId: doc.id, refBlockId: previous.id },
+        confirm,
+      }
+    );
+    const newTableItem = findDatabaseGroup().items.find(
+      item => item.name === 'New Journal Todo Table'
+    );
+    await newTableItem!.action?.({
+      std: stub,
+      rootComponent: {} as BlockComponent,
+      closeToolPanel: () => {},
+    });
+    await wait(50);
+
+    const created = doc
+      .getBlocksByFlavour('affine:database')
+      .map(block => block.model as DatabaseBlockModel)
+      .find(table => table.id !== previous.id)!;
+    expect(getRef()).toEqual({ refDocId: doc.id, refBlockId: created.id });
+    return { previous, created, confirms };
+  }
+
+  test('"New Journal Todo Table" offers to copy the previous table\'s undone tasks, and copies only those when accepted', async () => {
+    const { previous, created, confirms } = await runNewJournalTodoTable(
+      async () => true
+    );
+
+    expect(confirms.length).toBe(1);
+    expect(confirms[0]).toContain('2');
+    const createdSource = new DatabaseBlockDataSource(created);
+    expect(created.children.map(row => row.text?.toString())).toEqual([
+      'undone one',
+      'undone two',
+    ]);
+    for (const row of created.children) {
+      expect(createdSource.getTaskStatusInfo(row.id)?.checked).toBe(false);
+    }
+    // The previous table is left exactly as it was.
+    expect(previous.children.map(row => row.text?.toString())).toEqual([
+      'undone one',
+      'already done',
+      'undone two',
+    ]);
+  });
+
+  test('declining the copy leaves the new Journal Todo table empty', async () => {
+    const { previous, created, confirms } = await runNewJournalTodoTable(
+      async () => false
+    );
+
+    expect(confirms.length).toBe(1);
+    expect(created.children.length).toBe(0);
+    expect(previous.children.length).toBe(3);
   });
 });

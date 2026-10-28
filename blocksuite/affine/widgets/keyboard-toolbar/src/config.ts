@@ -999,7 +999,7 @@ const databaseToolGroup: KeyboardToolPanelGroup = {
         const model = selectedModels?.[0];
         if (!model) return;
 
-        createJournalTodoSourceTable(std, model);
+        return createJournalTodoSourceTable(std, model);
       },
     },
     {
