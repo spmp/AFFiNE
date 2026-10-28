@@ -4,7 +4,7 @@ import {
   insertNoteRefBlockCommand,
   noteRefSlashMenuConfig,
 } from '@blocksuite/affine/blocks/note-ref';
-import type { NoteBlockModel } from '@blocksuite/affine/model';
+import { type NoteBlockModel, NoteDisplayMode } from '@blocksuite/affine/model';
 import { EditPropsStore } from '@blocksuite/affine/shared/services';
 import { TextSelection } from '@blocksuite/std';
 import { type BlockModel, type Store, Text } from '@blocksuite/store';
@@ -323,6 +323,66 @@ describe('note referenced more than once on a page', () => {
     await wait();
 
     expect(editor.std.event.active).toBe(true);
+  });
+
+  test('pasting plain text inside a same-doc reference lands at the cursor, not at the top of the page', async () => {
+    // The referenced (canonical) note's blocks render inside the outer
+    // host, but the canonical note itself has no block component. Paste
+    // resolved its insertion point through `std.view.getBlock(parent)`,
+    // found nothing, and fell back to "paste after the page's first
+    // paragraph" -- so text pasted into a referenced note jumped to the top.
+    const reusableNoteId = createReusableNote();
+    // Like every note created through `/note`, the canonical note is
+    // edgeless-only, so the page view never renders it as a block itself.
+    doc.updateBlock(doc.getModelById(reusableNoteId)!, {
+      displayMode: NoteDisplayMode.EdgelessOnly,
+    });
+    await wait();
+
+    const anchorNoteId = addNote(doc);
+    const anchorModel = doc.getBlock(anchorNoteId)!.model.children[0]!;
+    const [, result] = editor.std.command.exec(insertNoteRefBlockCommand, {
+      refBlockId: reusableNoteId,
+      place: 'after',
+      selectedModels: [anchorModel],
+    });
+    await wait();
+
+    const reusableNote = doc.getModelById(reusableNoteId)!;
+    const paragraph = reusableNote.children[0]!;
+    const refEl = document.querySelector(
+      `affine-note-ref[data-block-id="${result.insertedNoteRefBlockId}"]`
+    ) as NoteRefBlockComponent;
+    const paragraphEl = refEl.querySelector('affine-paragraph') as HTMLElement;
+    paragraphEl.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, composed: true })
+    );
+    editor.std.selection.setGroup('note', [
+      editor.std.selection.create(TextSelection, {
+        from: { blockId: paragraph.id, index: 5, length: 0 },
+        to: null,
+      }),
+    ]);
+    await wait();
+
+    const anchorNoteChildrenBefore =
+      doc.getModelById(anchorNoteId)!.children.length;
+    const data = new DataTransfer();
+    data.setData('text/plain', 'XYZ');
+    paragraphEl.dispatchEvent(
+      new ClipboardEvent('paste', {
+        clipboardData: data,
+        bubbles: true,
+        composed: true,
+      })
+    );
+    await wait(200);
+
+    expect(paragraph.text?.toString()).toBe('HelloXYZ reusable note');
+    expect(reusableNote.children.length).toBe(1);
+    expect(doc.getModelById(anchorNoteId)!.children.length).toBe(
+      anchorNoteChildrenBefore
+    );
   });
 
   // Per direct user decision (2026-07-22, reversing an earlier decision in
