@@ -4,13 +4,16 @@ import {
   DatabaseViewRefBlockModel,
 } from '@blocksuite/affine-model';
 import {
+  ensureDocLoaded,
   waitForBlockInDoc,
   waitForDocInWorkspace,
 } from '@blocksuite/affine-shared/utils';
 import type { Filter, FilterGroup } from '@blocksuite/data-view';
 import type {
   AfterImportBlockPayload,
+  Store,
   TransformerMiddleware,
+  Workspace,
 } from '@blocksuite/store';
 import { filter as rxFilter, map } from 'rxjs';
 
@@ -153,6 +156,104 @@ function hideColumnInView(
       ? { id: columnId, width: 180, hide: true }
       : { id: columnId, hide: true };
   return { view: { ...view, columns: [...columns, entry] }, changed: true };
+}
+
+/** The workspace-wide Journal Todo source, as `JournalTodoDatabaseProvider` holds it. */
+export interface JournalTodoSourceRef {
+  refDocId: string;
+  refBlockId: string;
+}
+
+/**
+ * Whether a view carries the Journal Todo filter a `/Journal Todo`
+ * insertion seeds: an `or` group with a "status is not done" clause and a
+ * "done after <cutoff>" grace clause. That shape is what tells a Journal
+ * Todo reference apart from a generic database reference (Story 2.5),
+ * which must never be re-pointed.
+ */
+function isJournalTodoView(view: ViewWithFilter): boolean {
+  const filter = view.filter;
+  if (!filter || filter.type !== 'group' || filter.op !== 'or') return false;
+  const fns = new Set(
+    filter.conditions.map(c => (c.type === 'filter' ? c.function : undefined))
+  );
+  return fns.has('isNotOneOf') && fns.has('after');
+}
+
+/** Replaces every string leaf of `value` found in `idMap`. */
+function remapIds(value: unknown, idMap: Map<string, string>): unknown {
+  if (typeof value === 'string') return idMap.get(value) ?? value;
+  if (Array.isArray(value)) return value.map(item => remapIds(item, idMap));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, remapIds(item, idMap)])
+    );
+  }
+  return value;
+}
+
+async function resolveDatabase(
+  workspace: Workspace,
+  docId: string,
+  blockId: string,
+  currentStore: Store
+): Promise<DatabaseBlockModel | null> {
+  let doc = workspace.getDoc(docId);
+  if (!doc) {
+    if (!(await waitForDocInWorkspace(workspace, docId))) return null;
+    doc = workspace.getDoc(docId);
+    if (!doc) return null;
+  }
+  const store =
+    doc === currentStore.doc ? currentStore : doc.getStore({ id: doc.id });
+  if (!store.getBlock(blockId)) {
+    ensureDocLoaded(doc);
+    if (!(await waitForBlockInDoc(doc, blockId))) return null;
+  }
+  const model = store.getBlock(blockId)?.model;
+  return model instanceof DatabaseBlockModel ? model : null;
+}
+
+/**
+ * Re-points a duplicated Journal Todo reference at `current`, the source
+ * table in use NOW. Its views are kept (the template's view settings), with
+ * every column id of the table it was copied against swapped for the
+ * same-named column of the current table. If the old table can't be
+ * resolved, the filters are dropped instead, and `applyJournalTodoRefresh`
+ * installs a fresh Journal Todo filter.
+ */
+function repointJournalTodoReference(
+  model: DatabaseViewRefBlockModel,
+  current: JournalTodoSourceRef,
+  previousTable: DatabaseBlockModel | null,
+  currentTable: DatabaseBlockModel
+) {
+  // The same columns a fresh `/Journal Todo` insertion ensures.
+  const dataSource = new DatabaseBlockDataSource(currentTable);
+  dataSource.ensureTaskStatusColumn();
+  dataSource.ensureDoneDateColumn();
+  dataSource.ensureNoteColumn();
+
+  let views = JSON.parse(JSON.stringify(model.props.views)) as ViewWithFilter[];
+  if (previousTable) {
+    const currentIdByName = new Map(
+      currentTable.props.columns.map(column => [column.name, column.id])
+    );
+    const idMap = new Map<string, string>();
+    for (const column of previousTable.props.columns) {
+      const currentId = currentIdByName.get(column.name);
+      if (currentId && currentId !== column.id) idMap.set(column.id, currentId);
+    }
+    views = remapIds(views, idMap) as ViewWithFilter[];
+  } else {
+    views = views.map(view => ({ ...view, filter: undefined }));
+  }
+
+  model.store.transact(() => {
+    model.props.refDocId = current.refDocId;
+    model.props.refBlockId = current.refBlockId;
+    model.props.views = views as typeof model.props.views;
+  });
 }
 
 /**
@@ -341,7 +442,15 @@ function applyJournalTodoRefresh(
  * `refreshJournalTodoOnDuplicateMiddleware`'s own body below.
  */
 export const refreshJournalTodoOnDuplicateMiddleware =
-  (): TransformerMiddleware =>
+  (options?: {
+    /**
+     * The workspace's current Journal Todo source. When given, a duplicated
+     * Journal Todo reference that points at a different (older) table is
+     * re-pointed at this one, so a journal created from a template uses the
+     * table in use now, not the one the template was built against.
+     */
+    getCurrentSource?: () => JournalTodoSourceRef | undefined;
+  }): TransformerMiddleware =>
   ({ slots }) => {
     let disposed = false;
 
@@ -453,7 +562,59 @@ export const refreshJournalTodoOnDuplicateMiddleware =
             model instanceof DatabaseViewRefBlockModel
         )
       )
-      .subscribe(model => attemptRefresh(model, true));
+      .subscribe(model => {
+        const current = options?.getCurrentSource?.();
+        const refDocId = model.props.refDocId || model.store.id;
+        const pointsElsewhere =
+          !!current &&
+          (current.refBlockId !== model.props.refBlockId ||
+            current.refDocId !== refDocId);
+        if (
+          !current ||
+          !pointsElsewhere ||
+          !(model.props.views as ViewWithFilter[]).some(isJournalTodoView)
+        ) {
+          attemptRefresh(model, true);
+          return;
+        }
+        const workspace = model.store.workspace;
+        Promise.all([
+          resolveDatabase(
+            workspace,
+            refDocId,
+            model.props.refBlockId,
+            model.store
+          ),
+          resolveDatabase(
+            workspace,
+            current.refDocId,
+            current.refBlockId,
+            model.store
+          ),
+        ])
+          .then(([previousTable, currentTable]) => {
+            if (disposed) return;
+            if (!currentTable) {
+              // The current source can't be found: keep the copy as it
+              // was rather than pointing it at nothing.
+              attemptRefresh(model, false);
+              return;
+            }
+            repointJournalTodoReference(
+              model,
+              current,
+              previousTable,
+              currentTable
+            );
+            applyJournalTodoRefresh(model, currentTable);
+          })
+          .catch(error => {
+            console.error(
+              '[database-view-ref] failed to re-point a duplicated Journal Todo at the current source',
+              error
+            );
+          });
+      });
     return () => {
       disposed = true;
       subscription.unsubscribe();

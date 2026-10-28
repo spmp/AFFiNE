@@ -20,6 +20,7 @@ import { ObjectPool, Service } from '@toeverything/infra';
 import { combineLatest, map } from 'rxjs';
 
 import { initDocFromProps } from '../../../blocksuite/initialization';
+import { readJournalTodoDatabaseRef } from '../../journal/store/journal-todo-database';
 import { getAFFiNEWorkspaceSchema } from '../../workspace/global-schema';
 import type { Doc } from '../entities/doc';
 import { DocRecordList } from '../entities/record-list';
@@ -275,7 +276,16 @@ export class DocsService extends Service {
           // comment for the full "why". Registered here (not just inside
           // `duplicateFromTemplate` below) so plain "Duplicate doc" gets
           // the same fix, not only journal-template duplication.
-          refreshJournalTodoOnDuplicateMiddleware(),
+          refreshJournalTodoOnDuplicateMiddleware({
+            getCurrentSource: () => {
+              const ref = readJournalTodoDatabaseRef(
+                this.store.getWorkspaceRootYDoc()
+              );
+              return ref
+                ? { refDocId: ref.docId, refBlockId: ref.databaseId }
+                : undefined;
+            },
+          }),
         ],
       });
       const slice = Slice.fromModels(sourceBsDoc, [
@@ -937,7 +947,16 @@ export class DocsService extends Service {
           // comment for the full "why". Also registered in `duplicate`
           // above, so plain "Duplicate doc" gets the same fix, not just
           // journal-template duplication.
-          refreshJournalTodoOnDuplicateMiddleware(),
+          refreshJournalTodoOnDuplicateMiddleware({
+            getCurrentSource: () => {
+              const ref = readJournalTodoDatabaseRef(
+                this.store.getWorkspaceRootYDoc()
+              );
+              return ref
+                ? { refDocId: ref.docId, refBlockId: ref.databaseId }
+                : undefined;
+            },
+          }),
         ],
       });
       const slice = Slice.fromModels(sourceBsDoc, [

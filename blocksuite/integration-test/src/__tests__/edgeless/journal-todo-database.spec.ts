@@ -1230,6 +1230,124 @@ describe('journal todo database slash-menu command', () => {
     }
   });
 
+  test("a Journal Todo copied from a template is re-pointed at the CURRENT Journal Todo table, with its filter on that table's columns", async () => {
+    // Live bug (2026-10-28): template -> new journal kept referencing the
+    // table the template was built against, even after "New Journal Todo
+    // Table" had switched the workspace to a newer one. Only copies made by
+    // duplication are re-pointed; already-inserted references stay put.
+    const noteId = addNote(doc);
+    const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);
+    const model = doc.getModelById(paragraphId)!;
+    const { stub, getRef } = createStubStd({ journalDate: '2026-10-28' });
+
+    const todoItems = journalTodoDatabaseSlashMenuConfig.items;
+    await (
+      (typeof todoItems === 'function'
+        ? todoItems({ std: stub, model })
+        : todoItems
+      ).find(i => i.name === 'Journal Todo') as unknown as {
+        action: () => Promise<void>;
+      }
+    ).action();
+    await wait();
+    const tableA = getRef()!;
+    const sourceRefModel = (
+      document.querySelector(
+        'affine-database-view-ref'
+      ) as DatabaseViewRefBlockComponent
+    ).model;
+    expect(sourceRefModel.props.refBlockId).toBe(tableA.refBlockId);
+
+    // Switch the workspace to a brand-new table B.
+    const otherNoteId = addNote(doc);
+    const otherParagraph = doc.getModelById(
+      doc.addBlock('affine:paragraph', {}, otherNoteId)
+    )!;
+    const sourceItems = journalTodoSourceSlashMenuConfig.items;
+    (
+      (typeof sourceItems === 'function'
+        ? sourceItems({ std: stub, model: otherParagraph })
+        : sourceItems
+      ).find(i => i.name === 'New Journal Todo Table') as unknown as {
+        action: () => void;
+      }
+    ).action();
+    await wait();
+    const tableB = getRef()!;
+    expect(tableB.refBlockId).not.toBe(tableA.refBlockId);
+
+    // "New journal from template": duplicate the note holding the old
+    // reference, with the current source handed to the middleware the way
+    // DocsService does.
+    const targetDoc = collection
+      .createDoc(
+        `doc:journal-todo-repoint-${Math.random().toString(16).slice(2, 8)}`
+      )
+      .getStore();
+    targetDoc.load(() => {
+      const rootId = targetDoc.addBlock('affine:page', { title: new Text() });
+      targetDoc.addBlock('affine:surface', {}, rootId);
+    });
+    const transformer = new Transformer({
+      schema: new Schema().register(AffineSchemas),
+      blobCRUD: collection.blobSync,
+      docCRUD: {
+        create: (id: string) => collection.createDoc(id).getStore({ id }),
+        get: (id: string) => collection.getDoc(id)?.getStore({ id }) ?? null,
+        delete: (id: string) => collection.removeDoc(id),
+      },
+      middlewares: [
+        replaceIdMiddleware(collection.idGenerator),
+        refreshJournalTodoOnDuplicateMiddleware({
+          getCurrentSource: () => getRef(),
+        }),
+      ],
+    });
+    const snapshot = transformer.sliceToSnapshot(
+      Slice.fromModels(doc, [doc.getModelById(noteId)!])
+    );
+    if (!snapshot) throw new Error('Failed to create snapshot');
+    await transformer.snapshotToSlice(snapshot, targetDoc, targetDoc.root?.id);
+    await wait(50);
+
+    const copy = targetDoc.getBlocksByFlavour('affine:database-view-ref')[0]!
+      .model as unknown as typeof sourceRefModel;
+    expect(copy.props.refBlockId).toBe(tableB.refBlockId);
+    expect(copy.props.refDocId).toBe(tableB.refDocId);
+
+    const tableBModel = doc.getBlock(tableB.refBlockId)!
+      .model as DatabaseBlockModel;
+    const tableBSource = new DatabaseBlockDataSource(tableBModel);
+    const statusColumnId = tableBSource.getTaskStatusColumn()!.id;
+    const doneOptionId = tableBSource.getTaskStatusTargetOption(
+      'done',
+      statusColumnId
+    )!.id;
+    const filter = (
+      copy.props.views[0] as unknown as {
+        filter: {
+          op: string;
+          conditions: {
+            left: { name: string };
+            function: string;
+            args: { value: unknown }[];
+          }[];
+        };
+      }
+    ).filter;
+    expect(filter.op).toBe('or');
+    const statusClause = filter.conditions.find(
+      c => c.function === 'isNotOneOf'
+    )!;
+    expect(statusClause.left.name).toBe(statusColumnId);
+    expect(statusClause.args[0]!.value).toEqual([doneOptionId]);
+    const doneDateClause = filter.conditions.find(c => c.function === 'after')!;
+    expect(doneDateClause.left.name).toBe(tableBSource.getDoneDateColumn()!.id);
+
+    // The original (e.g. the template itself) still points at table A.
+    expect(sourceRefModel.props.refBlockId).toBe(tableA.refBlockId);
+  });
+
   test('Story 2.11 (live bug report — regression test): "Note color" gets hidden in any reference that touches it, even if the column already exists from a different reference', async () => {
     const noteId = addNote(doc);
     const paragraphId = doc.addBlock('affine:paragraph', {}, noteId);

@@ -1,6 +1,6 @@
 import { LiveData, Store, yjsGetPath, yjsObserve } from '@toeverything/infra';
 import { switchMap } from 'rxjs';
-import { transact } from 'yjs';
+import { type Doc as YDoc, transact } from 'yjs';
 
 import type { WorkspaceService } from '../../workspace';
 
@@ -10,6 +10,19 @@ export interface JournalTodoDatabaseRef {
 }
 
 const META_KEY = 'journalTodoDatabaseRef';
+
+/**
+ * Reads the pointer straight from a workspace root doc, for callers that
+ * have the root doc but not this store (e.g. `DocsService`'s duplication
+ * transformer, which re-points copied Journal Todo references at it).
+ */
+export function readJournalTodoDatabaseRef(
+  rootYDoc: YDoc
+): JournalTodoDatabaseRef | undefined {
+  return rootYDoc.getMap('meta').get(META_KEY) as
+    | JournalTodoDatabaseRef
+    | undefined;
+}
 
 /**
  * The single, workspace-wide, Yjs-synced pointer to "the current journal
@@ -43,7 +56,7 @@ export class JournalTodoDatabaseStore extends Store {
   );
 
   getJournalTodoDatabaseRef(): JournalTodoDatabaseRef | undefined {
-    return this.metaMap.get(META_KEY) as JournalTodoDatabaseRef | undefined;
+    return readJournalTodoDatabaseRef(this.workspaceService.workspace.rootYDoc);
   }
 
   setJournalTodoDatabaseRef(ref: JournalTodoDatabaseRef | undefined) {
