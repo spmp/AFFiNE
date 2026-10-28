@@ -2909,6 +2909,16 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     const ancestorCells: Record<string, unknown> = {};
     const stack: string[] = [];
 
+    // Only write cells whose value actually changes (or that don't exist
+    // yet). Rewriting every row's three cells with fresh `Text`s on each
+    // move cost 6 s and 85 KB of Yjs history per drag on a 298-row
+    // Journal Todo (999.18).
+    const textOf = (rowId: string, columnId: string) => {
+      const cell = getCell(this._model, rowId, columnId);
+      if (!cell) return null;
+      return cell.value == null ? '' : String(cell.value);
+    };
+
     for (let i = 0; i < rowIds.length; i++) {
       const rowId = rowIds[i];
       if (!rowId) continue;
@@ -2917,15 +2927,21 @@ export class DatabaseBlockDataSource extends DataSourceBase {
         stack.pop();
       }
 
-      levelCells[rowId] = level;
-      const parentIdentity = stack.at(-1);
-      parentCells[rowId] = parentIdentity
-        ? new Text(parentIdentity)
-        : undefined;
-      ancestorCells[rowId] =
-        stack.length > 0
-          ? new Text(encodeTaskAncestorIdentities(stack))
+      const levelCell = getCell(this._model, rowId, levelColumn.id);
+      if (!levelCell || this.parseHierarchyLevel(levelCell.value) !== level) {
+        levelCells[rowId] = level;
+      }
+      const parentIdentity = stack.at(-1) ?? '';
+      if (textOf(rowId, parentColumn.id) !== parentIdentity) {
+        parentCells[rowId] = parentIdentity
+          ? new Text(parentIdentity)
           : undefined;
+      }
+      const ancestors =
+        stack.length > 0 ? encodeTaskAncestorIdentities(stack) : '';
+      if (textOf(rowId, ancestorColumn.id) !== ancestors) {
+        ancestorCells[rowId] = ancestors ? new Text(ancestors) : undefined;
+      }
 
       const identity = createTaskIdentity({
         docId: this.doc.id,
@@ -2935,9 +2951,11 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       stack.length = level + 1;
     }
 
-    updateCells(this._model, levelColumn.id, levelCells);
-    updateCells(this._model, parentColumn.id, parentCells);
-    updateCells(this._model, ancestorColumn.id, ancestorCells);
+    this.doc.transact(() => {
+      updateCells(this._model, levelColumn.id, levelCells);
+      updateCells(this._model, parentColumn.id, parentCells);
+      updateCells(this._model, ancestorColumn.id, ancestorCells);
+    });
   }
 
   applyTaskHierarchyMutation(
