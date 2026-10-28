@@ -26,6 +26,7 @@ import { BlockSelection, type BlockStdScope } from '@blocksuite/std';
 import { type BlockModel, Text } from '@blocksuite/store';
 
 import { insertDatabaseViewRefBlockCommand } from '../commands.js';
+import { offerToCopyUndoneTasks } from '../journal-todo-carryover.js';
 
 /**
  * Story 2.11 (post-review): every `isTemplateDoc` call in this file gates
@@ -495,10 +496,10 @@ export const GenericDatabaseViewRefSlashMenuConfigExtension =
  * the desktop slash menu and the mobile keyboard toolbar (999.20), where
  * the slash menu never mounts.
  */
-export function createJournalTodoSourceTable(
+export async function createJournalTodoSourceTable(
   std: BlockStdScope,
   model: BlockModel
-): void {
+): Promise<void> {
   const journalTodo = std.getOptional(JournalTodoDatabaseProvider);
   if (!journalTodo) return;
   const store = std.store;
@@ -516,7 +517,8 @@ export function createJournalTodoSourceTable(
     );
     return;
   }
-  const hadPriorSource = !!journalTodo.getJournalTodoDatabaseRef();
+  const priorSource = journalTodo.getJournalTodoDatabaseRef();
+  const hadPriorSource = !!priorSource;
 
   store.captureSync();
   // Unlike `journalTodoDatabaseSlashMenuConfig`'s own silent
@@ -559,6 +561,11 @@ export function createJournalTodoSourceTable(
   std.selection.set([
     std.selection.create(BlockSelection, { blockId: databaseId }),
   ]);
+
+  // 999.19: offer to bring the previous table's undone tasks along.
+  if (priorSource) {
+    await offerToCopyUndoneTasks(std, priorSource, databaseModel);
+  }
 }
 
 /**
@@ -684,7 +691,7 @@ export const journalTodoSourceSlashMenuConfig: SlashMenuConfig = {
       icon: DatabaseTableViewIcon(),
       group: `7_Database@${index++}`,
       action: () => {
-        createJournalTodoSourceTable(std, model);
+        createJournalTodoSourceTable(std, model).catch(console.error);
       },
     };
 
