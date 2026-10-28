@@ -119,7 +119,10 @@ describe('keyboard-toolbar database tool group touch reachability (Phase 2, MOBI
   // file's `createStubStdForJournalTodo` — a `getOptional` Proxy override is
   // the right tool for `JournalTodoDatabaseProvider` specifically (a pure
   // read/write pointer seam), not a real DI registration.
-  function createStubStdForJournalTodo(journalDate: string) {
+  function createStubStdForJournalTodo(
+    journalDate: string,
+    isTemplateDoc = false
+  ) {
     let ref: { refDocId: string; refBlockId: string } | undefined;
     const stub = new Proxy(editor.std, {
       get(target, prop, receiver) {
@@ -132,7 +135,7 @@ describe('keyboard-toolbar database tool group touch reachability (Phase 2, MOBI
                 setJournalTodoDatabaseRef: (newRef: typeof ref) => {
                   ref = newRef;
                 },
-                isTemplateDoc: () => false,
+                isTemplateDoc: () => isTemplateDoc,
               };
             }
             return undefined;
@@ -189,5 +192,56 @@ describe('keyboard-toolbar database tool group touch reachability (Phase 2, MOBI
     expect(seededView.mode).toBe('list');
     expect(seededView.filter.op).toBe('or');
     expect(seededView.filter.conditions.length).toBe(2);
+  });
+
+  // 999.20: "New Journal Todo Table" (desktop slash menu, Story 2.5.5/2.11)
+  // was unreachable on mobile, where the slash menu never mounts.
+  test('the keyboard-toolbar\'s "New Journal Todo Table" item creates a visible table at the cursor and makes it the Journal Todo source', async () => {
+    const { model } = await selectFreshParagraph();
+    const { stub, getRef } = createStubStdForJournalTodo('2026-10-28');
+
+    const newTableItem = findDatabaseGroup().items.find(
+      item => item.name === 'New Journal Todo Table'
+    );
+    expect(newTableItem).toBeTruthy();
+    expect(
+      newTableItem!.showWhen?.({
+        std: stub,
+        rootComponent: {} as BlockComponent,
+        closeToolPanel: () => {},
+      }) ?? true
+    ).toBe(true);
+
+    await newTableItem!.action?.({
+      std: stub,
+      rootComponent: {} as BlockComponent,
+      closeToolPanel: () => {},
+    });
+    await wait();
+
+    const databases = doc.getBlocksByFlavour('affine:database');
+    expect(databases.length).toBe(1);
+    const table = databases[0]!.model as DatabaseBlockModel;
+    expect(table.props.title.toString()).toBe('Journal Todo');
+    // Visible, right after the cursor's block -- not hidden in a note.
+    expect(doc.getNext(model)?.id).toBe(table.id);
+    expect(getRef()).toEqual({ refDocId: doc.id, refBlockId: table.id });
+  });
+
+  test('"New Journal Todo Table" is not offered inside a template doc', async () => {
+    await selectFreshParagraph();
+    const { stub } = createStubStdForJournalTodo('2026-10-28', true);
+
+    const newTableItem = findDatabaseGroup().items.find(
+      item => item.name === 'New Journal Todo Table'
+    );
+    expect(newTableItem).toBeTruthy();
+    expect(
+      newTableItem!.showWhen?.({
+        std: stub,
+        rootComponent: {} as BlockComponent,
+        closeToolPanel: () => {},
+      })
+    ).toBe(false);
   });
 });

@@ -4,7 +4,11 @@ import {
   insertDatabaseBlockCommand,
 } from '@blocksuite/affine-block-database';
 import { insertCrossDocReference } from '@blocksuite/affine-block-database-ref';
-import { insertJournalTodoReference } from '@blocksuite/affine-block-database-view-ref';
+import {
+  canCreateJournalTodoSourceTable,
+  createJournalTodoSourceTable,
+  insertJournalTodoReference,
+} from '@blocksuite/affine-block-database-view-ref';
 import { insertEmptyEmbedIframeCommand } from '@blocksuite/affine-block-embed';
 import { insertImagesCommand } from '@blocksuite/affine-block-image';
 import { insertLatexBlockCommand } from '@blocksuite/affine-block-latex';
@@ -978,6 +982,24 @@ const databaseToolGroup: KeyboardToolPanelGroup = {
         if (!model) return;
 
         insertJournalTodoReference(std, model).catch(console.error);
+      },
+    },
+    {
+      // 999.20: the desktop slash menu's "New Journal Todo Table", which is
+      // otherwise unreachable on mobile (the slash menu never mounts there).
+      name: 'New Journal Todo Table',
+      icon: DatabaseTableViewIcon(),
+      showWhen: ({ std }) =>
+        std.store.schema.flavourSchemaMap.has('affine:database') &&
+        canCreateJournalTodoSourceTable(std),
+      action: ({ std }) => {
+        const [_, { selectedModels }] = std.command.exec(
+          getSelectedModelsCommand
+        );
+        const model = selectedModels?.[0];
+        if (!model) return;
+
+        createJournalTodoSourceTable(std, model);
       },
     },
     {
