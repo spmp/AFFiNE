@@ -28,6 +28,18 @@ export class NoteRefPreviewRootBlockComponent extends BlockComponent {
     affine-note-ref-preview-root {
       display: block;
     }
+
+    /*
+     * The real page root's container is \`display: flex\`, which blockifies
+     * its \`<affine-note>\` children; this plain block wrapper does not, so
+     * without this the note keeps the custom-element default \`inline\`.
+     * An inline editable wrapping block children has no usable box, and iOS
+     * clamps taps inside the focused editable to that box, so after the
+     * first tap the caret never moved again (999.15).
+     */
+    .affine-note-ref-preview-root > affine-note {
+      display: block;
+    }
   `;
 
   // Unlike the real `PageRootBlockComponent` this is a stand-in for, this

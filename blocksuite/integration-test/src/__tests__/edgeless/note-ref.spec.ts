@@ -761,6 +761,35 @@ describe('note referenced across pages (cross-doc)', () => {
     return noteId;
   }
 
+  test('the referenced note renders as a block box, not the custom-element default inline', async () => {
+    // 999.15: on iOS, once focus is inside the reference, WebKit stops
+    // moving the caret on a tap. Its tap-in-focused-editable path clamps
+    // the tap point to the focused element's box, and `<affine-note>` with
+    // no display rule is `inline` (wrapping block children), so it has no
+    // usable box. The page's own note only escapes this because its parent
+    // container is `display: flex`. Confirmed live: forcing `display:
+    // block` on the referenced note alone restored native caret placement.
+    const secondDoc = createSecondDoc();
+    const reusableNoteId = createReusableNoteOn(secondDoc);
+
+    const anchorNoteId = addNote(doc);
+    const anchorModel = doc.getBlock(anchorNoteId)!.model.children[0]!;
+    const [, result] = editor.std.command.exec(insertNoteRefBlockCommand, {
+      refBlockId: reusableNoteId,
+      refDocId: secondDoc.id,
+      place: 'after',
+      selectedModels: [anchorModel],
+    });
+    await wait();
+
+    const refEl = document.querySelector(
+      `affine-note-ref[data-block-id="${result.insertedNoteRefBlockId}"]`
+    ) as NoteRefBlockComponent;
+    const innerNote = refEl.querySelector('affine-note');
+    expect(innerNote).toBeTruthy();
+    expect(getComputedStyle(innerNote!).display).toBe('block');
+  });
+
   test('a note in another doc renders live and shares data across the two pages', async () => {
     const secondDoc = createSecondDoc();
     const reusableNoteId = createReusableNoteOn(secondDoc);
