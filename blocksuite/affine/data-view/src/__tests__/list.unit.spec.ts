@@ -182,6 +182,49 @@ describe('list view preset', () => {
     expect(ListSingleView.prototype.isShow.call(view, 'row-2')).toBe(true);
   });
 
+  test('filtering reads only the properties the filter refers to', () => {
+    // 999.18: building the filter row from EVERY property made the filtered
+    // rows depend on every row's title, so each keystroke in a large Journal
+    // Todo re-ran the filter over the whole table and re-rendered every row.
+    const read: string[] = [];
+    const property = (id: string, value: unknown) => ({
+      id,
+      cellGetOrCreate: (rowId: string) => ({
+        get jsonValue$() {
+          read.push(`${id}:${rowId}`);
+          return { value };
+        },
+      }),
+    });
+    const view = {
+      filter$: {
+        value: {
+          type: 'group',
+          op: 'and',
+          conditions: [
+            {
+              type: 'filter',
+              left: { type: 'ref', name: 'status' },
+              function: 'is',
+              args: [],
+            },
+          ],
+        },
+      },
+      propertiesRaw$: {
+        value: [
+          property('title', 'a task'),
+          property('status', 'todo'),
+          property('note', 'n'),
+        ],
+      },
+    } as unknown as ListSingleView;
+
+    ListSingleView.prototype.isShow.call(view, 'row-1');
+
+    expect(read).toEqual(['status:row-1']);
+  });
+
   test('falls back when current view id is removed by undo', () => {
     const dataSource = {
       viewDataList$: signal([

@@ -7,7 +7,7 @@ import {
 } from '@blocksuite/affine-shared/utils';
 import { computed, type ReadonlySignal } from '@preact/signals-core';
 
-import { evalFilter } from '../../core/filter/eval.js';
+import { evalFilter, filterRefNames } from '../../core/filter/eval.js';
 import { FilterTrait, filterTraitKey } from '../../core/filter/trait.js';
 import { emptyFilterGroup } from '../../core/filter/utils.js';
 import { PropertyBase } from '../../core/view-manager/property.js';
@@ -136,11 +136,17 @@ export class ListSingleView extends SingleViewBase<ListViewData> {
 
   isShow(rowId: string): boolean {
     if (this.filter$.value.conditions.length) {
+      // Only the properties the filter refers to: reading every property
+      // (title included) made the filtered rows recompute, and every row
+      // re-render, on each keystroke in any row (999.18).
+      const refs = filterRefNames(this.filter$.value);
       const rowMap = Object.fromEntries(
-        this.propertiesRaw$.value.map(property => [
-          property.id,
-          property.cellGetOrCreate(rowId).jsonValue$.value,
-        ])
+        this.propertiesRaw$.value
+          .filter(property => refs.has(property.id))
+          .map(property => [
+            property.id,
+            property.cellGetOrCreate(rowId).jsonValue$.value,
+          ])
       );
       return evalFilter(this.filter$.value, rowMap);
     }
