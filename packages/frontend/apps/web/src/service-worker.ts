@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-export {};
+import { routeRequest } from './service-worker-route';
 
 // `self.__WB_MANIFEST` is a placeholder replaced at build time by
 // workbox-build's injectManifest (see tools/cli/src/bundle.ts) with an
@@ -46,7 +46,7 @@ const PRECACHED_PATHNAMES = new Set(
 // online visit already downloaded it once), not eager precache, so this is
 // a considered tradeoff, not an oversight — AC-5's real-hardware testing is
 // where this actually gets validated, not guessed at here.
-const RUNTIME_CACHEABLE_PATTERN = /\.(js|css)$/;
+// (RUNTIME_CACHEABLE_PATTERN now lives in service-worker-route.ts.)
 
 async function cacheFirst(
   request: Request,
@@ -118,33 +118,26 @@ self.addEventListener('message', event => {
 
 self.addEventListener('fetch', event => {
   const { request } = event;
+  const route = routeRequest(
+    request,
+    self.location.origin,
+    PRECACHED_PATHNAMES
+  );
 
-  if (request.method !== 'GET') {
-    return;
-  }
-
-  const url = new URL(request.url);
-  if (url.origin !== self.location.origin) {
-    return;
-  }
-
-  // PRECACHED_PATHNAMES checked first, not RUNTIME_CACHEABLE_PATTERN: the
-  // runtime pattern is now broad enough (any /js/*.js) to also match the
-  // precached entry chunks themselves. Checking precache first keeps those
-  // served from PRECACHE_NAME as intended, instead of falling through to
-  // RUNTIME_CACHE_NAME and getting needlessly re-fetched into a duplicate
-  // cache entry the first time they're requested at runtime.
-  if (PRECACHED_PATHNAMES.has(url.pathname)) {
+  // Precached shell chunks are served from PRECACHE_NAME rather than the
+  // runtime cache (the runtime pattern also matches them), so they aren't
+  // needlessly re-fetched into a duplicate runtime-cache entry.
+  if (route === 'precache') {
     event.respondWith(cacheFirst(request, PRECACHE_NAME));
     return;
   }
 
-  if (RUNTIME_CACHEABLE_PATTERN.test(url.pathname)) {
+  if (route === 'runtime') {
     event.respondWith(cacheFirst(request, RUNTIME_CACHE_NAME));
     return;
   }
 
-  if (request.mode === 'navigate') {
+  if (route === 'navigate') {
     // Network-first for navigations so a normal online reload always gets
     // the latest shell; fall back to the cached shell when offline so a
     // previously-open workspace still renders after the OS reclaims the
@@ -186,7 +179,9 @@ self.addEventListener('fetch', event => {
             caches
               .open(PRECACHE_NAME)
               .then(cache => cache.put('/', responseToCache))
-              .catch(error => console.error('failed to refresh cached shell', error));
+              .catch(error =>
+                console.error('failed to refresh cached shell', error)
+              );
           }
           return response;
         })
