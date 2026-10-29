@@ -36,4 +36,9 @@
 # build output and nested Rust targets (rebuilt inside the image)
 **/dist
 **/target
-
+.eslintcache
+**/.vitest-attachments
+**/__screenshots__
+.claude
+.docker
+**/*.node
