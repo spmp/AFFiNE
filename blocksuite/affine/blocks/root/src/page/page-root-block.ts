@@ -413,7 +413,16 @@ export class PageRootBlockComponent extends BlockComponent<RootBlockModel> {
       return !(isNote && displayOnEdgeless);
     });
 
-    this.contentEditable = String(!this.store.readonly$.value);
+    // Always non-editable, regardless of readonly state. `NoteBlockComponent`
+    // owns the single `contenteditable="true"` boundary now (see its
+    // `connectedCallback()` doc comment) -- having BOTH this page root AND
+    // each descendant note/rich-text independently `true` was the original
+    // MOBILE-14 bug (native tap hit-testing could briefly resolve focus to
+    // THIS element instead of the tapped block). Moving the `false` up here,
+    // instead of pushing `false` boundaries down between every block,
+    // removes the ambiguous target at its source without turning sibling
+    // blocks into isolated, cross-selection-blocking editable islands.
+    this.contentEditable = 'false';
 
     return html`
       <div class="affine-page-root-block-container">${children} ${widgets}</div>

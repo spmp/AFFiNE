@@ -21,10 +21,6 @@ export class NoteBlockComponent extends BlockComponent<NoteBlockModel> {
     }
   `;
 
-  override connectedCallback() {
-    super.connectedCallback();
-  }
-
   // A note otherwise has zero page-mode styling of its own.
   //
   // `pageBorder`'s *explicit* value (true or false), whenever one is set,
@@ -78,6 +74,24 @@ export class NoteBlockComponent extends BlockComponent<NoteBlockModel> {
         )
       : undefined;
     const style = styleMap({ backgroundColor });
+
+    // `contentEditable` here is load-bearing, not decoration -- this is now
+    // the ONE boundary between the page root (always `false`, see
+    // `page-root-block.ts`'s `renderBlock()`) and the rich-text divs that
+    // independently set their own `contenteditable="true"`
+    // (`rich-text.ts`'s `render()`). A previous version of this fix set
+    // `false` HERE unconditionally (on mobile only, later) to resolve the
+    // original MOBILE-14 tap-to-edit hit-testing jump (nested true/true
+    // between page root and rich-text was ambiguous) -- but that also
+    // isolated every sibling block's rich-text into its own
+    // `contenteditable="true"` island (true -> false -> true, true,
+    // true...), which is exactly the DOM shape that blocks a native
+    // drag-selection from extending across paragraphs/list items. Pushing
+    // the single `false` boundary UP to the page root instead removes the
+    // ambiguous tap target at its actual source while keeping every block
+    // inside a note as one continuous editable region on every platform.
+    this.contentEditable = String(!this.store.readonly$.value);
+
     return html`
       <div
         class="affine-note-block-container"
