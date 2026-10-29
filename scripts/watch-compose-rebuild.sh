@@ -14,7 +14,8 @@ Usage:
   watch-compose-rebuild.sh --compose-file FILE [options]
 
 Watches a trigger file continuously. When the file appears/changes, runs:
-  1. recycle the buildx builder (prune-to-size by default; --builder-mode nuke
+  1. recycle the buildx builder (prune-to-size by default; --builder-mode none
+     to skip it; --builder-mode nuke
      to stop/remove the builder container + its state volume instead)
   2. BUILDKIT_PROGRESS=plain docker compose -f FILE build   (tee'd to --build-log
      and the terminal)
@@ -36,9 +37,10 @@ Options:
       --build-log FILE        Build step log (default: WATCH_DIR/docker-build.log)
       --deploy-log FILE       down/pull/up/logs output log
                               (default: WATCH_DIR/docker-deploy.log)
-      --builder-mode MODE     prune (default) or nuke
+      --builder-mode MODE     prune (default), none (keep the whole build
+                              cache) or nuke
       --keep-storage SIZE     Passed to `docker buildx prune --keep-storage`
-                              in prune mode (default: 20GB)
+                              in prune mode (default: 80GB)
       --builder-container-pattern PAT
                               grep pattern to find the buildkit container in
                               nuke mode (default: buildkit:buildx-stable)
@@ -66,7 +68,7 @@ poll_seconds='2'
 build_log=''
 deploy_log=''
 builder_mode='prune'
-keep_storage='20GB'
+keep_storage='80GB'
 builder_container_pattern='buildkit:buildx-stable'
 builder_volume='buildx_buildkit_container0_state'
 follow_logs=0
@@ -127,8 +129,8 @@ done
 [[ -f "$compose_file" ]] || { printf 'Compose file does not exist: %s\n' "$compose_file" >&2; exit 2; }
 [[ "$poll_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]] || { printf 'Invalid poll interval: %s\n' "$poll_seconds" >&2; exit 2; }
 case "$builder_mode" in
-  prune|nuke) ;;
-  *) printf 'Invalid --builder-mode: %s (expected prune or nuke)\n' "$builder_mode" >&2; exit 2 ;;
+  prune|none|nuke) ;;
+  *) printf 'Invalid --builder-mode: %s (expected prune, none or nuke)\n' "$builder_mode" >&2; exit 2 ;;
 esac
 
 mkdir -p "$watch_dir"
@@ -206,6 +208,13 @@ recycle_builder() {
   {
     printf '\n=== [%s] recycling buildx builder (mode=%s) ===\n' "$(date -u +%FT%TZ)" "$builder_mode"
   } | tee -a "$deploy_log" || true
+
+  if [[ "$builder_mode" = none ]]; then
+    # Keep the whole build cache: the layered Dockerfile's stages and its
+    # yarn/cargo cache mounts are only reused while they survive.
+    printf 'Builder cache kept (no prune).\n' | tee -a "$deploy_log" || true
+    return 0
+  fi
 
   if [[ "$builder_mode" = nuke ]]; then
     local container_id
