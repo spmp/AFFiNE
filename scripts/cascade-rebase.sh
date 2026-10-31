@@ -44,10 +44,17 @@ Options:
                        Overrides --chain-file. First entry is the root
                        (never rebased); each subsequent entry is rebased
                        onto the one before it.
-  --from BRANCH        Start the cascade at BRANCH instead of the chain's
-                       first non-root entry (branches before it are
-                       assumed already up to date and are skipped).
-  --to BRANCH          Stop the cascade after BRANCH is rebased.
+  --from BRANCH        Start the cascade at BRANCH. If omitted, defaults to
+                       whichever branch is currently checked out (not the
+                       chain's first entry) -- the common case is "cascade
+                       the fix I just made on my current branch forward to
+                       pr/N-build", not "redo the whole stack from
+                       scratch". Errors out if the current branch isn't in
+                       the chain (detached HEAD, or an unrelated branch) --
+                       pass --from explicitly in that case.
+  --to BRANCH          Stop the cascade after BRANCH is rebased. Defaults
+                       to the chain's last entry (e.g. pr/N-build) if
+                       omitted.
   --dry-run            `run`: print the planned rebase steps, make no
                        changes.
   --verify-cmd "CMD"   `run`: after each branch's rebase completes
@@ -61,6 +68,8 @@ State is kept in .git/cascade-rebase-state (plain text, not committed).
 
 Examples:
   scripts/cascade-rebase.sh plan
+  # cascade from whatever branch you're currently on, through to pr/N-build:
+  scripts/cascade-rebase.sh run
   scripts/cascade-rebase.sh run --verify-cmd "git status --short"
   scripts/cascade-rebase.sh run --from pr/08-grid-and-snapping --to pr/N-build
   scripts/cascade-rebase.sh status
@@ -339,17 +348,35 @@ cmd_run() {
     read -r -a arr <<< "$chain"
 
     local start_index=1
-    if [ -n "$from_branch" ]; then
+    # Default --from to the currently checked-out branch, not the chain's
+    # first entry: the common case is "I just fixed something on the branch
+    # I'm sitting on, cascade that fix forward" -- always restarting from
+    # the very beginning of a long chain by default meant every run either
+    # needed an explicit --from (undocumented as a requirement) or redid
+    # branches that were already fine.
+    local effective_from="$from_branch"
+    if [ -z "$effective_from" ]; then
+      effective_from="$(git branch --show-current)"
+      if [ -z "$effective_from" ]; then
+        echo "error: not on a branch (detached HEAD) and no --from given -- pass --from explicitly or checkout a branch in the chain" >&2
+        exit 1
+      fi
+    fi
+    if [ -n "$effective_from" ]; then
       local found=0
       for idx in "${!arr[@]}"; do
-        if [ "${arr[$idx]}" = "$from_branch" ]; then
+        if [ "${arr[$idx]}" = "$effective_from" ]; then
           start_index=$idx
           found=1
           break
         fi
       done
       if [ "$found" -eq 0 ]; then
-        echo "error: --from branch '$from_branch' not found in chain" >&2
+        if [ -n "$from_branch" ]; then
+          echo "error: --from branch '$from_branch' not found in chain" >&2
+        else
+          echo "error: current branch '$effective_from' not found in chain -- pass --from explicitly to pick a starting branch" >&2
+        fi
         exit 1
       fi
       if [ "$start_index" -eq 0 ]; then
