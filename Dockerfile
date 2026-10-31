@@ -74,7 +74,7 @@ FROM toolchain AS deps
 ARG REBUILD_DEPS=
 RUN echo "deps rebuild token: ${REBUILD_DEPS}"
 COPY --from=manifests /affine/ ./
-COPY yarn.lock .yarnrc.yml tsconfig.json .oxlintrc.json .prettierrc .prettierignore ./
+COPY yarn.lock .yarnrc.yml tsconfig.json .oxlintrc.json .oxfmtrc.json .prettierignore ./
 COPY .yarn/releases .yarn/releases
 COPY .yarn/patches .yarn/patches
 # Needed by install scripts: the root postinstall (`yarn affine init`, whose
@@ -125,9 +125,17 @@ COPY --exclude=**/package.json packages/frontend/mobile-native packages/frontend
 ENV CARGO_PROFILE_RELEASE_LTO=thin \
     CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
     CARGO_TARGET_DIR=/affine/target
+# Public key used to verify AFFiNE Pro license files, compiled into
+# server-native (option_env! in packages/backend/native/src/lib.rs). A
+# self-hosted server refuses to start without one. The default is the public
+# key upstream's own test builds use (.github/workflows/build-test.yml);
+# stored with \n escapes (expanded with printf below); override with
+# --build-arg AFFINE_PRO_PUBLIC_KEY="$(awk '{printf "%s\\n", $0}' key.pem)".
+ARG AFFINE_PRO_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEObwJiTmbui7rkWfPJ7Lozvuy2Rcl\notcrb0V6dlS2ijKEShm7ZttTwQn08xzesdjX/AxpoR5X9yfoHkauIBuuMQ==\n-----END PUBLIC KEY-----"
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,target=/affine/target \
+    AFFINE_PRO_PUBLIC_KEY="$(printf '%b' "$AFFINE_PRO_PUBLIC_KEY")" \
     yarn workspace @affine/server-native build \
     && cd packages/backend/native \
     && cp server-native.node server-native.x64.node \
@@ -255,4 +263,6 @@ EXPOSE 3010
 #HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 #    CMD curl -f http://localhost:3010/api/health || exit 1
 
-CMD ["node", "./dist/main.js"]
+# upgrade-config.js creates or upgrades the config.json the server now
+# requires (deployment type, legacy env-var settings), as upstream's image does.
+CMD ["sh", "-c", "node ./scripts/upgrade-config.js && exec node ./dist/main.js"]
