@@ -111,3 +111,6 @@ storageState.json
 /core.*
 /rebuild/
 /.gsd/
+
+# Data of the root docker-compose.yml
+/.docker/selfhost/data/

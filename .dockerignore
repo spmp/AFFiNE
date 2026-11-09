@@ -42,3 +42,6 @@
 .claude
 .docker
 **/*.node
+
+# Data of the root docker-compose.yml (Postgres files are not readable by the builder)
+/.docker/selfhost/data
