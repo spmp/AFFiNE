@@ -3,18 +3,22 @@
 This fork carries its work as a **linear stack of PR branches** on top of
 `upstream/canary`. Each branch is based on the one before it, and each holds
 one feature or theme, so it can be reviewed and released upstream on its own.
-`pr/N-build` sits on top and adds only what is needed to build and deploy
+`pr/00` (this branch: the stack's scripts and docs, plus one upstream-candidate
+settings fix) sits near the top, so the feature PRs don't carry fork tooling.
+`pr/N-build` sits above it and adds only what is needed to build and deploy
 the fork.
 
 The chain lives in `.git/machete` and is rebased with
-`scripts/cascade-rebase.sh` (this branch). The per-PR roadmap is in
+`scripts/cascade-rebase.sh` (this branch). The script isn't in the feature
+branches, so run it from a copy outside the checkout:
+`git show pr/N-build:scripts/cascade-rebase.sh > ~/bin/cascade-rebase.sh`. The per-PR roadmap is in
 [ROADMAP.md](./ROADMAP.md).
 
 ## Branch numbering
 
 | Range           | Meaning                                                                    |
 | --------------- | -------------------------------------------------------------------------- |
-| `pr/00`         | Fork tooling and tidy-ups (this stack's scripts and docs)                  |
+| `pr/00`         | Fork tooling and tidy-ups (this stack's scripts and docs); sits below N   |
 | `pr/02`–`pr/2x` | Features (editor, edgeless, blocks, databases, Journal Todo)               |
 | `pr/30`–`pr/3x` | Mobile and PWA client work                                                 |
 | `pr/40`–`pr/4x` | Server-side changes (including the PWA build/serving in `pr/41`)           |
@@ -35,24 +39,34 @@ The chain lives in `.git/machete` and is rebased with
 - **Backups before any history rewrite**, under
   `backup/<YYYY-MM-DD>/<stage>/<branch>`.
 
-## Target layout (agreed 2026-10-28)
+## Layout
+
+Agreed 2026-10-28; `pr/00` moved from the bottom to just below `pr/N-build`
+on 2026-11-10 (backups `backup/2026-11-10/pre-restack/*`). The
+`cascade-rebase.sh` change that had been committed into `pr/05` moved into
+`pr/00` at the same time.
 
 ```
 canary
-  pr/00-tidy-up-canary-and-tools
-    pr/02 ... pr/17                     (unchanged)
-      pr/18-reusable-blocks             (+ nested editor / reference fixes)
-        pr/19-todo-database-integration-in-journal
-                                        (+ Journal Todo, List view, database fixes, mobile included)
-          pr/30-mobile-keyboard-toolbar (new)
-            pr/31-mobile-settings       (new)
-              pr/40-server-compression
-                pr/41-server-pwa        (+ offline launch fix, touch icon)
-                  pr/42-mobile-debug-tools   (new)
-                    pr/50-store-parent-index   (new)
-                      pr/51-toast-container    (new)
+  pr/02 ... pr/17                       (edgeless canvas and export)
+    pr/18-reusable-blocks
+      pr/19-todo-database-integration-in-journal
+        pr/30-mobile-keyboard-toolbar
+          pr/31-mobile-settings
+            pr/40-server-compression
+              pr/41-server-pwa
+                pr/42-mobile-debug-tools
+                  pr/50-store-parent-index
+                    pr/51-toast-container
+                      pr/00-tidy-up-canary-and-tools
                         pr/N-build
 ```
+
+`cascade-rebase.sh` runs a plain `git rebase <parent>`, so it keeps this
+order up to date but can't change it. To move a branch, replay each
+branch's own commits onto its new parent:
+`git replay --onto <new parent> <old parent>..<branch>` (without
+`--contained`, which would also move backup branches).
 
 What moves where is listed per branch in [ROADMAP.md](./ROADMAP.md).
 Commits that must be split while moving: `5c7a77b75f`, `bc74d3e60a`,
@@ -109,8 +123,8 @@ done
 ```sh
 git fetch upstream canary
 git branch -f canary upstream/canary
-scripts/cascade-rebase.sh plan
-scripts/cascade-rebase.sh run --verify-cmd "git status --short"
+cascade-rebase.sh plan
+cascade-rebase.sh run --verify-cmd "git status --short"
 ```
 
 `cascade-rebase.sh` auto-resolves only conflicts where one side is identical
