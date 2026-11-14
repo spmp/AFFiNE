@@ -5,6 +5,7 @@ import { expect, type Page } from '@playwright/test';
 import {
   createFrame,
   edgelessCommonSetup,
+  selectElementInEdgeless,
   switchEditorMode,
 } from '../utils/actions/edgeless.js';
 import { waitNextFrame } from '../utils/actions/misc.js';
@@ -118,5 +119,42 @@ test.describe('frame sizing', () => {
     if (box && viewport) {
       expect(box.width).toBeLessThanOrEqual(viewport.width);
     }
+  });
+
+  // F-10 (inbox, 2026-11-13): the frame's render options (grid, inner frames,
+  // notes) were only reachable from the edgeless Properties panel. They are
+  // now in the Frame size menu in the page and in edgeless, and both edit the
+  // frame's own options.
+  async function frameRenderOptions(page: Page) {
+    return page.evaluate(() => {
+      const frame = (window.doc.getBlocksByFlavour?.('affine:frame') ?? [])[0];
+      const id = frame?.id ?? frame?.model?.id;
+      const model = id ? window.doc.getModelById(id) : null;
+      return (model?.props as { frameRenderOptions?: unknown } | undefined)
+        ?.frameRenderOptions;
+    });
+  }
+
+  test('in a page, the Frame size menu toggles the frame grid', async ({
+    page,
+  }) => {
+    await createSurfaceRefFromFrame(page);
+    await openFrameSizeMenu(page);
+    await page.getByLabel('Show grid').first().click();
+    await waitNextFrame(page, 200);
+    expect(await frameRenderOptions(page)).toMatchObject({ showGrid: true });
+  });
+
+  test('in edgeless, the Frame size menu toggles the frame notes', async ({
+    page,
+  }) => {
+    await edgelessCommonSetup(page);
+    const frameId = await createFrame(page, [0, 0], [400, 260]);
+    await selectElementInEdgeless(page, [frameId]);
+    await waitNextFrame(page, 200);
+    await page.getByRole('button', { name: 'Frame size' }).first().click();
+    await page.getByLabel('Show notes').first().click();
+    await waitNextFrame(page, 200);
+    expect(await frameRenderOptions(page)).toMatchObject({ showNotes: false });
   });
 });

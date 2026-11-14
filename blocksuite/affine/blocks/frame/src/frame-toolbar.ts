@@ -39,6 +39,7 @@ import type { ExtensionType } from '@blocksuite/store';
 import { html } from 'lit';
 
 import { EdgelessFrameManagerIdentifier } from './frame-manager';
+import { renderFrameRenderOptionToggles } from './frame-render-options';
 
 const FRAME_ZOOM_BASELINE_SCALE = 0.5;
 
@@ -332,6 +333,7 @@ const builtinSurfaceToolbarConfig = {
                       >Current behavior</span
                     >`}
             </div>
+            ${renderFrameRenderOptionToggles(ctx.store, model)}
           </div>
         </editor-menu-button>`;
       },

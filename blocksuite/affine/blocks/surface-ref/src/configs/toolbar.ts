@@ -1,4 +1,6 @@
+import { renderFrameRenderOptionToggles } from '@blocksuite/affine-block-frame';
 import { toast } from '@blocksuite/affine-components/toast';
+import { FrameBlockModel } from '@blocksuite/affine-model';
 import {
   copySelectedModelsCommand,
   draftSelectedModelsCommand,
@@ -350,6 +352,12 @@ export const surfaceRefToolbarModuleConfig: ToolbarModuleConfig = {
                 @pointerdown=${stopPropagation}
               />
             </div>
+            ${renderFrameRenderOptionToggles(
+              ctx.store,
+              surfaceRefBlock.referenceModel instanceof FrameBlockModel
+                ? surfaceRefBlock.referenceModel
+                : model
+            )}
           </div>
         </editor-menu-button>`;
       },
