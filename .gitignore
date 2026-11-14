@@ -114,3 +114,6 @@ storageState.json
 
 # Data of the root docker-compose.yml
 /.docker/selfhost/data/
+
+# vitest browser failure screenshots (integration tests compare none)
+/blocksuite/integration-test/src/__tests__/**/__screenshots__/
