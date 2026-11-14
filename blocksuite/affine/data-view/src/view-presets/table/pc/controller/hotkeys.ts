@@ -80,6 +80,15 @@ export class TableHotkeysController implements ReactiveController {
           if (!selection) {
             return false;
           }
+          // Escape walks out of the table one step at a time: editing ->
+          // cell -> row -> the whole block. From the block, Enter adds a
+          // paragraph after it, which is otherwise hard to reach when the
+          // table is followed directly by a heading.
+          const selectBlock = this.logic.root.config.selectBlock;
+          if (TableViewRowSelection.is(selection) && selectBlock) {
+            selectBlock();
+            return true;
+          }
           if (TableViewRowSelection.is(selection)) {
             const result = this.selectionController.rowsToArea(
               selection.rows.map(v => v.id)
