@@ -2420,6 +2420,14 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     // the *outermost* transaction closes, so it can't see a column
     // written inside a still-open nested one — the raw prop reflects the
     // proxied array immediately, regardless of transaction nesting.
+    //
+    // The signal is still read, and its value discarded, so that every
+    // `computed` built on this lookup (`propertyDataGet$`, and through it a
+    // select cell's options) tracks `columns$` and re-renders when a
+    // column changes. Without it those computeds had no reactive
+    // dependency, so a new select label or a new label colour didn't show
+    // until the view was redrawn (F-02).
+    void this._model.props.columns$.value;
     const columns = this._model.props.columns;
     const index = columns.findIndex(v => v.id === propertyId);
     if (index >= 0) {
