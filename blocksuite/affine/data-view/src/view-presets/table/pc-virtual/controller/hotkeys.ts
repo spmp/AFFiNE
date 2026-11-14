@@ -264,7 +264,7 @@ export class TableHotkeysController implements ReactiveController {
           context.get('keyboardState').raw.preventDefault();
           return true;
         },
-        'Mod-Shift-Period': context => {
+        'Mod-Shift-.': context => {
           const rowInfo = this.getRowInfoFromKeyboardContext(context);
           const applied =
             (rowInfo
@@ -298,7 +298,7 @@ export class TableHotkeysController implements ReactiveController {
           context.get('keyboardState').raw.preventDefault();
           return true;
         },
-        'Mod-Shift-Comma': context => {
+        'Mod-Shift-,': context => {
           const rowInfo = this.getRowInfoFromKeyboardContext(context);
           const applied =
             (rowInfo

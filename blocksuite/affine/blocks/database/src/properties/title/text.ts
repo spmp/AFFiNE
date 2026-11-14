@@ -298,6 +298,17 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
       ) {
         return;
       }
+      // Mod-Shift-. / Mod-Shift-, indent and outdent the row (the table's
+      // and List view's hierarchy hotkeys), so they must reach them while
+      // the title is being edited too. Matched on the physical key, since
+      // Shift changes `event.key` (`>` / `<` on a US layout).
+      if (
+        (IS_MAC ? event.metaKey : event.ctrlKey) &&
+        event.shiftKey &&
+        (event.code === 'Period' || event.code === 'Comma')
+      ) {
+        return;
+      }
       event.stopPropagation();
     }
   };

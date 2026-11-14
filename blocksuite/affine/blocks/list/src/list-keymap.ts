@@ -119,7 +119,7 @@ export const ListKeymapExtension = KeymapExtension(
           .run();
         return true;
       },
-      'Mod-Shift-Period': ctx => {
+      'Mod-Shift-.': ctx => {
         const [_, { selectedModels }] = std.command
           .chain()
           .pipe(getSelectedModelsCommand, {
@@ -167,7 +167,7 @@ export const ListKeymapExtension = KeymapExtension(
           .run();
         return true;
       },
-      'Mod-Shift-Comma': ctx => {
+      'Mod-Shift-,': ctx => {
         const [_, { selectedModels }] = std.command
           .chain()
           .pipe(getSelectedModelsCommand, {
