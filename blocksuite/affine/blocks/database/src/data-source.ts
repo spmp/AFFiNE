@@ -1513,7 +1513,9 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     );
   }
 
-  private recomputeAllParentStatusesFromChildren(): Record<string, boolean> {
+  private recomputeAllParentStatusesFromChildren(
+    protectedRowIds?: ReadonlySet<string>
+  ): Record<string, boolean> {
     const doneFlags: Record<string, boolean> = {};
     for (const column of this.getTaskStatusColumns()) {
       for (const row of this._model.children) {
@@ -1534,6 +1536,7 @@ export class DatabaseBlockDataSource extends DataSourceBase {
           // demotion, so this doesn't force anything unwanted through.
           this.recomputeParentStatusesFromChildren(row.id, column.id, 'auto', {
             descendantDemotedFromDone: true,
+            protectedRowIds,
           })
         );
       }
@@ -1680,6 +1683,8 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     source: StatusProvenance = 'manual',
     context?: {
       descendantDemotedFromDone?: boolean;
+      /** Rows this recompute must not change (see `cellValueChange`). */
+      protectedRowIds?: ReadonlySet<string>;
     }
   ): Record<string, boolean> {
     const statusColumn = this._model.props.columns.find(
@@ -1852,7 +1857,7 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       }
 
       const option = targetStage ? stageToOption.get(targetStage) : undefined;
-      if (option) {
+      if (option && !context?.protectedRowIds?.has(currentParentRowId)) {
         const currentStage = getRowStage(currentParentRowId);
         const currentRaw =
           updates[currentParentRowId] ??
@@ -2275,6 +2280,7 @@ export class DatabaseBlockDataSource extends DataSourceBase {
 
     this._model.store.transact(() => {
       let descendantDemotedFromDone = false;
+      const cascadedToTodo = new Set<string>();
 
       const statusColumn = this._model.props.columns.find(
         column => column.id === propertyId && column.type === 'select'
@@ -2308,16 +2314,15 @@ export class DatabaseBlockDataSource extends DataSourceBase {
             option => this.resolveWorkflowStageFromOption(option) === 'todo'
           );
           if (todoOption) {
-            Object.assign(
-              doneStamps,
-              this.cascadeStatusToDescendants(
-                rowId,
-                propertyId,
-                todoOption,
-                'auto',
-                'none'
-              )
+            const cascaded = this.cascadeStatusToDescendants(
+              rowId,
+              propertyId,
+              todoOption,
+              'auto',
+              'none'
             );
+            Object.keys(cascaded).forEach(id => cascadedToTodo.add(id));
+            Object.assign(doneStamps, cascaded);
           }
         } else if (
           nextStage === 'done' &&
@@ -2344,9 +2349,13 @@ export class DatabaseBlockDataSource extends DataSourceBase {
         })
       );
       if (descendantDemotedFromDone) {
+        // Rows just reset to todo by the cascade above stay todo: without
+        // this, the roll-up would see their own done subtasks (e.g. a
+        // grandchild done by hand) and promote them straight back to Done,
+        // undoing the reset within the same edit.
         Object.assign(
           doneStamps,
-          this.recomputeAllParentStatusesFromChildren()
+          this.recomputeAllParentStatusesFromChildren(cascadedToTodo)
         );
       }
     });
