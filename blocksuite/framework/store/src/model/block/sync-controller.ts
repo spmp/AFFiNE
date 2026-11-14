@@ -177,44 +177,37 @@ export class SyncController {
     const siblings = syncControllersByYBlock.get(this.yBlock);
     siblings?.forEach(sibling => {
       if (signalKey in sibling.model.props) {
-        // Deferred to the next microtask rather than written synchronously
-        // here. This observer callback runs *inside* the very Yjs
-        // transaction/observer chain that a `SyncController`'s own
-        // `_createModel` `effect()` triggers when it writes `data.value`
-        // (this exact `${keyName}$` signal) into `model.props[key]` ->
-        // Yjs — for the *originating* `SyncController` (always included
-        // in `siblings`, see the constructor), writing back into that
-        // same signal here is still inside that same effect's own
-        // synchronous callback, which Preact Signals' own cycle detection
-        // correctly refuses (confirmed live: a "Cycle detected" throw,
-        // initiating an inline LaTeX equation).
+        // Written synchronously, under each sibling's own `_mutex`, as
+        // upstream does for a single SyncController: readers (and the
+        // store's own tests) expect `prop$.value` to reflect a Yjs change
+        // as soon as the change returns. The mutex is what prevents the
+        // write-back loop: while a sibling's own `_createModel` effect is
+        // writing this prop into Yjs, its mutex is held and this write is
+        // skipped for it (its signal already holds the value it wrote);
+        // every other sibling is updated at once.
         //
-        // A first attempt compared values with `equalityDeep` and skipped
-        // only when unchanged, on the theory this was a redundant-write
-        // problem — it wasn't: the throw still happened on an actual,
-        // intentional value change, because Preact's cycle detection
-        // cares about still being inside this signal's own notification,
-        // not about whether the value differs. A second attempt skipped
-        // the originating sibling unconditionally instead — also wrong:
-        // that signal genuinely does need to reflect the confirmed value
-        // (this method exists precisely to propagate a Yjs-observed
-        // change, whichever origin, into *every* sibling's signal — see
-        // this class's own header comment), so skipping it left any
-        // `SignalWatcher`-based UI reading it directly stuck on stale
-        // data indefinitely (confirmed live: inline equations stopped
-        // updating anywhere on a page with a nested reference present,
-        // not just inside the reference).
-        //
-        // Deferring the write to the next microtask — after the current
-        // synchronous notification has fully unwound — keeps the update
-        // for every sibling, including the originating one, while still
-        // avoiding the same-tick reentrancy Preact objects to.
-        queueMicrotask(() => {
+        // An earlier version always deferred this to a microtask to avoid a
+        // Preact "Cycle detected" throw seen live when initiating an inline
+        // LaTeX equation with a nested reference on the page. That made
+        // every prop signal lag one microtask behind Yjs. The deferral is
+        // kept only as the fallback for that throw.
+        const write = () =>
           sibling._mutex(() => {
             // @ts-expect-error allow magic props
             sibling.model.props[signalKey].value = fresh;
           });
-        });
+        try {
+          write();
+        } catch (error) {
+          if (
+            !(
+              error instanceof Error && error.message.includes('Cycle detected')
+            )
+          ) {
+            throw error;
+          }
+          queueMicrotask(write);
+        }
       }
     });
   }
