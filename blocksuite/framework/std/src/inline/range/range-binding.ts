@@ -3,6 +3,7 @@ import throttle from 'lodash-es/throttle';
 
 import { TextSelection } from '../../selection/index.js';
 import { EditorHost } from '../../view/index.js';
+import { INLINE_ROOT_ATTR } from '../consts.js';
 import { isActiveInEditor } from './active.js';
 import { RANGE_SYNC_EXCLUDE_ATTR } from './consts.js';
 import type { RangeManager } from './range-manager.js';
@@ -287,7 +288,28 @@ export class RangeBinding {
           selection.constructor as typeof BaseSelection;
         return selectionConstructor.recoverable;
       });
-      if (!hasRecoverable) {
+      // An inline editor that has focus inside a block whose own (non-block,
+      // non-text) selection is current keeps it, e.g. a database cell being
+      // edited: taking focus away on every later selection update left the
+      // user typing into nothing, so a third click was needed to edit the
+      // cell. A block selection still moves focus to the host, so keys act
+      // on the selected block.
+      const focused = document.activeElement;
+      const editingInline =
+        focused instanceof HTMLElement &&
+        focused !== this.host &&
+        this.host.contains(focused) &&
+        focused.isContentEditable &&
+        // the editor's root, or an editable wrapper holding it
+        (!!focused.closest(`[${INLINE_ROOT_ATTR}]`) ||
+          !!focused.querySelector(`[${INLINE_ROOT_ATTR}]`)) &&
+        selections.some(
+          selection =>
+            selection.type !== 'block' &&
+            !!selection.blockId &&
+            !!focused.closest(`[data-block-id="${selection.blockId}"]`)
+        );
+      if (!hasRecoverable && !editingInline) {
         // prevent focus to top-level content-editable element
         // if the browser focus to the top-level content-editable element,
         // when switching between tabs,
