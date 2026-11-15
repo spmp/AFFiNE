@@ -11,6 +11,11 @@ export interface CellRenderProps<
   cell: Cell<RawValue, JsonValue, Data>;
   isEditing$: ReadonlySignal<boolean>;
   selectCurrentCell: (editing: boolean) => void;
+  /**
+   * Enter (without Shift) while editing. Defaults to finishing editing; a
+   * table may instead add a row below (see `enterAddsRow$`).
+   */
+  finishEditingByEnter?: () => void;
 }
 
 export interface DataViewCellLifeCycle {

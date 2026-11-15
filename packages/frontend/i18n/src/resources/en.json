@@ -1465,6 +1465,8 @@
   "com.affine.settings.editorSettings.general.spell-check.title": "Spell check",
   "com.affine.settings.editorSettings.general.spell-check.restart-hint": "Settings changed; please restart the app. <1>Restart</1>",
   "com.affine.settings.editorSettings.page": "Page",
+  "com.affine.settings.editorSettings.general.database-enter-new-row.description": "In a database table, Enter in a text or number cell adds a row below, at the same indent level, and keeps editing in the same column. Shift+Enter is a new line. When off, Enter finishes editing the cell.",
+  "com.affine.settings.editorSettings.general.database-enter-new-row.title": "Enter adds a new row in database tables",
   "com.affine.settings.editorSettings.general.middle-click-paste.title": "Middle click paste",
   "com.affine.settings.editorSettings.general.middle-click-paste.description": "Enable default middle click paste behavior on Linux.",
   "com.affine.settings.editorSettings.page.display-bi-link.description": "Display bi-directional links on the doc.",

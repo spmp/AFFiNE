@@ -271,7 +271,7 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
     ) {
       event.preventDefault();
       event.stopPropagation();
-      this.selectCurrentCell(false);
+      this.commitByEnter();
       return;
     }
     if (
@@ -441,9 +441,11 @@ export class HeaderAreaTextCell extends BaseCellRenderer<Text, string> {
         this._taskTap.onClick();
       }}
     >
-      ${checked
-        ? CheckBoxCheckSolidIcon({ style: 'color: #1E96EB' })
-        : CheckBoxUnIcon()}
+      ${
+        checked
+          ? CheckBoxCheckSolidIcon({ style: 'color: #1E96EB' })
+          : CheckBoxUnIcon()
+      }
     </div>`;
   }
 

@@ -14,6 +14,7 @@ import {
   CommentProviderIdentifier,
   DatabaseMoveProvider,
   DocModeProvider,
+  EditorSettingProvider,
   FeatureFlagService,
   JournalTodoDatabaseProvider,
   NotificationProvider,
@@ -260,6 +261,29 @@ export class DatabaseBlockComponent extends CaptionedBlockComponent<DatabaseBloc
       options,
     });
   };
+
+  /**
+   * The "Enter adds a new row in database tables" editor setting. A table
+   * shown through a reference renders in a nested editor that has no
+   * EditorSettingProvider, so look outwards to the nearest editor that does
+   * (the page's), rather than falling back to the default there.
+   */
+  private readonly _enterAddsRow$ = computed(() => {
+    const up = (node: Node): Node | null =>
+      node.parentNode instanceof ShadowRoot
+        ? node.parentNode.host
+        : node.parentNode;
+    for (let node: Node | null = this.std.host; node; node = up(node)) {
+      if (!(node instanceof Element) || node.tagName !== 'EDITOR-HOST') {
+        continue;
+      }
+      const setting = (node as EditorHost).std?.getOptional(
+        EditorSettingProvider
+      )?.setting$.value;
+      if (setting) return setting.databaseEnterAddsRow ?? false;
+    }
+    return false;
+  });
 
   private readonly dataSource = lazy(() => {
     const dataSource = new DatabaseBlockDataSource(this.model, dataSource => {
@@ -696,6 +720,7 @@ export class DatabaseBlockComponent extends CaptionedBlockComponent<DatabaseBloc
         headerWidget: this.headerWidget,
         onDrag: this.onDrag,
         clipboard: this.std.clipboard,
+        enterAddsRow$: this._enterAddsRow$,
         dnd: this.std.dnd,
         notification: {
           toast: message => {

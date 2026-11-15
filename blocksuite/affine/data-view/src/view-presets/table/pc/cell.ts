@@ -1,4 +1,7 @@
-import { TASK_HIERARCHY_LEVEL_COLUMN_NAME } from '@blocksuite/affine-shared/utils';
+import {
+  type InsertToPosition,
+  TASK_HIERARCHY_LEVEL_COLUMN_NAME,
+} from '@blocksuite/affine-shared/utils';
 import { SignalWatcher, WithDisposable } from '@blocksuite/global/lit';
 import { ShadowlessElement } from '@blocksuite/std';
 import { computed, signal } from '@preact/signals-core';
@@ -10,6 +13,7 @@ import type {
   CellRenderProps,
   DataViewCellLifeCycle,
 } from '../../../core/property/index.js';
+import { addRowAfterSameLevel } from '../../shared/add-row-after.js';
 import {
   TableViewAreaSelection,
   type TableViewSelectionWithType,
@@ -100,6 +104,34 @@ export class TableViewCellContainer extends SignalWatcher(
     }
   };
 
+  /**
+   * Enter while editing: finish editing, or, with the "Enter adds a new
+   * row" setting on, add a row below this one (same indent level) and edit
+   * the same column there.
+   */
+  finishEditingByEnter = () => {
+    const enterAddsRow =
+      this.tableViewLogic.root.config.enterAddsRow$?.value ?? false;
+    if (!enterAddsRow || this.view.readonly$.value) {
+      this.selectCurrentCell(false);
+      return;
+    }
+    this.selectCurrentCell(false);
+    const newRowId = addRowAfterSameLevel(this.view, this.rowId, position =>
+      this.view.rowAdd(position as InsertToPosition)
+    );
+    const columnId = this.column.id;
+    const table = this.closest('.affine-database-table');
+    // the new row renders on the next update
+    requestAnimationFrame(() => {
+      const target = table?.querySelector<TableViewCellContainer>(
+        `dv-table-view-cell-container[data-row-id="${newRowId}"][data-column-id="${columnId}"]`
+      );
+      target?.selectCurrentCell(false);
+      target?.selectCurrentCell(true);
+    });
+  };
+
   get cell(): DataViewCellLifeCycle | undefined {
     return this._cell$.value;
   }
@@ -146,6 +178,7 @@ export class TableViewCellContainer extends SignalWatcher(
       cell: this.cell$.value,
       isEditing$: this.isEditing$,
       selectCurrentCell: this.selectCurrentCell,
+      finishEditingByEnter: this.finishEditingByEnter,
     };
 
     const isTitleColumn = this.column.type$.value === 'title';

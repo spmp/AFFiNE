@@ -131,8 +131,8 @@ export class RichTextCell extends BaseCellRenderer<Text, string> {
         // soft enter
         this._onSoftEnter();
       } else {
-        // exit editing
-        this.selectCurrentCell(false);
+        // finish editing (or add a row, see `commitByEnter`)
+        this.commitByEnter();
       }
       event.preventDefault();
       return;
