@@ -94,6 +94,108 @@ export class ListViewRenderer extends SignalWatcher(
     super.connectedCallback();
     this.logic.ui$.value = this;
     this.logic.dragController.hostConnected();
+    this.logic.clipboardController.hostConnected();
+  }
+
+  /** Row ids in the order shown (rows hidden as overdue are left out). */
+  visibleRowIds() {
+    return this.view.rows$.value
+      .filter(row => this.getRowDueDateState(row.rowId) !== 'hide')
+      .map(row => row.rowId);
+  }
+
+  /**
+   * F-11: rows selected as whole rows keep keyboard focus on the row
+   * element, so typing doesn't go into a title and copy and paste reach
+   * the view.
+   */
+  private focusRow(rowId: string | undefined) {
+    if (!rowId) return;
+    const row = this.querySelector<HTMLElement>(
+      `.affine-data-view-list-row[data-row-id="${rowId}"]`
+    );
+    row?.focus({ preventScroll: true });
+    row?.scrollIntoView({ block: 'nearest' });
+  }
+
+  private selectRowFromTitle(rowId: string) {
+    this.logic.selectRow(rowId);
+    this.focusRow(rowId);
+  }
+
+  /**
+   * Keys while rows are selected (the row element has focus): arrows move
+   * the selection, Shift+arrows extend it, Enter edits the focused row,
+   * Escape selects the whole block. Handled here rather than with the
+   * view's hotkeys, which can be registered at the page's level, where the
+   * page's own arrow keys run first.
+   */
+  private onSelectedRowKeyDown(event: KeyboardEvent) {
+    const plain = !event.altKey && !event.metaKey && !event.ctrlKey;
+    if (!plain) return false;
+    switch (event.key) {
+      case 'ArrowUp':
+      case 'ArrowDown': {
+        this.logic.moveSelection(
+          event.key === 'ArrowUp' ? -1 : 1,
+          event.shiftKey
+        );
+        this.focusRow(this.logic.selection$.value?.focus);
+        return true;
+      }
+      case 'Enter': {
+        const rowId = this.logic.selection$.value?.focus;
+        if (event.shiftKey || !rowId || this.view.readonly$.value) {
+          return false;
+        }
+        this.logic.clearSelection();
+        this.focusRowTitle(rowId);
+        return true;
+      }
+      case 'Escape': {
+        const selectBlock = this.logic.root.config.selectBlock;
+        if (selectBlock) {
+          selectBlock();
+        } else {
+          this.logic.clearSelection();
+        }
+        return true;
+      }
+      default:
+        return false;
+    }
+  }
+
+  private readonly onDragHandleClick = (event: MouseEvent) => {
+    const rowId = (event.currentTarget as HTMLElement | null)?.dataset.rowId;
+    if (!rowId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.shiftKey) {
+      this.logic.extendSelectionTo(rowId);
+    } else if (event.metaKey || event.ctrlKey) {
+      this.logic.toggleRowSelected(rowId);
+    } else {
+      this.logic.selectRow(rowId);
+    }
+    this.focusRow(rowId);
+  };
+
+  /**
+   * Copied rows pasted while a row is focused or typed in: new rows after
+   * it. Capture, so the title's own editor doesn't paste them as text.
+   */
+  @eventOptions({ capture: true })
+  private onRowPaste(event: ClipboardEvent) {
+    const rowId = (event.currentTarget as HTMLElement | null)?.dataset.rowId;
+    if (!rowId) return;
+    const selected = this.logic.selectedRowIds$.value;
+    const after = selected.length ? selected.at(-1) : rowId;
+    if (this.logic.clipboardController.pasteAfter(after, event.clipboardData)) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.focusRow(this.logic.selection$.value?.focus);
+    }
   }
 
   /**
@@ -246,6 +348,21 @@ export class ListViewRenderer extends SignalWatcher(
       min-height: 28px;
       padding: 1px 8px;
       box-sizing: border-box;
+    }
+
+    /* F-11: rows selected as whole rows (Escape, the drag handle). An
+       overlay, so it shows over a row's note colour too. */
+    .affine-data-view-list-row[data-selected='true'] {
+      position: relative;
+      outline: none;
+    }
+    .affine-data-view-list-row[data-selected='true']::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 6px;
+      background: var(--affine-primary-color-04);
+      pointer-events: none;
     }
 
     .affine-data-view-list-title {
@@ -697,6 +814,7 @@ export class ListViewRenderer extends SignalWatcher(
       class="affine-data-view-list-drag-handle"
       data-testid="drag-handle"
       data-row-id=${rowId}
+      @click=${this.onDragHandleClick}
     >
       <div
         style="width: 4px;
@@ -943,9 +1061,11 @@ export class ListViewRenderer extends SignalWatcher(
       }
     };
     return html`<input
-      class=${propertyType === 'number'
-        ? 'affine-data-view-list-field affine-data-view-list-field-number'
-        : 'affine-data-view-list-field'}
+      class=${
+        propertyType === 'number'
+          ? 'affine-data-view-list-field affine-data-view-list-field-number'
+          : 'affine-data-view-list-field'
+      }
       .value=${value}
       placeholder=${property.name$.value}
       inputmode=${propertyType === 'number' ? 'decimal' : 'text'}
@@ -964,6 +1084,13 @@ export class ListViewRenderer extends SignalWatcher(
     if (rowId) {
       this.logic.ensureTodoListRow(rowId);
     }
+    // Clicking or tabbing into a row's content ends the row selection.
+    if (
+      event.target !== event.currentTarget &&
+      this.logic.selectedRowIds$.value.length
+    ) {
+      this.logic.clearSelection();
+    }
   }
 
   @eventOptions({ capture: true })
@@ -977,6 +1104,23 @@ export class ListViewRenderer extends SignalWatcher(
     }
     const rowId = (event.currentTarget as HTMLElement | null)?.dataset.rowId;
     if (!rowId) {
+      return;
+    }
+    // F-11: the row itself has focus while rows are selected.
+    if (
+      event.target === event.currentTarget &&
+      this.logic.selectedRowIds$.value.length
+    ) {
+      if (this.onSelectedRowKeyDown(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      return;
+    }
+    if (event.key === 'Escape' && !IS_MOBILE) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.selectRowFromTitle(rowId);
       return;
     }
     this.logic.ensureTodoListRow(rowId);
@@ -1213,6 +1357,7 @@ export class ListViewRenderer extends SignalWatcher(
       }
     }
     const fieldLayout = this.view.fieldLayout$.value;
+    const selectedRows = new Set(this.logic.selectedRowIds$.value);
     // Deferred to a microtask rather than run synchronously inline here:
     // `ensureTodoListRows` -> `ensureRowAsTodoList` can `deleteBlock` then
     // `addBlock` a row (converting a plain paragraph to a todo `affine:list`
@@ -1244,9 +1389,11 @@ export class ListViewRenderer extends SignalWatcher(
         this.view.rows$.value.map(row => row.rowId)
       );
     });
-    return html`${this.logic.headerWidget
-        ? renderUniLit(this.logic.headerWidget, { dataViewLogic: this.logic })
-        : nothing}
+    return html`${
+        this.logic.headerWidget
+          ? renderUniLit(this.logic.headerWidget, { dataViewLogic: this.logic })
+          : nothing
+      }
       <div class="affine-data-view-list">
         ${repeat(
           // Story 2.7 (AC5): a row whose resolved overdue-and-undone
@@ -1266,15 +1413,21 @@ export class ListViewRenderer extends SignalWatcher(
             return html`<div
               class="affine-data-view-list-row"
               data-row-id=${row.rowId}
+              data-selected=${selectedRows.has(row.rowId) ? 'true' : nothing}
               data-overdue=${isOverdueHighlighted ? 'true' : nothing}
               tabindex="0"
-              style="${noteColor
-                ? `background-color: ${noteColor}; border-radius: 6px;`
-                : ''}${isOverdueHighlighted
-                ? ' color: var(--affine-error-color); font-weight: 600;'
-                : ''}"
+              style="${
+                noteColor
+                  ? `background-color: ${noteColor}; border-radius: 6px;`
+                  : ''
+              }${
+                isOverdueHighlighted
+                  ? ' color: var(--affine-error-color); font-weight: 600;'
+                  : ''
+              }"
               @focusin=${this.onRowFocusIn}
               @keydown=${this.onRowKeyDown}
+              @paste=${this.onRowPaste}
             >
               ${this.renderDragHandle(row.rowId)}
               <div
@@ -1282,24 +1435,28 @@ export class ListViewRenderer extends SignalWatcher(
                 style="width: ${indent}px"
               ></div>
               <div class="affine-data-view-list-title">
-                ${titleColumn
-                  ? this.renderCell(row.rowId, titleColumn)
-                  : nothing}
+                ${
+                  titleColumn
+                    ? this.renderCell(row.rowId, titleColumn)
+                    : nothing
+                }
               </div>
-              ${detailProperties.length
-                ? html`<div
-                    class="affine-data-view-list-fields"
-                    data-layout=${fieldLayout}
-                    style="--affine-list-field-count: ${Math.max(
-                      detailProperties.length,
-                      1
-                    )}"
-                  >
-                    ${detailProperties.map(property =>
-                      this.renderDetailValue(row.rowId, property.id)
-                    )}
-                  </div>`
-                : nothing}
+              ${
+                detailProperties.length
+                  ? html`<div
+                      class="affine-data-view-list-fields"
+                      data-layout=${fieldLayout}
+                      style="--affine-list-field-count: ${Math.max(
+                        detailProperties.length,
+                        1
+                      )}"
+                    >
+                      ${detailProperties.map(property =>
+                        this.renderDetailValue(row.rowId, property.id)
+                      )}
+                    </div>`
+                  : nothing
+              }
               ${this.renderNoteAction(row.rowId)}
               ${this.renderDueDateAction(row.rowId)}
             </div>`;

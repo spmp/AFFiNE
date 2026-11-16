@@ -1,11 +1,13 @@
 import type {
   KanbanViewSelectionWithType,
+  ListViewSelectionWithType,
   TableViewSelectionWithType,
 } from '../view-presets';
 
 export type DataViewSelection =
   | TableViewSelectionWithType
-  | KanbanViewSelectionWithType;
+  | KanbanViewSelectionWithType
+  | ListViewSelectionWithType;
 export type DataViewSelectionState = DataViewSelection | undefined;
 export type PropertyDataUpdater<
   Data extends Record<string, unknown> = Record<string, unknown>,

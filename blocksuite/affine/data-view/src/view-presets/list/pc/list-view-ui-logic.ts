@@ -4,7 +4,7 @@ import {
 } from '@blocksuite/affine-components/context-menu';
 import type { InsertToPosition } from '@blocksuite/affine-shared/utils';
 import { ArrowRightSmallIcon, ViewIcon } from '@blocksuite/icons/lit';
-import { signal } from '@preact/signals-core';
+import { computed, signal } from '@preact/signals-core';
 import { html } from 'lit';
 
 import { createUniComponentFromWebComponent } from '../../../core/utils/uni-component/uni-component.js';
@@ -16,6 +16,8 @@ import {
   computeUnindentMutation,
 } from '../../table/utils.js';
 import type { ListSingleView } from '../list-view-manager.js';
+import type { ListViewSelectionWithType } from '../selection.js';
+import { ListClipboardController } from './controller/clipboard.js';
 import { ListDragController } from './controller/drag.js';
 import { ListViewRenderer } from './renderer.js';
 
@@ -34,7 +36,10 @@ const addTodoListRow = (
   return dataSource?.rowAddAsTodoList?.(position) ?? view.rowAdd(position);
 };
 
-export class ListViewUILogic extends DataViewUILogicBase<ListSingleView> {
+export class ListViewUILogic extends DataViewUILogicBase<
+  ListSingleView,
+  ListViewSelectionWithType
+> {
   // Story 2.8: mirrors `TableViewUILogic.ui$` — the rendered
   // `ListViewRenderer` instance, set from its own `connectedCallback`, so
   // `ListDragController` (which needs real DOM to query rows/handles from)
@@ -43,9 +48,85 @@ export class ListViewUILogic extends DataViewUILogicBase<ListSingleView> {
 
   dragController = new ListDragController(this);
 
+  clipboardController = new ListClipboardController(this);
+
   clearSelection = () => {
     this.setSelection();
   };
+
+  /** F-11: the rows selected as whole rows, in view order. */
+  selectedRowIds$ = computed(() => {
+    const selection = this.selection$.value;
+    return selection?.type === 'list' ? selection.rows : [];
+  });
+
+  /** Rows in the order shown (rows hidden as overdue are left out). */
+  private visibleRowIds() {
+    return this.ui$.value?.visibleRowIds() ?? this.view.rowIds$.value;
+  }
+
+  selectRows(rowIds: string[], anchor?: string, focus?: string) {
+    const selected = new Set(rowIds);
+    const rows = this.visibleRowIds().filter(id => selected.has(id));
+    if (!rows.length) {
+      this.clearSelection();
+      return;
+    }
+    this.setSelection({
+      viewId: this.view.id,
+      type: 'list',
+      rows,
+      anchor: anchor ?? rows[0],
+      focus: focus ?? rows.at(-1),
+    });
+  }
+
+  selectRow(rowId: string) {
+    this.selectRows([rowId], rowId, rowId);
+  }
+
+  /** Selects the rows from the selection's anchor to `rowId` (Shift). */
+  extendSelectionTo(rowId: string) {
+    const anchor = this.selection$.value?.anchor;
+    const order = this.visibleRowIds();
+    const from = anchor ? order.indexOf(anchor) : -1;
+    const to = order.indexOf(rowId);
+    if (from < 0 || to < 0) {
+      this.selectRow(rowId);
+      return;
+    }
+    this.selectRows(
+      order.slice(Math.min(from, to), Math.max(from, to) + 1),
+      anchor,
+      rowId
+    );
+  }
+
+  /** Adds or removes one row (Ctrl/Cmd+click). */
+  toggleRowSelected(rowId: string) {
+    const rows = this.selectedRowIds$.value;
+    if (rows.includes(rowId)) {
+      this.selectRows(rows.filter(id => id !== rowId));
+    } else {
+      this.selectRows([...rows, rowId], rowId, rowId);
+    }
+  }
+
+  /** Arrow keys with rows selected: move (or with Shift, extend) by one. */
+  moveSelection(delta: 1 | -1, extend: boolean) {
+    const selection = this.selection$.value;
+    const focus = selection?.focus ?? selection?.rows.at(-1);
+    if (!focus) return false;
+    const order = this.visibleRowIds();
+    const target = order[order.indexOf(focus) + delta];
+    if (!target) return true;
+    if (extend) {
+      this.extendSelectionTo(target);
+    } else {
+      this.selectRow(target);
+    }
+    return true;
+  }
 
   ensureTodoListRow(rowId: string) {
     const dataSource = this.view.manager?.dataSource as
@@ -74,7 +155,7 @@ export class ListViewUILogic extends DataViewUILogicBase<ListSingleView> {
     return changed;
   }
 
-  addRow = (position: InsertToPosition) => {
+  addRow = (position: InsertToPosition | number) => {
     return addTodoListRow(this.view, position);
   };
 

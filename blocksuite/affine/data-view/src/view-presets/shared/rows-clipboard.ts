@@ -1,9 +1,11 @@
 import {
+  type InsertToPosition,
   TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME,
   TASK_HIERARCHY_LEVEL_COLUMN_NAME,
   TASK_PARENT_IDENTIFIER_COLUMN_NAME,
 } from '@blocksuite/affine-shared/utils';
 
+import type { DataViewRendererConfig } from '../../core/data-view.js';
 import type { SingleView } from '../../core/view-manager/single-view.js';
 import { normalizeHierarchyLevel } from '../table/utils.js';
 import { addRowAfterSameLevel } from './add-row-after.js';
@@ -170,15 +172,73 @@ export function clipboardRowsToSnapshot(
   });
 }
 
+type RowsClipboardLogic = {
+  view: SingleView;
+  root: { config: Pick<DataViewRendererConfig, 'clipboard' | 'notification'> };
+};
+
+/**
+ * Copies the rows (in the order given) as rows, an AFFiNE to-do list, a
+ * Markdown task list and a checkbox list, and says how many were copied.
+ */
+export function copyRowsToClipboard(
+  logic: RowsClipboardLogic,
+  rowIds: string[]
+) {
+  const rows = rowsToClipboardRows(logic.view, rowIds);
+  const doc = (
+    logic.view.manager.dataSource as {
+      doc?: { id: string; workspace?: { id: string } };
+    }
+  ).doc;
+  const ids = { workspaceId: doc?.workspace?.id ?? '', pageId: doc?.id ?? '' };
+  const { clipboard, notification } = logic.root.config;
+  clipboard
+    .writeToClipboard(items => ({
+      ...items,
+      'text/plain': clipboardRowsToMarkdown(rows),
+      'text/html': clipboardRowsToHtml(rows),
+      [BLOCKSUITE_DATABASE_ROWS]: JSON.stringify(rows),
+      [BLOCKSUITE_SNAPSHOT]: clipboardRowsToSnapshot(rows, ids),
+    }))
+    .then(() => {
+      notification.toast(
+        `${rows.length} row${rows.length > 1 ? 's' : ''} copied to clipboard`
+      );
+    })
+    .catch(console.error);
+}
+
+/** The rows on the clipboard, if it holds rows copied from a database. */
+export function readClipboardRows(
+  logic: RowsClipboardLogic,
+  data: DataTransfer | null
+): ClipboardRow[] | undefined {
+  if (!data) return;
+  try {
+    const json = logic.root.config.clipboard.readFromClipboard(data);
+    const rowsString = json[BLOCKSUITE_DATABASE_ROWS];
+    const rows = rowsString
+      ? (JSON.parse(rowsString) as ClipboardRow[])
+      : undefined;
+    return rows?.length ? rows : undefined;
+  } catch {
+    return;
+  }
+}
+
 /**
  * Adds the rows as new rows after `afterRowId` (and its sub-rows), or at the
- * end. Their levels are relative to `afterRowId`'s own level. Returns the
- * new rows' ids, in order.
+ * end. Their levels are relative to `afterRowId`'s own level. `addRow`
+ * makes a row (the List view makes to-do rows). Returns the new rows' ids,
+ * in order.
  */
 export function insertClipboardRows(
   view: SingleView,
   rows: ClipboardRow[],
-  afterRowId?: string
+  afterRowId?: string,
+  addRow: (position: InsertToPosition | number) => string = position =>
+    view.rowAdd(position as InsertToPosition)
 ): string[] {
   if (rows.length === 0) return [];
   const properties = view.propertiesRaw$.value;
@@ -197,12 +257,10 @@ export function insertClipboardRows(
   for (const row of rows) {
     const previous = ids.at(-1);
     const id = previous
-      ? view.rowAdd({ before: false, id: previous })
+      ? addRow({ before: false, id: previous })
       : afterRowId
-        ? addRowAfterSameLevel(view, afterRowId, position =>
-            view.rowAdd(position as never)
-          )
-        : view.rowAdd('end');
+        ? addRowAfterSameLevel(view, afterRowId, addRow)
+        : addRow('end');
     ids.push(id);
     title?.valueSetFromString(id, row.title);
     for (const property of properties) {

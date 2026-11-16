@@ -4,14 +4,9 @@ import type { ReactiveController } from 'lit';
 import type { Cell } from '../../../../core/view-manager/cell.js';
 import type { Row } from '../../../../core/view-manager/row.js';
 import {
-  BLOCKSUITE_DATABASE_ROWS,
-  BLOCKSUITE_SNAPSHOT,
-  type ClipboardRow,
-  clipboardRowsToHtml,
-  clipboardRowsToMarkdown,
-  clipboardRowsToSnapshot,
+  copyRowsToClipboard,
   insertClipboardRows,
-  rowsToClipboardRows,
+  readClipboardRows,
 } from '../../../shared/rows-clipboard.js';
 import {
   TableViewAreaSelection,
@@ -34,24 +29,10 @@ export class TableClipboardController implements ReactiveController {
     // Markdown task list and a checkbox list, rather than as cells.
     if (!isCut && TableViewRowSelection.is(tableSelection)) {
       const selected = new Set(TableViewRowSelection.rowsIds(tableSelection));
-      const rowIds = this.logic.view.rowIds$.value.filter(id =>
-        selected.has(id)
+      copyRowsToClipboard(
+        this.logic,
+        this.logic.view.rowIds$.value.filter(id => selected.has(id))
       );
-      const rows = rowsToClipboardRows(this.logic.view, rowIds);
-      this.clipboard
-        .writeToClipboard(items => ({
-          ...items,
-          [TEXT]: clipboardRowsToMarkdown(rows),
-          'text/html': clipboardRowsToHtml(rows),
-          [BLOCKSUITE_DATABASE_ROWS]: JSON.stringify(rows),
-          [BLOCKSUITE_SNAPSHOT]: clipboardRowsToSnapshot(rows, this.docIds),
-        }))
-        .then(() => {
-          this.notification.toast(
-            `${rows.length} row${rows.length > 1 ? 's' : ''} copied to clipboard`
-          );
-        })
-        .catch(console.error);
       return true;
     }
     const area = getSelectedArea(tableSelection, this.logic);
@@ -127,15 +108,8 @@ export class TableClipboardController implements ReactiveController {
     const tableSelection = this.selectionController.selection;
 
     // Rows copied from a table: add them as new rows after the selection.
-    let copiedRows: ClipboardRow[] | undefined;
-    try {
-      const json = await this.clipboard.readFromClipboard(clipboardData);
-      const rowsString = json[BLOCKSUITE_DATABASE_ROWS];
-      if (rowsString) copiedRows = JSON.parse(rowsString) as ClipboardRow[];
-    } catch {
-      // not copied rows
-    }
-    if (copiedRows?.length && !this.readonly) {
+    const copiedRows = readClipboardRows(this.logic, clipboardData);
+    if (copiedRows && !this.readonly) {
       const view = this.logic.view;
       const order = view.rowIds$.value;
       const selectedIds = TableViewRowSelection.is(tableSelection)
@@ -193,15 +167,6 @@ export class TableClipboardController implements ReactiveController {
 
   private get clipboard() {
     return this.logic.root.config.clipboard;
-  }
-
-  private get docIds() {
-    const doc = (
-      this.logic.view.manager.dataSource as {
-        doc?: { id: string; workspace?: { id: string } };
-      }
-    ).doc;
-    return { workspaceId: doc?.workspace?.id ?? '', pageId: doc?.id ?? '' };
   }
 
   private get notification() {
