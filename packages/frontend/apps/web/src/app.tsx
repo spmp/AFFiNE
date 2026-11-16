@@ -12,6 +12,8 @@ import { PopupWindowProvider } from '@affine/core/modules/url';
 import { configureBrowserWorkbenchModule } from '@affine/core/modules/workbench';
 import { configureBrowserWorkspaceFlavours } from '@affine/core/modules/workspace-engine';
 import createEmotionCache from '@affine/core/utils/create-emotion-cache';
+import { installDebugEvalPoll } from '@affine/core/utils/debug-eval-client';
+import { installDebugFrameworkHandle } from '@affine/core/utils/debug-framework-handle';
 import { getWorkerUrl } from '@affine/env/worker';
 import { StoreManagerClient } from '@affine/nbstore/worker/client';
 import { setTelemetryTransport } from '@affine/track';
@@ -84,6 +86,11 @@ framework.impl(PopupWindowProvider, {
   },
 });
 const frameworkProvider = framework.provider();
+
+// Debug tools, the same as the mobile app's: remote eval (off unless the
+// server enables it) and, in debug builds, the DI handle for snippets.
+installDebugEvalPoll({ platform: 'desktop' });
+installDebugFrameworkHandle(frameworkProvider);
 
 // setup application lifecycle events, and emit application start event
 window.addEventListener('focus', () => {

@@ -1,7 +1,8 @@
 /**
- * Debug/E2E-only: publishes this app's live DI `FrameworkProvider` on
+ * Debug/E2E-only: publishes the app's live DI `FrameworkProvider` on
  * `window` so a Playwright `page.evaluate` (or a `mobile-debug-eval`
- * snippet) can reach real services instead of only the DOM.
+ * snippet) can reach real services instead of only the DOM. Installed by
+ * the mobile app and the desktop web app.
  *
  * Why this exists: a few workspace-level settings have no mobile UI at all
  * — `journalTemplateId` / `pageTemplateId` are written only from
@@ -15,8 +16,8 @@
  * template-driven flow (e.g. "create today's journal from the journal
  * template") simply cannot be set up.
  *
- * Same family and lifetime as `mobile-debug-log.ts` /
- * `mobile-debug-eval.ts`, but unlike those this one IS gated: it is only
+ * Same family and lifetime as the mobile app's `mobile-debug-log.ts` and
+ * `debug-eval-client.ts`, but unlike those this one IS gated: it is only
  * installed when `BUILD_CONFIG.debug` is set, so production builds expose
  * nothing.
  */
@@ -35,7 +36,7 @@ import type { FrameworkProvider } from '@toeverything/infra';
  * handful of classes a test legitimately needs are published alongside the
  * provider rather than expecting the caller to conjure the identifiers.
  */
-export interface MobileDebugFrameworkHandle {
+export interface DebugFrameworkHandle {
   provider: FrameworkProvider;
   /**
    * The exact function the mobile keyboard toolbar's own "Journal Todo"
@@ -61,12 +62,12 @@ export interface MobileDebugFrameworkHandle {
 
 declare global {
   interface Window {
-    /** Only present in debug builds — see `installMobileDebugFrameworkHandle`. */
-    __affineDebugFramework?: MobileDebugFrameworkHandle;
+    /** Only present in debug builds — see `installDebugFrameworkHandle`. */
+    __affineDebugFramework?: DebugFrameworkHandle;
   }
 }
 
-export function installMobileDebugFrameworkHandle(
+export function installDebugFrameworkHandle(
   frameworkProvider: FrameworkProvider
 ) {
   if (!BUILD_CONFIG.debug) {

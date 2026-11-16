@@ -79,6 +79,20 @@ device will silently stop answering — this shows up as a plain timeout, not an
 command times out, the first thing to check is whether the device's screen is actually on and
 the tab is actually in front, not some deeper bug.
 
+**Desktop too, and choosing a client.** The desktop web app runs the same client, so a
+desktop browser tab answers as well. Each tab sends an id and a label (`desktop Chrome`,
+`mobile iPhone Safari`); with several open, aim a command with `-t`:
+
+```sh
+./scripts/mobile-debug-eval.sh clients                 # tabs that polled in the last minute
+./scripts/mobile-debug-eval.sh -t desktop run 'return document.title;'
+./scripts/mobile-debug-eval.sh -t mobile run-file ./check.js 30
+```
+
+`-t` matches a client id exactly or any part of a label (case-insensitive). Without it, the
+first tab to poll runs the command. While eval is disabled on the server, clients poll only
+once a minute.
+
 This channel is how most of the mobile keyboard-toolbar and journal-todo investigation in this
 fork's history was actually confirmed — e.g. directly measuring `document.activeElement`,
 `visualViewport` dimensions, or the live DOM's `contenteditable` nesting, rather than guessing

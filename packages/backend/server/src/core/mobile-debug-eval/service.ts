@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 
 import { ActionForbidden, Config } from '../../base';
-import type { EvalResult, PendingCommand } from './types';
+import type { EvalClient, EvalResult, PendingCommand } from './types';
 
 const MAX_CODE_LENGTH = 20_000;
 const MAX_RESULT_LENGTH = 20_000;
@@ -11,12 +11,17 @@ const MAX_RESULT_LENGTH = 20_000;
 // This is a throwaway debug tool (see module doc comment) -- no DB, no
 // multi-instance fanout, no history beyond the last few results.
 const MAX_RESULTS_RETAINED = 20;
+// Clients poll every 2s while eval is on; one not seen for this long has
+// gone (tab closed, phone asleep).
+const CLIENT_TTL_MS = 60_000;
+const MAX_LABEL_LENGTH = 200;
 
 @Injectable()
 export class MobileDebugEvalService {
   private readonly logger = new Logger('MobileDebugEval');
   private pending: PendingCommand | null = null;
   private readonly results = new Map<string, EvalResult>();
+  private readonly clients = new Map<string, EvalClient>();
 
   constructor(private readonly config: Config) {}
 
@@ -36,7 +41,11 @@ export class MobileDebugEvalService {
     }
   }
 
-  submit(code: string, token: string | undefined): { id: string } {
+  submit(
+    code: string,
+    token: string | undefined,
+    target?: string
+  ): { id: string } {
     this.assertEnabled();
     this.assertToken(token);
 
@@ -49,10 +58,13 @@ export class MobileDebugEvalService {
     this.pending = {
       id,
       code: trimmed,
+      target: target?.trim() || undefined,
       createdAt: Date.now(),
       consumedAt: null,
     };
-    this.logger.log(`submitted id=${id} len=${trimmed.length}`);
+    this.logger.log(
+      `submitted id=${id} len=${trimmed.length} target=${this.pending.target ?? '*'}`
+    );
     return { id };
   }
 
@@ -68,18 +80,50 @@ export class MobileDebugEvalService {
   // for a condition that isn't exceptional, it's the expected steady state
   // of this disabled-by-default tool. Return the same "nothing pending"
   // shape a real poll would see when there's just no command queued,
-  // instead of a distinguishable error.
-  consumePending(): { id: string; code: string } | null {
+  // instead of a distinguishable error. `{ disabled: true }` lets the client
+  // slow its polling down.
+  //
+  // `client` identifies the polling page (its tab id and a label such as
+  // "desktop Chrome"), so a command can be aimed at one of several open
+  // clients, and `listClients` can show which are there.
+  consumePending(client?: {
+    id?: string;
+    label?: string;
+  }): { id: string; code: string } | { disabled: true } | null {
     if (!this.config.mobileDebugEval.enabled) {
-      return null;
+      return { disabled: true };
+    }
+
+    const clientId = client?.id?.slice(0, MAX_LABEL_LENGTH);
+    const label = client?.label?.slice(0, MAX_LABEL_LENGTH) ?? '';
+    if (clientId) {
+      this.clients.set(clientId, { id: clientId, label, lastSeen: Date.now() });
     }
 
     const current = this.pending;
     if (!current || current.consumedAt !== null) {
       return null;
     }
+    if (
+      current.target &&
+      current.target !== clientId &&
+      !label.toLowerCase().includes(current.target.toLowerCase())
+    ) {
+      return null;
+    }
     current.consumedAt = Date.now();
     return { id: current.id, code: current.code };
+  }
+
+  /** Clients that polled in the last minute, most recent first. */
+  listClients(token: string | undefined): EvalClient[] {
+    this.assertEnabled();
+    this.assertToken(token);
+    const cutoff = Date.now() - CLIENT_TTL_MS;
+    for (const [id, client] of this.clients) {
+      if (client.lastSeen < cutoff) this.clients.delete(id);
+    }
+    return [...this.clients.values()].sort((a, b) => b.lastSeen - a.lastSeen);
   }
 
   reportResult(

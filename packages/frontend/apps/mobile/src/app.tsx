@@ -14,6 +14,8 @@ import {
 import { PopupWindowProvider } from '@affine/core/modules/url';
 import { configureBrowserWorkbenchModule } from '@affine/core/modules/workbench';
 import { configureBrowserWorkspaceFlavours } from '@affine/core/modules/workspace-engine';
+import { installDebugEvalPoll } from '@affine/core/utils/debug-eval-client';
+import { installDebugFrameworkHandle } from '@affine/core/utils/debug-framework-handle';
 import { getWorkerUrl } from '@affine/env/worker';
 import { StoreManagerClient } from '@affine/nbstore/worker/client';
 import { setTelemetryTransport } from '@affine/track';
@@ -22,8 +24,6 @@ import { OpClient } from '@toeverything/infra/op';
 import { Suspense } from 'react';
 import { RouterProvider } from 'react-router-dom';
 
-import { installMobileDebugEvalPoll } from './mobile-debug-eval';
-import { installMobileDebugFrameworkHandle } from './mobile-debug-framework';
 import {
   installMobileDebugLogCapture,
   installPointerDebugLogCapture,
@@ -33,7 +33,7 @@ import { createVisualViewportVirtualKeyboardProvider } from './virtual-keyboard-
 // Debug-only tools, active for the whole app lifetime — no disposal wiring needed.
 installMobileDebugLogCapture();
 installPointerDebugLogCapture();
-installMobileDebugEvalPoll();
+installDebugEvalPoll({ platform: 'mobile' });
 
 let storeManagerClient: StoreManagerClient;
 
@@ -117,7 +117,7 @@ const frameworkProvider = framework.provider();
 
 // Debug-build-only handle for Playwright/`mobile-debug-eval` — see that
 // module's comment for why mobile E2E needs it.
-installMobileDebugFrameworkHandle(frameworkProvider);
+installDebugFrameworkHandle(frameworkProvider);
 
 // setup application lifecycle events, and emit application start event
 window.addEventListener('focus', () => {

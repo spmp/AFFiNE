@@ -5,7 +5,7 @@ import dayjs from 'dayjs';
 import { openTab } from './utils';
 
 // Mirrors the debug-build-only handle installed by
-// `packages/frontend/apps/mobile/src/mobile-debug-framework.ts`. Declared
+// `packages/frontend/core/src/utils/debug-framework-handle.ts`. Declared
 // structurally here rather than imported, because this test workspace does
 // not (and should not) depend on the mobile app package. Typed loosely on
 // purpose — only the two services this test drives are described.

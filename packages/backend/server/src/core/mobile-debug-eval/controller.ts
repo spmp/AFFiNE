@@ -26,9 +26,16 @@ export class MobileDebugEvalController {
   @Post('/submit')
   submit(
     @Body('code') code: string,
+    @Body('target') target: string | undefined,
     @Headers('x-debug-eval-token') token: string | undefined
   ) {
-    return this.service.submit(code, token);
+    return this.service.submit(code, token, target);
+  }
+
+  @Public()
+  @Get('/clients')
+  clients(@Headers('x-debug-eval-token') token: string | undefined) {
+    return this.service.listClients(token);
   }
 
   @Public()
@@ -42,8 +49,11 @@ export class MobileDebugEvalController {
 
   @Public()
   @Get('/pending')
-  pending() {
-    return this.service.consumePending();
+  pending(
+    @Headers('x-debug-eval-client') id: string | undefined,
+    @Headers('x-debug-eval-label') label: string | undefined
+  ) {
+    return this.service.consumePending({ id, label });
   }
 
   @Public()

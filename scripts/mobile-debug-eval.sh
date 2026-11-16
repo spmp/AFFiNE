@@ -13,14 +13,19 @@
 # foregrounded tab -- see that module's doc comment for why background
 # tabs silently stop polling (iOS Safari throttles backgrounded timers).
 #
-# Usage:
-#   mobile-debug-eval.sh run '<js code>' [timeout_seconds]
+# Usage (-t <target>: run only on a client whose id is <target> or whose
+# label contains it, e.g. -t desktop, -t mobile, -t iPhone; without it the
+# first client to poll runs it):
+#   mobile-debug-eval.sh clients
+#     List the clients (open tabs) that polled in the last minute.
+#
+#   mobile-debug-eval.sh [-t <target>] run '<js code>' [timeout_seconds]
 #     Submit `code` as the body of an async function (so plain expressions,
 #     multi-statement snippets, and `await` all just work -- see the
 #     client's runSnippet()), poll for the result, print it, exit 0 on
 #     success / 1 on timeout or a JS-side error.
 #
-#   mobile-debug-eval.sh run-file <path-to-js-file> [timeout_seconds]
+#   mobile-debug-eval.sh [-t <target>] run-file <path-to-js-file> [timeout_seconds]
 #     Same as `run`, but reads the code from a file -- use this for
 #     anything long enough that shell quoting becomes its own hazard.
 #
@@ -38,11 +43,17 @@ if [[ -z "$TOKEN" && -f /tmp/debug-eval-token.txt ]]; then
   TOKEN=$(cat /tmp/debug-eval-token.txt)
 fi
 
+TARGET=""
+
 usage() {
   cat <<'EOF'
 Usage:
-  mobile-debug-eval.sh run '<js code>' [timeout_seconds]
-  mobile-debug-eval.sh run-file <path> [timeout_seconds]
+  mobile-debug-eval.sh clients
+  mobile-debug-eval.sh [-t <target>] run '<js code>' [timeout_seconds]
+  mobile-debug-eval.sh [-t <target>] run-file <path> [timeout_seconds]
+
+  -t <target>  only a client whose id is <target> or whose label contains
+               it (labels look like "desktop Chrome", "mobile iPhone Safari")
 
 Env:
   DEBUG_EVAL_URL    default http://localhost:3010
@@ -52,10 +63,30 @@ EOF
 
 submit() {
   local code="$1"
-  node -e '
+  TARGET="$TARGET" node -e '
     const code = require("fs").readFileSync(0, "utf8");
-    process.stdout.write(JSON.stringify({ code }));
+    const target = process.env.TARGET || undefined;
+    process.stdout.write(JSON.stringify({ code, target }));
   ' <<<"$code"
+}
+
+require_token() {
+  if [[ -z "$TOKEN" ]]; then
+    echo "error: no token (set DEBUG_EVAL_TOKEN or /tmp/debug-eval-token.txt)" >&2
+    exit 2
+  fi
+}
+
+list_clients() {
+  require_token
+  curl -s "$BASE_URL/api/mobile-debug-eval/clients" -H "x-debug-eval-token: $TOKEN" |
+    node -e '
+      const now = Date.now();
+      const d = JSON.parse(require("fs").readFileSync(0, "utf8"));
+      if (!Array.isArray(d)) { console.log(JSON.stringify(d)); process.exit(1); }
+      if (!d.length) console.log("(no clients polled in the last minute)");
+      for (const c of d) console.log(`${c.id}  ${c.label}  ${Math.round((now - c.lastSeen) / 1000)}s ago`);
+    '
 }
 
 poll_result() {
@@ -84,10 +115,7 @@ poll_result() {
 run_code() {
   local code="$1" timeout_s="${2:-30}"
 
-  if [[ -z "$TOKEN" ]]; then
-    echo "error: no token (set DEBUG_EVAL_TOKEN or /tmp/debug-eval-token.txt)" >&2
-    exit 2
-  fi
+  require_token
 
   local payload submit_res id
   payload=$(submit "$code")
@@ -106,7 +134,16 @@ run_code() {
   poll_result "$id" "$timeout_s"
 }
 
+if [[ "${1:-}" == "-t" ]]; then
+  [[ $# -ge 2 ]] || { usage >&2; exit 2; }
+  TARGET="$2"
+  shift 2
+fi
+
 case "${1:-}" in
+  clients)
+    list_clients
+    ;;
   run)
     [[ $# -ge 2 ]] || { usage >&2; exit 2; }
     run_code "$2" "${3:-30}"
