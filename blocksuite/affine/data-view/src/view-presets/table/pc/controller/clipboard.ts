@@ -4,6 +4,16 @@ import type { ReactiveController } from 'lit';
 import type { Cell } from '../../../../core/view-manager/cell.js';
 import type { Row } from '../../../../core/view-manager/row.js';
 import {
+  BLOCKSUITE_DATABASE_ROWS,
+  BLOCKSUITE_SNAPSHOT,
+  type ClipboardRow,
+  clipboardRowsToHtml,
+  clipboardRowsToMarkdown,
+  clipboardRowsToSnapshot,
+  insertClipboardRows,
+  rowsToClipboardRows,
+} from '../../../shared/rows-clipboard.js';
+import {
   TableViewAreaSelection,
   TableViewRowSelection,
   type TableViewSelection,
@@ -20,6 +30,30 @@ export class TableClipboardController implements ReactiveController {
     tableSelection: TableViewSelectionWithType,
     isCut = false
   ) => {
+    // Whole rows: copy them as rows (new rows when pasted into a table), a
+    // Markdown task list and a checkbox list, rather than as cells.
+    if (!isCut && TableViewRowSelection.is(tableSelection)) {
+      const selected = new Set(TableViewRowSelection.rowsIds(tableSelection));
+      const rowIds = this.logic.view.rowIds$.value.filter(id =>
+        selected.has(id)
+      );
+      const rows = rowsToClipboardRows(this.logic.view, rowIds);
+      this.clipboard
+        .writeToClipboard(items => ({
+          ...items,
+          [TEXT]: clipboardRowsToMarkdown(rows),
+          'text/html': clipboardRowsToHtml(rows),
+          [BLOCKSUITE_DATABASE_ROWS]: JSON.stringify(rows),
+          [BLOCKSUITE_SNAPSHOT]: clipboardRowsToSnapshot(rows, this.docIds),
+        }))
+        .then(() => {
+          this.notification.toast(
+            `${rows.length} row${rows.length > 1 ? 's' : ''} copied to clipboard`
+          );
+        })
+        .catch(console.error);
+      return true;
+    }
     const area = getSelectedArea(tableSelection, this.logic);
     if (!area) {
       return;
@@ -91,6 +125,34 @@ export class TableClipboardController implements ReactiveController {
     if (!clipboardData) return;
 
     const tableSelection = this.selectionController.selection;
+
+    // Rows copied from a table: add them as new rows after the selection.
+    let copiedRows: ClipboardRow[] | undefined;
+    try {
+      const json = await this.clipboard.readFromClipboard(clipboardData);
+      const rowsString = json[BLOCKSUITE_DATABASE_ROWS];
+      if (rowsString) copiedRows = JSON.parse(rowsString) as ClipboardRow[];
+    } catch {
+      // not copied rows
+    }
+    if (copiedRows?.length && !this.readonly) {
+      const view = this.logic.view;
+      const order = view.rowIds$.value;
+      const selectedIds = TableViewRowSelection.is(tableSelection)
+        ? TableViewRowSelection.rowsIds(tableSelection)
+        : tableSelection
+          ? [order[tableSelection.focus.rowIndex]].filter(
+              (id): id is string => !!id
+            )
+          : [];
+      const afterRowId = order.findLast(id => selectedIds.includes(id));
+      const ids = insertClipboardRows(view, copiedRows, afterRowId);
+      this.selectionController.selection = TableViewRowSelection.create({
+        rows: ids.map(id => ({ id })),
+      });
+      return true;
+    }
+
     if (TableViewRowSelection.is(tableSelection)) {
       return;
     }
@@ -131,6 +193,15 @@ export class TableClipboardController implements ReactiveController {
 
   private get clipboard() {
     return this.logic.root.config.clipboard;
+  }
+
+  private get docIds() {
+    const doc = (
+      this.logic.view.manager.dataSource as {
+        doc?: { id: string; workspace?: { id: string } };
+      }
+    ).doc;
+    return { workspaceId: doc?.workspace?.id ?? '', pageId: doc?.id ?? '' };
   }
 
   private get notification() {

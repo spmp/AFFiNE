@@ -2853,6 +2853,12 @@ export class DatabaseBlockDataSource extends DataSourceBase {
    * `recomputeHierarchyMetadataAfterMove` bookkeeping directly, without
    * ever attempting a block move.
    */
+  /** Sets a row's indent level, updating its parent and ancestors. */
+  setRowHierarchyLevel(rowId: string, level: number) {
+    this.setPendingHierarchyLevel(rowId, level);
+    this.applyPendingHierarchyLevel(rowId);
+  }
+
   applyPendingHierarchyLevel(rowId: string): void {
     const model = this.doc.getModelById(rowId);
     if (!model) return;
