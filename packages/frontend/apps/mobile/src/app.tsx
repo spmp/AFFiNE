@@ -28,11 +28,17 @@ import {
   installMobileDebugLogCapture,
   installPointerDebugLogCapture,
 } from './mobile-debug-log';
+import {
+  installDragIndicatorTripwire,
+  installEnterNewlineTripwire,
+} from './mobile-debug-tripwires';
 import { createVisualViewportVirtualKeyboardProvider } from './virtual-keyboard-provider';
 
 // Debug-only tools, active for the whole app lifetime — no disposal wiring needed.
 installMobileDebugLogCapture();
 installPointerDebugLogCapture();
+installEnterNewlineTripwire();
+installDragIndicatorTripwire();
 installDebugEvalPoll({ platform: 'mobile' });
 
 let storeManagerClient: StoreManagerClient;
