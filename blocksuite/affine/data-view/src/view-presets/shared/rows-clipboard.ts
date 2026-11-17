@@ -80,12 +80,32 @@ export function rowsToClipboardRows(
   return rows.map(row => ({ ...row, level: row.level - minLevel }));
 }
 
-/** `- [ ] task` / `- [x] task`, two spaces per indent level. */
-export function clipboardRowsToMarkdown(rows: ClipboardRow[]): string {
+/** A field's text on one line, for tab-separated output. */
+const oneLine = (text: string) => text.replaceAll(/[\t\r\n]+/g, ' ').trim();
+
+/** `fields`' values for a row, with trailing empty ones dropped. */
+function rowFields(row: ClipboardRow, fields: string[]) {
+  const values = fields.map(name => oneLine(row.values[name] ?? ''));
+  while (values.length && !values.at(-1)) values.pop();
+  return values;
+}
+
+/**
+ * `- [ ] task` / `- [x] task`, two spaces per indent level. `fields` (column
+ * names, e.g. the List view's shown fields) follow the title,
+ * tab-separated: `- [ ] task\tnote\t2026-11-20`.
+ */
+export function clipboardRowsToMarkdown(
+  rows: ClipboardRow[],
+  fields: string[] = []
+): string {
   return rows
     .map(row => {
       const box = row.done === null ? '' : row.done ? '[x] ' : '[ ] ';
-      return `${'  '.repeat(row.level)}- ${box}${row.title}`;
+      const extra = rowFields(row, fields)
+        .map(value => `\t${value}`)
+        .join('');
+      return `${'  '.repeat(row.level)}- ${box}${row.title}${extra}`;
     })
     .join('\n');
 }
@@ -97,8 +117,11 @@ const escapeHtml = (text: string) =>
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;');
 
-/** A nested list with a checkbox per task. */
-export function clipboardRowsToHtml(rows: ClipboardRow[]): string {
+/** A nested list with a checkbox per task; `fields` as in the Markdown. */
+export function clipboardRowsToHtml(
+  rows: ClipboardRow[],
+  fields: string[] = []
+): string {
   let html = '';
   let depth = -1;
   for (const row of rows) {
@@ -114,7 +137,10 @@ export function clipboardRowsToHtml(rows: ClipboardRow[]): string {
       row.done === null
         ? ''
         : `<input type="checkbox" disabled${row.done ? ' checked' : ''}> `;
-    html += `<li>${box}${escapeHtml(row.title)}`;
+    const extra = rowFields(row, fields)
+      .map(value => `\t${escapeHtml(value)}`)
+      .join('');
+    html += `<li>${box}${escapeHtml(row.title)}${extra}`;
   }
   if (depth < 0) return '';
   html += '</li>';
@@ -172,20 +198,84 @@ export function clipboardRowsToSnapshot(
   });
 }
 
+/** The view's shown columns, without the hidden task columns. */
+function shownColumns(view: SingleView) {
+  return view.properties$.value.filter(
+    property => !HIDDEN_COLUMNS.has(property.name$.value)
+  );
+}
+
+function tableCells(view: SingleView, rowIds: string[]) {
+  const columns = shownColumns(view);
+  const source = taskSource(view);
+  const header = columns.map(column => column.name$.value);
+  const rows = rowIds.map(rowId => {
+    const status = source.getTaskStatusInfo?.(rowId);
+    return columns.map(column =>
+      column.id === status?.columnId
+        ? status.checked
+          ? '[x]'
+          : '[ ]'
+        : (column.stringValueGet(rowId) ?? '')
+    );
+  });
+  return { header, rows };
+}
+
+/**
+ * A Markdown table of the view's shown columns (a done column as `[x]` /
+ * `[ ]`). Indent levels are not shown: a table cell can't hold them.
+ */
+export function tableRowsToMarkdown(view: SingleView, rowIds: string[]) {
+  const { header, rows } = tableCells(view, rowIds);
+  const cell = (text: string) =>
+    text.replaceAll('|', '\\|').replaceAll(/\r?\n/g, '<br>');
+  const line = (cells: string[]) => `| ${cells.map(cell).join(' | ')} |`;
+  return [
+    line(header),
+    `|${header.map(() => ' --- ').join('|')}|`,
+    ...rows.map(line),
+  ].join('\n');
+}
+
+/** An HTML table of the view's shown columns, for spreadsheets and rich text. */
+export function tableRowsToHtml(view: SingleView, rowIds: string[]) {
+  const { header, rows } = tableCells(view, rowIds);
+  const cells = (tag: string, values: string[]) =>
+    values
+      .map(
+        value =>
+          `<${tag}>${escapeHtml(value).replaceAll(/\r?\n/g, '<br>')}</${tag}>`
+      )
+      .join('');
+  return `<table><thead><tr>${cells('th', header)}</tr></thead><tbody>${rows
+    .map(row => `<tr>${cells('td', row)}</tr>`)
+    .join('')}</tbody></table>`;
+}
+
 type RowsClipboardLogic = {
   view: SingleView;
   root: { config: Pick<DataViewRendererConfig, 'clipboard' | 'notification'> };
 };
 
 /**
- * Copies the rows (in the order given) as rows, an AFFiNE to-do list, a
- * Markdown task list and a checkbox list, and says how many were copied.
+ * Copies the rows (in the order given) and says how many were copied. Into
+ * a table they always paste as new rows (`blocksuite/database/rows`). The
+ * other formats depend on where they were copied from:
+ *
+ * - `table`: a database of just these rows (pasted into a page), a Markdown
+ *   table and an HTML table of the shown columns;
+ * - `list` (List view, Journal Todo): a to-do list (pasted into a page), a
+ *   Markdown task list and a checkbox list, with the List view's shown
+ *   fields after the title, tab-separated.
  */
 export function copyRowsToClipboard(
   logic: RowsClipboardLogic,
-  rowIds: string[]
+  rowIds: string[],
+  kind: 'table' | 'list' = 'list'
 ) {
-  const rows = rowsToClipboardRows(logic.view, rowIds);
+  const view = logic.view;
+  const rows = rowsToClipboardRows(view, rowIds);
   const doc = (
     logic.view.manager.dataSource as {
       doc?: { id: string; workspace?: { id: string } };
@@ -193,13 +283,46 @@ export function copyRowsToClipboard(
   ).doc;
   const ids = { workspaceId: doc?.workspace?.id ?? '', pageId: doc?.id ?? '' };
   const { clipboard, notification } = logic.root.config;
+  let text: string;
+  let html: string;
+  let snapshot: string;
+  if (kind === 'table') {
+    text = tableRowsToMarkdown(view, rowIds);
+    html = tableRowsToHtml(view, rowIds);
+    const database = (
+      view.manager.dataSource as {
+        rowsSnapshot?: (rowIds: string[], viewId?: string) => unknown;
+      }
+    ).rowsSnapshot?.(rowIds, view.id);
+    snapshot = database
+      ? JSON.stringify({
+          snapshot: { type: 'slice', content: [database], ...ids },
+          blobs: {},
+        })
+      : clipboardRowsToSnapshot(rows, ids);
+  } else {
+    const statusColumn = rowIds
+      .map(id => taskSource(view).getTaskStatusInfo?.(id)?.columnId)
+      .find(Boolean);
+    const fields = view.detailProperties$.value
+      .filter(
+        property =>
+          property.id !== statusColumn &&
+          !HIDDEN_COLUMNS.has(property.name$.value) &&
+          property.type$.value !== 'title'
+      )
+      .map(property => property.name$.value);
+    text = clipboardRowsToMarkdown(rows, fields);
+    html = clipboardRowsToHtml(rows, fields);
+    snapshot = clipboardRowsToSnapshot(rows, ids);
+  }
   clipboard
     .writeToClipboard(items => ({
       ...items,
-      'text/plain': clipboardRowsToMarkdown(rows),
-      'text/html': clipboardRowsToHtml(rows),
+      'text/plain': text,
+      'text/html': html,
       [BLOCKSUITE_DATABASE_ROWS]: JSON.stringify(rows),
-      [BLOCKSUITE_SNAPSHOT]: clipboardRowsToSnapshot(rows, ids),
+      [BLOCKSUITE_SNAPSHOT]: snapshot,
     }))
     .then(() => {
       notification.toast(

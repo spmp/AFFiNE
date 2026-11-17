@@ -31,7 +31,8 @@ export class TableClipboardController implements ReactiveController {
       const selected = new Set(TableViewRowSelection.rowsIds(tableSelection));
       copyRowsToClipboard(
         this.logic,
-        this.logic.view.rowIds$.value.filter(id => selected.has(id))
+        this.logic.view.rowIds$.value.filter(id => selected.has(id)),
+        'table'
       );
       return true;
     }
@@ -39,9 +40,20 @@ export class TableClipboardController implements ReactiveController {
     if (!area) {
       return;
     }
-    const stringResult = area
-      .map(row => row.cells.map(cell => cell.stringValue$.value).join('\t'))
-      .join('\n');
+    // One column copies as a plain list (empty cells left out); more as
+    // tab-separated rows.
+    const stringResult =
+      area[0]?.cells.length === 1
+        ? area
+            .map(row => row.cells[0]?.stringValue$.value ?? '')
+            .filter(value => value.trim())
+            .map(value => `- ${value.replaceAll(/\r?\n/g, ' ')}`)
+            .join('\n')
+        : area
+            .map(row =>
+              row.cells.map(cell => cell.stringValue$.value).join('\t')
+            )
+            .join('\n');
     const jsonResult: JsonAreaData = area.map(row =>
       row.cells.map(cell => cell.stringValue$.value ?? '')
     );
@@ -203,7 +215,42 @@ export class TableClipboardController implements ReactiveController {
     this._onCopy(tableSelection, true);
   }
 
+  /**
+   * Rows copied from a table or List view, pasted while a cell is being
+   * edited: new rows after that row, not text in the cell. Capture, so the
+   * cell's own editor doesn't paste them as text first.
+   */
+  private readonly _onPasteWhileEditing = (event: ClipboardEvent) => {
+    const selection = this.selectionController.selection;
+    if (
+      this.readonly ||
+      !selection ||
+      TableViewRowSelection.is(selection) ||
+      !selection.isEditing
+    ) {
+      return;
+    }
+    const rows = readClipboardRows(this.logic, event.clipboardData);
+    if (!rows) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const target = event.target instanceof Element ? event.target : null;
+    const rowId =
+      target?.closest<HTMLElement>('[data-row-id]')?.dataset.rowId ??
+      this.logic.view.rowIds$.value[selection.focus.rowIndex];
+    const ids = insertClipboardRows(this.logic.view, rows, rowId);
+    this.selectionController.selection = TableViewRowSelection.create({
+      rows: ids.map(id => ({ id })),
+    });
+  };
+
   hostConnected() {
+    this.host?.disposables.addFromEvent(
+      this.host,
+      'paste',
+      this._onPasteWhileEditing,
+      { capture: true }
+    );
     this.host?.disposables.add(
       this.logic.handleEvent('copy', _ctx => {
         const tableSelection = this.selectionController.selection;

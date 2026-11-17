@@ -128,6 +128,12 @@ describe('database list view: select and copy rows (F-11)', () => {
     const list = await addTaskList(['A', 'B', 'C']);
     const [a, b, c] = list.rowIds as [string, string, string];
     list.dataSource.setTaskStatusChecked(b, true);
+    // a field the List view shows: copied after the title, tab-separated
+    const notesId = list.dataSource.propertyAdd('end', {
+      type: 'rich-text',
+      name: 'Notes',
+    })!;
+    list.dataSource.cellValueChange(a, notesId, new Text('note a'));
     await wait(100);
     await editTitle(list, a);
     await userEvent.keyboard('{Escape}');
@@ -142,7 +148,7 @@ describe('database list view: select and copy rows (F-11)', () => {
     expect(list.selectedRows()).toEqual([a, b]);
     copy();
     await wait(300);
-    expect(written['text/plain']).toBe('- [ ] A\n- [x] B');
+    expect(written['text/plain']).toBe('- [ ] A\tnote a\n- [x] B');
     // the title wasn't edited, and C isn't selected
     expect(list.describeRow(c).title).toBe('C');
   });

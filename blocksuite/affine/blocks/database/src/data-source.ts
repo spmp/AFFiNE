@@ -42,7 +42,12 @@ import { propertyPresets } from '@blocksuite/data-view/property-presets';
 import { IS_MOBILE } from '@blocksuite/global/env';
 import { BlockSuiteError, ErrorCode } from '@blocksuite/global/exceptions';
 import type { BlockStdScope, EditorHost } from '@blocksuite/std';
-import { type BlockModel, nanoid, Text } from '@blocksuite/store';
+import {
+  type BlockModel,
+  type BlockSnapshot,
+  nanoid,
+  Text,
+} from '@blocksuite/store';
 import { computed, type ReadonlySignal, signal } from '@preact/signals-core';
 import { format } from 'date-fns/format';
 import { isValid } from 'date-fns/isValid';
@@ -2857,6 +2862,39 @@ export class DatabaseBlockDataSource extends DataSourceBase {
   setRowHierarchyLevel(rowId: string, level: number) {
     this.setPendingHierarchyLevel(rowId, level);
     this.applyPendingHierarchyLevel(rowId);
+  }
+
+  /**
+   * F-11: this database as a block snapshot holding only `rowIds` (in that
+   * order) and only the view `viewId`, without its filter, so pasting it
+   * gives a database of just the copied rows. Undefined if it can't be made.
+   */
+  rowsSnapshot(rowIds: string[], viewId?: string): BlockSnapshot | undefined {
+    const snapshot = this._model.store
+      .getTransformer()
+      .blockToSnapshot(this._model);
+    if (!snapshot) return;
+    const order = new Map(rowIds.map((id, i) => [id, i]));
+    snapshot.children = snapshot.children
+      .filter(child => order.has(child.id))
+      .sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+    const props = snapshot.props as {
+      cells?: Record<string, unknown>;
+      views?: { id: string; filter?: { conditions?: unknown[] } }[];
+    };
+    if (props.cells) {
+      props.cells = Object.fromEntries(
+        Object.entries(props.cells).filter(([id]) => order.has(id))
+      );
+    }
+    if (viewId && props.views) {
+      const views = props.views.filter(view => view.id === viewId);
+      if (views.length) props.views = views;
+      for (const view of props.views) {
+        if (view.filter?.conditions) view.filter.conditions = [];
+      }
+    }
+    return snapshot;
   }
 
   applyPendingHierarchyLevel(rowId: string): void {
