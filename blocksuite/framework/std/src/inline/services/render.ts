@@ -1,6 +1,6 @@
 import { BlockSuiteError, ErrorCode } from '@blocksuite/global/exceptions';
-import type { BaseTextAttributes } from '@blocksuite/store';
-import { html, render } from 'lit';
+import type { BaseTextAttributes, DeltaInsert } from '@blocksuite/store';
+import { html, render, type TemplateResult } from 'lit';
 import { repeat } from 'lit/directives/repeat.js';
 import * as Y from 'yjs';
 
@@ -93,6 +93,62 @@ export class RenderService<TextAttributes extends BaseTextAttributes> {
   get rendering() {
     return this._rendering;
   }
+  /**
+   * The template of each line from the last render, with what it was made
+   * from. A line whose text, attributes and start offset are unchanged
+   * reuses its template, so Lit sees the same values and neither the line
+   * nor its elements update: typing in a large multi-line text updates the
+   * lines from the caret on, not every line. Cleared when the attribute
+   * renderer changes and by `rerenderWholeEditor`.
+   */
+  private _lineCache: { key: string; template: TemplateResult }[] = [];
+
+  private _lineCacheRenderer: unknown;
+
+  private _renderLine(
+    chunk: DeltaInsert<TextAttributes>[],
+    lineIndex: number,
+    lineStartOffset: number
+  ): TemplateResult {
+    if (chunk.length === 0) {
+      return html`<v-line
+        .elements=${[]}
+        .index=${lineIndex}
+        .startOffset=${lineStartOffset}
+        .endOffset=${lineStartOffset}
+      ></v-line>`;
+    }
+    let deltaIndex = lineStartOffset;
+    const elements: VLine['elements'] = chunk.map(delta => {
+      const startOffset = deltaIndex;
+      deltaIndex += delta.insert.length;
+      const endOffset = deltaIndex;
+
+      return [
+        html`<v-element
+          .inlineEditor=${this.editor}
+          .delta=${{
+            insert: delta.insert,
+            attributes: this.editor.attributeService.normalizeAttributes(
+              delta.attributes
+            ),
+          }}
+          .startOffset=${startOffset}
+          .endOffset=${endOffset}
+          .lineIndex=${lineIndex}
+        ></v-element>`,
+        delta,
+      ];
+    });
+
+    return html`<v-line
+      .elements=${elements}
+      .index=${lineIndex}
+      .startOffset=${lineStartOffset}
+      .endOffset=${deltaIndex}
+    ></v-line>`;
+  }
+
   // render current deltas to VLines
   render = () => {
     if (!this.editor.rootElement) return;
@@ -104,52 +160,36 @@ export class RenderService<TextAttributes extends BaseTextAttributes> {
     const embedDeltas = this.editor.deltaService.embedDeltas;
     const chunks = deltaInsertsToChunks(embedDeltas);
 
+    const renderer = this.editor.attributeService.attributeRenderer;
+    if (renderer !== this._lineCacheRenderer) {
+      this._lineCache = [];
+      this._lineCacheRenderer = renderer;
+    }
+    const previousCache = this._lineCache;
+    const nextCache: { key: string; template: TemplateResult }[] = [];
+
     let deltaIndex = 0;
     // every chunk is a line
     const lines = chunks.map((chunk, lineIndex) => {
       if (lineIndex > 0) {
         deltaIndex += 1; // for '\n'
       }
-
       const lineStartOffset = deltaIndex;
-      if (chunk.length > 0) {
-        const elements: VLine['elements'] = chunk.map(delta => {
-          const startOffset = deltaIndex;
-          deltaIndex += delta.insert.length;
-          const endOffset = deltaIndex;
+      for (const delta of chunk) deltaIndex += delta.insert.length;
 
-          return [
-            html`<v-element
-              .inlineEditor=${this.editor}
-              .delta=${{
-                insert: delta.insert,
-                attributes: this.editor.attributeService.normalizeAttributes(
-                  delta.attributes
-                ),
-              }}
-              .startOffset=${startOffset}
-              .endOffset=${endOffset}
-              .lineIndex=${lineIndex}
-            ></v-element>`,
-            delta,
-          ];
-        });
-
-        return html`<v-line
-          .elements=${elements}
-          .index=${lineIndex}
-          .startOffset=${lineStartOffset}
-          .endOffset=${deltaIndex}
-        ></v-line>`;
-      } else {
-        return html`<v-line
-          .elements=${[]}
-          .index=${lineIndex}
-          .startOffset=${lineStartOffset}
-          .endOffset=${deltaIndex}
-        ></v-line>`;
-      }
+      const key = lineCacheKey(lineStartOffset, chunk);
+      const cached = previousCache[lineIndex];
+      const entry =
+        cached && cached.key === key
+          ? cached
+          : {
+              key,
+              template: this._renderLine(chunk, lineIndex, lineStartOffset),
+            };
+      nextCache.push(entry);
+      return entry.template;
     });
+    this._lineCache = nextCache;
 
     try {
       render(
@@ -191,6 +231,7 @@ export class RenderService<TextAttributes extends BaseTextAttributes> {
     if (!rootElement || !rootElement.isConnected) return;
 
     rootElement.replaceChildren();
+    this._lineCache = [];
     // Because we bypassed Lit and disrupted the DOM structure, this will cause an inconsistency in the original state of `ChildPart`.
     // Therefore, we need to remove the original `ChildPart`.
     // https://github.com/lit/lit/blob/a2cd76cfdea4ed717362bb1db32710d70550469d/packages/lit-html/src/lit-html.ts#L2248
@@ -208,4 +249,15 @@ export class RenderService<TextAttributes extends BaseTextAttributes> {
   };
 
   constructor(readonly editor: InlineEditor<TextAttributes>) {}
+}
+
+/** What a line's template is made from: its start offset, text and attributes. */
+function lineCacheKey(startOffset: number, chunk: DeltaInsert[]): string {
+  let key = String(startOffset);
+  for (const delta of chunk) {
+    key += `\u0000${delta.insert}\u0001${
+      delta.attributes ? JSON.stringify(delta.attributes) : ''
+    }`;
+  }
+  return key;
 }
