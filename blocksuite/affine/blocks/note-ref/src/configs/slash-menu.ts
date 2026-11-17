@@ -2,7 +2,7 @@ import type {
   DatabaseRefBlockModel,
   NoteBlockModel,
 } from '@blocksuite/affine-model';
-import { NoteBlockSchema } from '@blocksuite/affine-model';
+import { isHiddenHostNote, NoteBlockSchema } from '@blocksuite/affine-model';
 import {
   type SlashMenuActionItem,
   type SlashMenuConfig,
@@ -79,6 +79,9 @@ export const noteRefSlashMenuConfig: SlashMenuConfig = {
       .filter(block => {
         if (block.id === ownContainingNoteId) return false;
         if (databaseHiddenHostNoteIds.has(block.id)) return false;
+        // also when nothing references it any more, e.g. a Journal Todo
+        // table left behind by its setup (F-19)
+        if (isHiddenHostNote(block.model)) return false;
         if (
           ownContainingNoteId &&
           wouldCreateReferenceCycle(

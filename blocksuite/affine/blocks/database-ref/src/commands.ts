@@ -3,7 +3,10 @@ import type {
   DatabaseRefProps,
   NoteBlockModel,
 } from '@blocksuite/affine-model';
-import { NoteDisplayMode } from '@blocksuite/affine-model';
+import {
+  HIDDEN_HOST_NOTE_XYWH,
+  NoteDisplayMode,
+} from '@blocksuite/affine-model';
 import {
   ensureDocLoaded,
   waitForBlockInDoc,
@@ -63,7 +66,7 @@ export function moveIntoHiddenNote(
       // (`database-ref-block.ts`) mounts this note's content through a
       // page-mode nested scope, which sizes to its own content and doesn't
       // consult this bound at all.
-      xywh: '[-10000, -10000, 800, 480]',
+      xywh: HIDDEN_HOST_NOTE_XYWH,
     },
     root.id
   );

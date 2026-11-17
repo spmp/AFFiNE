@@ -1578,6 +1578,41 @@ describe('root/page-note referencing and reference-cycle prevention', () => {
     expect(pageNoteItem).toBeTruthy();
   });
 
+  // F-19 (live, 2026-11-17): a hidden note holding an unreferenced, empty
+  // "Journal Todo" table (left behind by the Journal Todo setup) was offered
+  // as "Note: (empty note)" and got embedded. The picker only excluded
+  // hidden table notes that some database-ref points at.
+  test('the same-doc picker never offers a hidden table note, even an unreferenced one', async () => {
+    addNote(doc);
+    const anchorNoteId = addNote(doc, { displayMode: 'edgeless' });
+    const paragraphId = doc.addBlock('affine:paragraph', {}, anchorNoteId);
+    const model = doc.getModelById(paragraphId)!;
+    const items = noteRefSlashMenuConfig.items;
+    const names = () =>
+      (typeof items === 'function'
+        ? items({ std: editor.std, model })
+        : items
+      ).map(item => item.name);
+    const before = names();
+
+    const hiddenNoteId = doc.addBlock(
+      'affine:note',
+      {
+        displayMode: NoteDisplayMode.EdgelessOnly,
+        xywh: '[-10000, -10000, 800, 480]',
+      },
+      doc.root!.id
+    );
+    doc.addBlock(
+      'affine:database',
+      { title: new Text('Journal Todo') },
+      hiddenNoteId
+    );
+    await wait();
+
+    expect(names()).toEqual(before);
+  });
+
   test('a direct same-doc reference cycle (A -> B, then B -> A) is rejected', async () => {
     const noteAId = addNote(doc, { xywh: '[0, 0, 400, 200]' });
     const noteBId = addNote(doc, {
