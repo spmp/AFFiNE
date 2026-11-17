@@ -16,7 +16,7 @@ describe('database Table view: indent and outdent keys (F-05)', () => {
     return cleanup;
   });
 
-  async function setup() {
+  async function setup({ plain = false } = {}) {
     const noteId = addNote(doc);
     const databaseId = doc.addBlock(
       'affine:database',
@@ -27,10 +27,15 @@ describe('database Table view: indent and outdent keys (F-05)', () => {
     const dataSource = new DatabaseBlockDataSource(
       doc.getModelById(databaseId)! as never
     );
-    const rowIds = [
-      dataSource.rowAddAsTodoList('end'),
-      dataSource.rowAddAsTodoList('end'),
-    ];
+    // plain: paragraph rows and no hierarchy columns, as in a database
+    // made from scratch
+    const addRow = () =>
+      plain ? dataSource.rowAdd('end') : dataSource.rowAddAsTodoList('end');
+    const rowIds = [addRow(), addRow()];
+    const notesId = dataSource.propertyAdd('end', {
+      type: 'rich-text',
+      name: 'Notes',
+    })!;
     rowIds.forEach((id, i) =>
       doc.updateBlock(doc.getModelById(id)!, { text: new Text(`Row ${i}`) })
     );
@@ -82,7 +87,36 @@ describe('database Table view: indent and outdent keys (F-05)', () => {
       };
       await wait(150);
     };
-    return { editSecondRowTitle, selectSecondRowTitle, level, table };
+    const editSecondRowNotes = async () => {
+      const cell = dbEl.querySelector(
+        `data-view-table-row[data-row-id="${rowIds[1]}"] dv-table-view-cell-container[data-column-id="${notesId}"]`
+      ) as HTMLElement;
+      await userEvent.click(cell);
+      await wait(100);
+      await userEvent.click(cell);
+      await wait(150);
+    };
+    const firstRowLevel = () => dataSource.getRowHierarchyLevel(rowIds[0]!);
+    const columnNames = () =>
+      (
+        doc.getModelById(databaseId)!.props as { columns: { name: string }[] }
+      ).columns.map(c => c.name);
+    const shownHeaders = () =>
+      Array.from(dbEl.querySelectorAll('affine-database-header-column')).map(
+        el => (el.textContent ?? '').trim()
+      );
+    return {
+      editSecondRowTitle,
+      selectSecondRowTitle,
+      editSecondRowNotes,
+      level,
+      firstRowLevel,
+      columnNames,
+      shownHeaders,
+      table,
+      dbEl,
+      rowIds,
+    };
   }
 
   const mod = IS_MAC ? 'Meta' : 'Control';
@@ -120,4 +154,66 @@ describe('database Table view: indent and outdent keys (F-05)', () => {
       outdented: 0,
     });
   });
+
+  // Live report 2026-11-16: indent did nothing in a table made from scratch
+  // (no hierarchy columns), and the keys never left a Notes cell.
+  test('indents in a plain table, adding the hidden hierarchy columns', async () => {
+    const { editSecondRowTitle, level, columnNames, shownHeaders } =
+      await setup({ plain: true });
+    await editSecondRowTitle();
+    await userEvent.keyboard(`{${mod}>}{Shift>}.{/Shift}{/${mod}}`);
+    await wait(150);
+    const indented = level();
+    await userEvent.keyboard(`{${mod}>}{Shift>},{/Shift}{/${mod}}`);
+    await wait(150);
+    expect({
+      indented,
+      outdented: level(),
+      hierarchyColumns: columnNames().filter(name =>
+        /^__|hierarchy|parent|ancestor/i.test(name)
+      ).length,
+      hidden: !shownHeaders().some(h => /hierarchy|parent|ancestor/i.test(h)),
+    }).toEqual({
+      indented: 1,
+      outdented: 0,
+      hierarchyColumns: 3,
+      hidden: true,
+    });
+  });
+
+  test('the first row of a plain table can not indent, and nothing is added', async () => {
+    const { table, firstRowLevel, columnNames } = await setup({ plain: true });
+    const before = columnNames().length;
+    table.logic.selectionController.selection = {
+      selectionType: 'area',
+      groupKey: undefined,
+      focus: { rowIndex: 0, columnIndex: 0 },
+      rowsSelection: { start: 0, end: 0 },
+      columnsSelection: { start: 0, end: 0 },
+      isEditing: false,
+    };
+    await wait(150);
+    await userEvent.keyboard(`{${mod}>}{Shift>}.{/Shift}{/${mod}}`);
+    await wait(150);
+    expect({ level: firstRowLevel(), columns: columnNames().length }).toEqual({
+      level: 0,
+      columns: before,
+    });
+  });
+
+  for (const plain of [false, true]) {
+    test(`indents and outdents while editing a Notes cell${plain ? ' (plain table)' : ''}`, async () => {
+      const { editSecondRowNotes, level } = await setup({ plain });
+      await editSecondRowNotes();
+      await userEvent.keyboard(`{${mod}>}{Shift>}.{/Shift}{/${mod}}`);
+      await wait(150);
+      const indented = level();
+      await userEvent.keyboard(`{${mod}>}{Shift>},{/Shift}{/${mod}}`);
+      await wait(150);
+      expect({ indented, outdented: level() }).toEqual({
+        indented: 1,
+        outdented: 0,
+      });
+    });
+  }
 });

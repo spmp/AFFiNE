@@ -584,6 +584,15 @@ export class TableSelectionController implements ReactiveController {
       return false;
     }
     const rowIds = [...rows].map(row => row.rowId);
+    // A table made from scratch has no hierarchy columns yet: add them
+    // (hidden) the first time a row that can be indented is.
+    if (rowIds.indexOf(rowId) > 0) {
+      (
+        this.view.manager.dataSource as {
+          ensureTaskHierarchyColumns?: () => unknown;
+        }
+      ).ensureTaskHierarchyColumns?.();
+    }
     const result = computeIndentMutation({
       rowIds,
       rowId,
