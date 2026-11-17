@@ -1860,6 +1860,14 @@ export function useAFFiNEI18N(): {
       */
     ["com.affine.cmdk.affine.whats-new"](): string;
     /**
+      * `Search frames, tables, and notes in other docs...`
+      */
+    ["com.affine.cmdk.cross-doc-reference.placeholder"](): string;
+    /**
+      * `Reference a frame, table, or note`
+      */
+    ["com.affine.cmdk.cross-doc-reference.title"](): string;
+    /**
       * `Search docs or paste link...`
       */
     ["com.affine.cmdk.docs.placeholder"](): string;
@@ -1867,6 +1875,22 @@ export function useAFFiNEI18N(): {
       * `Insert links`
       */
     ["com.affine.cmdk.insert-links"](): string;
+    /**
+      * `Search for a page to move this database to...`
+      */
+    ["com.affine.cmdk.move-database-to-doc.placeholder"](): string;
+    /**
+      * `Move to another page`
+      */
+    ["com.affine.cmdk.move-database-to-doc.title"](): string;
+    /**
+      * `Search for a page to move this note to...`
+      */
+    ["com.affine.cmdk.move-note-to-doc.placeholder"](): string;
+    /**
+      * `Move to another page`
+      */
+    ["com.affine.cmdk.move-note-to-doc.title"](): string;
     /**
       * `No results found`
       */
@@ -5882,6 +5906,14 @@ export function useAFFiNEI18N(): {
       * `Page`
       */
     ["com.affine.settings.editorSettings.page"](): string;
+    /**
+      * `In a database table, Enter in a text or number cell adds a row below, at the same indent level, and keeps editing in the same column. Shift+Enter is a new line. When off, Enter finishes editing the cell.`
+      */
+    ["com.affine.settings.editorSettings.general.database-enter-new-row.description"](): string;
+    /**
+      * `Enter adds a new row in database tables`
+      */
+    ["com.affine.settings.editorSettings.general.database-enter-new-row.title"](): string;
     /**
       * `Middle click paste`
       */

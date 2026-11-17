@@ -15,7 +15,7 @@ export class TextCell extends BaseCellRenderer<string, string> {
     if (e.key === 'Enter' && !e.isComposing) {
       this._setValue();
       setTimeout(() => {
-        this.selectCurrentCell(false);
+        this.commitByEnter();
       });
     }
   };

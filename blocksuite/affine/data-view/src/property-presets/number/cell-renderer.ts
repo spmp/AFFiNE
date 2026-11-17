@@ -41,7 +41,7 @@ export class NumberCell extends BaseCellRenderer<
 
     if (e.key === 'Enter' && !e.isComposing) {
       requestAnimationFrame(() => {
-        this.selectCurrentCell(false);
+        this.commitByEnter();
       });
     }
   };

@@ -36,6 +36,8 @@ export type DataViewRendererConfig = {
     toast: (message: string) => void;
   };
   virtualPadding$: ReadonlySignal<number>;
+  /** Table view: Enter in a text or number cell adds a row below. */
+  enterAddsRow$?: ReadonlySignal<boolean>;
   headerWidget: DataViewWidget | undefined;
   handleEvent: (name: EventName, handler: UIEventHandler) => DisposableMember;
   bindHotkey: (hotkeys: Record<string, UIEventHandler>) => DisposableMember;

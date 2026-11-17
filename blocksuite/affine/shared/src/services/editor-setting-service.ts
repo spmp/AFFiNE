@@ -86,6 +86,10 @@ export const GeneralSettingSchema = z
       .enum(['affine:embed-linked-doc', 'affine:embed-synced-doc'])
       .default('affine:embed-synced-doc'),
     taskWorkflowDefaults: TaskWorkflowDefaultsSchema.default({}),
+    // In a database table, Enter while editing a text or number cell adds a
+    // row straight below (same indent level) and edits the same column
+    // there; Shift+Enter stays a newline. Off: Enter finishes editing.
+    databaseEnterAddsRow: z.boolean().default(false),
   })
   .merge(NodePropsSchema);
 

@@ -131,4 +131,16 @@ export abstract class BaseCellRenderer<
 
   @property({ attribute: false })
   accessor selectCurrentCell!: (editing: boolean) => void;
+
+  @property({ attribute: false })
+  accessor finishEditingByEnter: (() => void) | undefined;
+
+  /** What a cell does on Enter (without Shift) while editing. */
+  commitByEnter() {
+    if (this.finishEditingByEnter) {
+      this.finishEditingByEnter();
+    } else {
+      this.selectCurrentCell(false);
+    }
+  }
 }

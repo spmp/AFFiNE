@@ -674,6 +674,34 @@ const MiddleClickPasteSettings = () => {
   );
 };
 
+const DatabaseEnterAddsRowSettings = () => {
+  const t = useI18n();
+  const editorSettingService = useService(EditorSettingService);
+  const settings = useLiveData(editorSettingService.editorSetting.settings$);
+  const onToggle = useCallback(
+    (checked: boolean) => {
+      editorSettingService.editorSetting.set('databaseEnterAddsRow', checked);
+    },
+    [editorSettingService.editorSetting]
+  );
+  return (
+    <SettingRow
+      name={t[
+        'com.affine.settings.editorSettings.general.database-enter-new-row.title'
+      ]()}
+      desc={t[
+        'com.affine.settings.editorSettings.general.database-enter-new-row.description'
+      ]()}
+    >
+      <Switch
+        data-testid="database-enter-new-row-trigger"
+        checked={settings.databaseEnterAddsRow}
+        onChange={onToggle}
+      />
+    </SettingRow>
+  );
+};
+
 const DefaultCodeBlockLineNumberSettings = () => {
   const t = useI18n();
   const editorSettingService = useService(EditorSettingService);
@@ -715,6 +743,7 @@ export const General = () => {
       <FontSizeSettings />
       <NewDocDefaultModeSettings />
       <NewDocDateTitleSettings />
+      <DatabaseEnterAddsRowSettings />
       <DefaultCodeBlockLineNumberSettings />
       {BUILD_CONFIG.isElectron && <SpellCheckSettings />}
       {environment.isLinux && <MiddleClickPasteSettings />}
