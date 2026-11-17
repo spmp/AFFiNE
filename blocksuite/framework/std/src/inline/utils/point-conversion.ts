@@ -16,9 +16,17 @@ import {
   invalidateInlineRootTextCache,
 } from './text.js';
 
+/**
+ * `side` says which end of a range the point is. It matters for a point
+ * given as (element, child index), i.e. a boundary between two lines: the
+ * start of a range there is the start of the next text, the end of a range
+ * is the end of the previous text. Without it such a point is resolved
+ * roughly, as before.
+ */
 export function nativePointToTextPoint(
   node: unknown,
-  offset: number
+  offset: number,
+  side?: 'start' | 'end'
 ): TextPoint | null {
   if (isNativeTextInVText(node)) {
     return [node, offset];
@@ -42,6 +50,9 @@ export function nativePointToTextPoint(
   }
 
   if (isVLine(node) || isInlineRoot(node)) {
+    if (side) {
+      return getTextPointFromElementBoundary(node, offset, side);
+    }
     return getTextPointRoughlyFromElementByOffset(node, offset, true);
   }
 
@@ -199,6 +210,41 @@ function getTextPointRoughlyFromElementByOffset(
   if (texts.length === 0) return null;
   const text = fromStart ? texts[0] : texts[texts.length - 1];
   return [text, offset === 0 ? offset : text.length];
+}
+
+/**
+ * The text point at the boundary before `element.childNodes[offset]`: for
+ * the start of a range, the start of the first text at or after it; for the
+ * end, the end of the last text before it. (Firefox gives a delete's target
+ * range this way, e.g. (inline root, 0) to (inline root, 20) for a
+ * selection over several lines; read roughly, the end became the end of
+ * the first line and only that line was deleted.)
+ */
+function getTextPointFromElementBoundary(
+  element: Element,
+  offset: number,
+  side: 'start' | 'end'
+): TextPoint | null {
+  const texts = getTextNodesFromElement(element);
+  const first = texts[0];
+  const last = texts.at(-1);
+  if (!first || !last) return null;
+  const boundary = element.childNodes[offset];
+  if (!boundary) return [last, last.length];
+  const before = texts.filter(
+    text =>
+      !boundary.contains(text) &&
+      !!(
+        boundary.compareDocumentPosition(text) &
+        Node.DOCUMENT_POSITION_PRECEDING
+      )
+  );
+  if (side === 'end') {
+    const text = before.at(-1);
+    return text ? [text, text.length] : [first, 0];
+  }
+  const text = texts[before.length];
+  return text ? [text, 0] : [last, last.length];
 }
 
 function AInsideB(a: Node, b: Node): boolean {

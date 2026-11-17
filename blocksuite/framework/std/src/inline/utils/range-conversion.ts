@@ -141,8 +141,12 @@ const buildContext = (
 ): InlineRangeRunnerContext | null => {
   const { startContainer, startOffset, endContainer, endOffset } = range;
 
-  const startTextPoint = nativePointToTextPoint(startContainer, startOffset);
-  const endTextPoint = nativePointToTextPoint(endContainer, endOffset);
+  const startTextPoint = nativePointToTextPoint(
+    startContainer,
+    startOffset,
+    'start'
+  );
+  const endTextPoint = nativePointToTextPoint(endContainer, endOffset, 'end');
 
   if (!startTextPoint || !endTextPoint) {
     return null;
