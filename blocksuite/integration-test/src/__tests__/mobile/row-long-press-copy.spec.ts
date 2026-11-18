@@ -138,6 +138,23 @@ describe('mobile: long-press to select rows, then copy', () => {
       expect(text).toContain('B');
       expect(text).not.toContain('C');
 
+      // Copy as text is a long-press on Copy (no room for another button):
+      // plain text only, so AFFiNE pastes it as Markdown
+      expect(button('Copy as text')).toBeUndefined();
+      written = {};
+      await longPress(button('Copy')!);
+      // iOS only allows a clipboard write in the release (live, 2026-11-17:
+      // a write from the hold timer was rejected), so nothing yet; the
+      // button says what releasing will do
+      expect(written).toEqual({});
+      expect(button('Copy as text')).toBeTruthy();
+      button('Copy as text')!.click(); // the release
+      await wait(300);
+      expect(Object.keys(written)).toEqual(['text/plain']);
+      expect(written['text/plain']).toContain(
+        view === 'list' ? '- [ ] A' : '| A'
+      );
+
       button('Done')!.click();
       await wait(100);
       expect({ selected: selected(), bar: !!bar() }).toEqual({

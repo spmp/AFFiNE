@@ -113,6 +113,8 @@ export class ListViewRenderer extends SignalWatcher(
               ? this.logic.selectRows(rowIds)
               : this.logic.clearSelection(),
           copy: rowIds => copyRowsToClipboard(this.logic, rowIds, 'list'),
+          copyText: rowIds =>
+            copyRowsToClipboard(this.logic, rowIds, 'list', undefined, true),
         })
       );
     }

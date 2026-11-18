@@ -1,6 +1,6 @@
 import { DatabaseBlockDataSource } from '@blocksuite/affine/blocks/database';
 import { insertDatabaseRefBlockCommand } from '@blocksuite/affine/blocks/database-ref';
-import { BlockSelection } from '@blocksuite/affine/std';
+import { BlockSelection, TextSelection } from '@blocksuite/affine/std';
 import { Text } from '@blocksuite/store';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { userEvent } from 'vitest/browser';
@@ -291,4 +291,90 @@ describe('database list view: select and copy rows (F-11)', () => {
     await wait(300);
     expect(written['text/plain']).toBe('- [ ] A\n- [ ] B');
   });
+
+  // 2026-11-17 (Jasper): consistent with tables, and a pasted to-do list
+  // can't be turned back into a List view on mobile.
+  test('List view rows pasted into a page become a database showing the List view', async () => {
+    const list = await addTaskList(['A', 'B', 'C']);
+    const [a, b] = list.rowIds as [string, string];
+    list.dataSource.setTaskStatusChecked(b, true);
+    await editTitle(list, a);
+    await userEvent.keyboard('{Escape}{Shift>}{ArrowDown}{/Shift}');
+    await wait(100);
+    copy();
+    await wait(300);
+
+    const pasted = await pasteIntoNewParagraph();
+    const db = pasted.find(child => child.flavour === 'affine:database')!;
+    expect(db).toBeTruthy();
+    const dataSource = new DatabaseBlockDataSource(db as never);
+    const el = document.querySelector(
+      `affine-database[data-block-id="${db.id}"]`
+    ) as HTMLElement;
+    expect({
+      views: (db.props as { views: { mode: string }[] }).views.map(v => v.mode),
+      rows: db.children.map(row => ({
+        title: (row.props as { text: Text }).text.toString(),
+        done: dataSource.getTaskStatusInfo(row.id)?.checked ?? false,
+      })),
+      rowsShown: el.querySelectorAll('.affine-data-view-list-row').length,
+    }).toEqual({
+      views: ['list'],
+      rows: [
+        { title: 'A', done: false },
+        { title: 'B', done: true },
+      ],
+      rowsShown: 2,
+    });
+  });
+
+  // "Copy as text" puts only plain text on the clipboard; pasted into a
+  // page, AFFiNE reads it as Markdown.
+  test('plain-text task list pasted into a page becomes a to-do list', async () => {
+    written = {
+      'text/plain': '- [ ] A\tnote a\n  - [x] B\n- [ ] C',
+    };
+    const pasted = await pasteIntoNewParagraph();
+    const todos = pasted
+      .filter(child => child.flavour === 'affine:list')
+      .map(child => ({
+        type: (child.props as { type: string }).type,
+        checked: (child.props as { checked: boolean }).checked,
+        text: (child.props as { text: Text }).text.toString(),
+        children: child.children.length,
+      }));
+    expect(todos[0]).toMatchObject({ type: 'todo', checked: false });
+    expect(todos.length).toBe(2);
+  });
+
+  test('plain-text Markdown table pasted into a page: what AFFiNE makes of it', async () => {
+    written = {
+      'text/plain':
+        '| Title | Notes  |\n| ----- | ------ |\n| A     | note a |\n| B     |        |',
+    };
+    const pasted = await pasteIntoNewParagraph();
+    expect(pasted.map(child => child.flavour)).toContain('affine:table');
+  });
 });
+
+async function pasteIntoNewParagraph() {
+  const noteId = addNote(doc);
+  const paragraphId = doc.getModelById(noteId)!.children[0]!.id;
+  await wait(200);
+  const paragraphEl = document.querySelector(
+    `affine-paragraph[data-block-id="${paragraphId}"]`
+  ) as HTMLElement;
+  paragraphEl.dispatchEvent(
+    new PointerEvent('pointerdown', { bubbles: true, composed: true })
+  );
+  editor.std.selection.setGroup('note', [
+    editor.std.selection.create(TextSelection, {
+      from: { blockId: paragraphId, index: 0, length: 0 },
+      to: null,
+    }),
+  ]);
+  await wait();
+  paragraphEl.dispatchEvent(pasteEvent());
+  await wait(600);
+  return doc.getModelById(noteId)!.children;
+}

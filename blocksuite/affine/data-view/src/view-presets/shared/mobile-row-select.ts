@@ -6,8 +6,8 @@
  *   with that row selected.
  * - While selecting, taps on rows add or remove them; they don't start
  *   editing.
- * - A bar at the bottom shows how many rows are selected, with Copy, Select
- *   all and Done.
+ * - A bar at the bottom shows how many rows are selected, with Copy (hold it
+ *   to copy as plain text), Select all and Done.
  */
 
 const LONG_PRESS_MS = 500;
@@ -24,9 +24,16 @@ export interface MobileRowSelectTarget {
   selected(): string[];
   setSelected(rowIds: string[]): void;
   copy(rowIds: string[]): void;
+  /** Plain text only (pasted into AFFiNE, it goes through Markdown). */
+  copyText(rowIds: string[]): void;
 }
 
-function createBar(actions: { copy(): void; selectAll(): void; done(): void }) {
+function createBar(actions: {
+  copy(): void;
+  copyText(): void;
+  selectAll(): void;
+  done(): void;
+}) {
   const bar = document.createElement(BAR_TAG);
   Object.assign(bar.style, {
     position: 'fixed',
@@ -47,14 +54,17 @@ function createBar(actions: { copy(): void; selectAll(): void; done(): void }) {
   } satisfies Partial<CSSStyleDeclaration>);
   const count = document.createElement('span');
   bar.append(count);
-  for (const [label, action] of [
-    ['Copy', actions.copy],
-    ['Select all', actions.selectAll],
-    ['Done', actions.done],
+  // Copy: a tap copies (a database when pasted into a page); a long-press
+  // copies as plain text. One button, as the bar has no room for two.
+  for (const [label, action, onLongPress] of [
+    ['Copy', actions.copy, actions.copyText],
+    ['Select all', actions.selectAll, undefined],
+    ['Done', actions.done, undefined],
   ] as const) {
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = label;
+    if (onLongPress) button.title = 'Hold to copy as text';
     Object.assign(button.style, {
       border: 'none',
       background: 'none',
@@ -62,13 +72,46 @@ function createBar(actions: { copy(): void; selectAll(): void; done(): void }) {
       fontSize: '15px',
       fontWeight: '600',
       color: 'var(--affine-primary-color, #1e96eb)',
-    } satisfies Partial<CSSStyleDeclaration>);
+      webkitUserSelect: 'none',
+      userSelect: 'none',
+      webkitTouchCallout: 'none',
+    } as Partial<CSSStyleDeclaration>);
+    // The clipboard can only be written in the release itself: iOS rejects
+    // a write from the hold timer (NotAllowedError, seen live 2026-11-17).
+    // So the timer only relabels the button, and the click that ends the
+    // press decides: held long enough, copy as text; otherwise copy.
+    let holdTimer: ReturnType<typeof setTimeout> | undefined;
+    let held = false;
+    const reset = () => {
+      clearTimeout(holdTimer);
+      holdTimer = undefined;
+      held = false;
+      button.textContent = label;
+    };
     // pointerdown would take focus (and the selection) away first
-    button.addEventListener('pointerdown', event => event.preventDefault());
+    button.addEventListener('pointerdown', event => {
+      event.preventDefault();
+      reset();
+      if (!onLongPress) return;
+      holdTimer = setTimeout(() => {
+        holdTimer = undefined;
+        held = true;
+        button.textContent = 'Copy as text';
+      }, LONG_PRESS_MS);
+    });
+    // not pointerleave: iOS sends it with every release
+    button.addEventListener('pointercancel', reset);
+    button.addEventListener('contextmenu', event => event.preventDefault());
     button.addEventListener('click', event => {
       event.preventDefault();
       event.stopPropagation();
-      action();
+      const asText = held && onLongPress;
+      reset();
+      if (asText) {
+        onLongPress();
+      } else {
+        action();
+      }
     });
     bar.append(button);
   }
@@ -122,6 +165,10 @@ export function installMobileRowSelect(
       copy: () => {
         const rows = target.selected();
         if (rows.length) target.copy(rows);
+      },
+      copyText: () => {
+        const rows = target.selected();
+        if (rows.length) target.copyText(rows);
       },
       selectAll: () => {
         target.setSelected(target.rowIds());

@@ -284,11 +284,12 @@ type RowsClipboardLogic = {
  * a table they always paste as new rows (`blocksuite/database/rows`). The
  * other formats depend on where they were copied from:
  *
- * - `table`: a database of just these rows (pasted into a page), a Markdown
- *   table and an HTML table of the shown columns;
- * - `list` (List view, Journal Todo): a to-do list (pasted into a page), a
- *   Markdown task list and a checkbox list, with the List view's shown
- *   fields after the title, tab-separated.
+ * Pasted into a page, both give a database of just these rows showing the
+ * view they were copied from. As text:
+ * - `table`: a Markdown table and an HTML table of the shown columns;
+ * - `list` (List view, Journal Todo): a Markdown task list and a checkbox
+ *   list, with the List view's shown fields after the title,
+ *   tab-separated.
  */
 export function copyRowsToClipboard(
   logic: RowsClipboardLogic,
@@ -299,7 +300,12 @@ export function copyRowsToClipboard(
    * clipboard type in `extra` instead of the rows, so pasting into a table
    * fills cells rather than adding rows.
    */
-  cells?: { columnIds: string[]; extra: Record<string, string> }
+  cells?: { columnIds: string[]; extra: Record<string, string> },
+  /**
+   * Plain text only ("Copy as text" on mobile): pasted into AFFiNE it goes
+   * through the Markdown import (a task list, or a standard table).
+   */
+  textOnly = false
 ) {
   const view = logic.view;
   const rows = rowsToClipboardRows(view, rowIds);
@@ -310,35 +316,37 @@ export function copyRowsToClipboard(
   ).doc;
   const ids = { workspaceId: doc?.workspace?.id ?? '', pageId: doc?.id ?? '' };
   const { clipboard, notification } = logic.root.config;
+  // In AFFiNE, rows paste into a page as a database of just those rows,
+  // showing the view they were copied from (a table, or a List view such as
+  // the Journal Todo's), so they can be worked with the same way.
+  const database = (
+    view.manager.dataSource as {
+      rowsSnapshot?: (
+        rowIds: string[],
+        viewId?: string,
+        columnIds?: string[],
+        viewData?: unknown
+      ) => unknown;
+    }
+  ).rowsSnapshot?.(
+    rowIds,
+    view.id,
+    cells?.columnIds,
+    // a view shown through a reference (the Journal Todo) is not one of the
+    // database's own views; the pasted database gets a copy of it
+    (view as { data$?: { value?: unknown } }).data$?.value
+  );
+  const snapshot = database
+    ? JSON.stringify({
+        snapshot: { type: 'slice', content: [database], ...ids },
+        blobs: {},
+      })
+    : clipboardRowsToSnapshot(rows, ids);
   let text: string;
   let html: string;
-  let snapshot: string;
   if (kind === 'table') {
     text = tableRowsToMarkdown(view, rowIds, cells?.columnIds);
     html = tableRowsToHtml(view, rowIds, cells?.columnIds);
-    const database = (
-      view.manager.dataSource as {
-        rowsSnapshot?: (
-          rowIds: string[],
-          viewId?: string,
-          columnIds?: string[],
-          viewData?: unknown
-        ) => unknown;
-      }
-    ).rowsSnapshot?.(
-      rowIds,
-      view.id,
-      cells?.columnIds,
-      // a view shown through a reference (the Journal Todo) is not one of
-      // the database's own views; the pasted database gets a copy of it
-      (view as { data$?: { value?: unknown } }).data$?.value
-    );
-    snapshot = database
-      ? JSON.stringify({
-          snapshot: { type: 'slice', content: [database], ...ids },
-          blobs: {},
-        })
-      : clipboardRowsToSnapshot(rows, ids);
   } else {
     const statusColumn = rowIds
       .map(id => taskSource(view).getTaskStatusInfo?.(id)?.columnId)
@@ -353,7 +361,17 @@ export function copyRowsToClipboard(
       .map(property => property.name$.value);
     text = clipboardRowsToMarkdown(rows, fields);
     html = clipboardRowsToHtml(rows, fields);
-    snapshot = clipboardRowsToSnapshot(rows, ids);
+  }
+  if (textOnly) {
+    clipboard
+      .writeToClipboard(items => ({ ...items, 'text/plain': text }))
+      .then(() => {
+        notification.toast(
+          `${rows.length} row${rows.length > 1 ? 's' : ''} copied as text`
+        );
+      })
+      .catch(console.error);
+    return;
   }
   clipboard
     .writeToClipboard(items => ({

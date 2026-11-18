@@ -124,6 +124,8 @@ export class MobileTableViewUI extends DataViewUIBase<MobileTableViewUILogic> {
           this.logic.selectedRowIds$.value = rowIds;
         },
         copy: rowIds => copyRowsToClipboard(this.logic, rowIds, 'table'),
+        copyText: rowIds =>
+          copyRowsToClipboard(this.logic, rowIds, 'table', undefined, true),
       })
     );
   }
