@@ -29,6 +29,8 @@ import {
 } from '../../../core/context/host-context.js';
 import type { TaskWorkflowCapableDataSource } from '../../../core/data-source/task-workflow-capable.js';
 import { renderUniLit } from '../../../core/utils/uni-component/index.js';
+import { installMobileRowSelect } from '../../shared/mobile-row-select.js';
+import { copyRowsToClipboard } from '../../shared/rows-clipboard.js';
 import type { ListViewUILogic } from './list-view-ui-logic.js';
 
 // Story 2.12 (MOBILE-03): touch has no `:hover` state, so the three
@@ -95,6 +97,25 @@ export class ListViewRenderer extends SignalWatcher(
     this.logic.ui$.value = this;
     this.logic.dragController.hostConnected();
     this.logic.clipboardController.hostConnected();
+    if (IS_MOBILE) {
+      this.disposables.add(
+        installMobileRowSelect({
+          host: this,
+          rowOf: target =>
+            target instanceof Element
+              ? (target.closest<HTMLElement>('.affine-data-view-list-row')
+                  ?.dataset.rowId ?? undefined)
+              : undefined,
+          rowIds: () => this.visibleRowIds(),
+          selected: () => this.logic.selectedRowIds$.value,
+          setSelected: rowIds =>
+            rowIds.length
+              ? this.logic.selectRows(rowIds)
+              : this.logic.clearSelection(),
+          copy: rowIds => copyRowsToClipboard(this.logic, rowIds, 'list'),
+        })
+      );
+    }
   }
 
   /** Row ids in the order shown (rows hidden as overdue are left out). */

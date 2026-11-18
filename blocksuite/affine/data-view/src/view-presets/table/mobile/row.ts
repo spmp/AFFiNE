@@ -18,6 +18,10 @@ export class MobileTableRow extends SignalWatcher(
   WithDisposable(ShadowlessElement)
 ) {
   static override styles = css`
+    .mobile-table-row[data-selected='true'] {
+      background: var(--affine-primary-color-04);
+    }
+
     .mobile-table-row {
       width: 100%;
       display: flex;
@@ -67,6 +71,12 @@ export class MobileTableRow extends SignalWatcher(
 
   protected override render(): unknown {
     const view = this.view;
+    this.dataset.rowId = this.rowId;
+    if (this.tableViewLogic.selectedRowIds$.value.includes(this.rowId)) {
+      this.dataset.selected = 'true';
+    } else {
+      delete this.dataset.selected;
+    }
     return html`
       ${repeat(
         view.properties$.value,
