@@ -1,4 +1,6 @@
 import { DatabaseBlockDataSource } from '@blocksuite/affine/blocks/database';
+import { insertDatabaseViewRefBlockCommand } from '@blocksuite/affine/blocks/database-view-ref';
+import { NoteDisplayMode } from '@blocksuite/affine/model';
 import { TextSelection } from '@blocksuite/affine/std';
 import { Text } from '@blocksuite/store';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
@@ -450,5 +452,86 @@ describe('database table: copy rows (F-11)', () => {
       titles: ['A', 'B'],
       notes: ['note a', 'note b'],
     });
+  });
+
+  // Live (dev, 2026-11-17): rows copied from the Journal Todo's table view
+  // pasted into a page as a database with no views, which shows nothing.
+  // The Journal Todo's database has no views of its own; the view belongs
+  // to the database-view-ref.
+  test('rows copied through a view reference paste as a database that shows them', async () => {
+    const hiddenNoteId = doc.addBlock(
+      'affine:note',
+      {
+        displayMode: NoteDisplayMode.EdgelessOnly,
+        xywh: '[-10000, -10000, 800, 480]',
+      },
+      doc.root!.id
+    );
+    const databaseId = doc.addBlock(
+      'affine:database',
+      { title: new Text('Journal Todo') },
+      hiddenNoteId
+    );
+    await wait();
+    const dataSource = new DatabaseBlockDataSource(
+      doc.getModelById(databaseId)! as never
+    );
+    const rowIds = ['A', 'B', 'C'].map(title => {
+      const id = dataSource.rowAddAsTodoList('end');
+      doc.updateBlock(doc.getModelById(id)!, { text: new Text(title) });
+      return id;
+    });
+    expect(
+      (doc.getModelById(databaseId)!.props as { views: unknown[] }).views
+    ).toEqual([]);
+    const noteId = addNote(doc);
+    const anchor = doc.getBlock(noteId)!.model.children[0]!;
+    editor.std.command.exec(insertDatabaseViewRefBlockCommand, {
+      refBlockId: databaseId,
+      place: 'after',
+      selectedModels: [anchor],
+      initialView: { viewType: 'table' },
+    });
+    await wait(600);
+    const table = document.querySelector(
+      'affine-database-view-ref .affine-database-table'
+    ) as HTMLElement & { logic: TableLogic };
+    expect(table).toBeTruthy();
+    selectRows(table, [rowIds[0]!, rowIds[1]!]);
+    await wait(50);
+    table.logic.clipboardController.copy();
+    await wait(300);
+
+    const targetNoteId = addNote(doc);
+    const paragraphId = doc.getModelById(targetNoteId)!.children[0]!.id;
+    await wait(200);
+    const paragraphEl = document.querySelector(
+      `affine-paragraph[data-block-id="${paragraphId}"]`
+    ) as HTMLElement;
+    paragraphEl.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, composed: true })
+    );
+    editor.std.selection.setGroup('note', [
+      editor.std.selection.create(TextSelection, {
+        from: { blockId: paragraphId, index: 0, length: 0 },
+        to: null,
+      }),
+    ]);
+    await wait();
+    paragraphEl.dispatchEvent(clipboardEvent());
+    await wait(600);
+    const pasted = doc
+      .getModelById(targetNoteId)!
+      .children.find(child => child.flavour === 'affine:database')!;
+    expect(pasted).toBeTruthy();
+    const views = (pasted.props as { views: { mode: string }[] }).views;
+    const el = document.querySelector(
+      `affine-database[data-block-id="${pasted.id}"]`
+    ) as HTMLElement;
+    expect({
+      rows: pasted.children.length,
+      views: views.map(v => v.mode),
+      rowsShown: el.querySelectorAll('data-view-table-row').length,
+    }).toEqual({ rows: 2, views: ['table'], rowsShown: 2 });
   });
 });

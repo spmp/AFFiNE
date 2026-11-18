@@ -321,10 +321,18 @@ export function copyRowsToClipboard(
         rowsSnapshot?: (
           rowIds: string[],
           viewId?: string,
-          columnIds?: string[]
+          columnIds?: string[],
+          viewData?: unknown
         ) => unknown;
       }
-    ).rowsSnapshot?.(rowIds, view.id, cells?.columnIds);
+    ).rowsSnapshot?.(
+      rowIds,
+      view.id,
+      cells?.columnIds,
+      // a view shown through a reference (the Journal Todo) is not one of
+      // the database's own views; the pasted database gets a copy of it
+      (view as { data$?: { value?: unknown } }).data$?.value
+    );
     snapshot = database
       ? JSON.stringify({
           snapshot: { type: 'slice', content: [database], ...ids },

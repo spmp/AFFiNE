@@ -2873,7 +2873,14 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     rowIds: string[],
     viewId?: string,
     /** Only these columns (`'title'` for the row titles); all if unset. */
-    columnIds?: string[]
+    columnIds?: string[],
+    /**
+     * The copying view's data, used when `viewId` is not one of this
+     * database's own views (a view of a database-view-ref, such as the
+     * Journal Todo's): without it the pasted database had no view and
+     * showed nothing.
+     */
+    viewData?: unknown
   ): BlockSnapshot | undefined {
     const snapshot = this._model.store
       .getTransformer()
@@ -2923,7 +2930,13 @@ export class DatabaseBlockDataSource extends DataSourceBase {
     }
     if (viewId && props.views) {
       const views = props.views.filter(view => view.id === viewId);
-      if (views.length) props.views = views;
+      if (views.length) {
+        props.views = views;
+      } else if (viewData && typeof viewData === 'object') {
+        props.views = [
+          JSON.parse(JSON.stringify(viewData)) as (typeof props.views)[number],
+        ];
+      }
       for (const view of props.views) {
         if (view.filter?.conditions) view.filter.conditions = [];
       }
