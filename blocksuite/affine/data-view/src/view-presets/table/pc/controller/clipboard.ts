@@ -40,6 +40,26 @@ export class TableClipboardController implements ReactiveController {
     if (!area) {
       return;
     }
+    // Several columns of cells: a table of just those rows and columns (a
+    // database in a page, a Markdown / HTML table elsewhere); pasted into a
+    // table they still fill cells.
+    const columnIds = area[0]?.cells.map(cell => cell.propertyId) ?? [];
+    if (!isCut && columnIds.length > 1) {
+      const rowIds = area
+        .map(row => row.cells[0]?.rowId)
+        .filter((id): id is string => !!id);
+      copyRowsToClipboard(this.logic, rowIds, 'table', {
+        columnIds,
+        extra: {
+          [BLOCKSUITE_DATABASE_TABLE]: JSON.stringify(
+            area.map(row =>
+              row.cells.map(cell => cell.stringValue$.value ?? '')
+            )
+          ),
+        },
+      });
+      return true;
+    }
     // One column copies as a plain list (empty cells left out); more as
     // tab-separated rows.
     const stringResult =

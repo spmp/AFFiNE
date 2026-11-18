@@ -2869,7 +2869,12 @@ export class DatabaseBlockDataSource extends DataSourceBase {
    * order) and only the view `viewId`, without its filter, so pasting it
    * gives a database of just the copied rows. Undefined if it can't be made.
    */
-  rowsSnapshot(rowIds: string[], viewId?: string): BlockSnapshot | undefined {
+  rowsSnapshot(
+    rowIds: string[],
+    viewId?: string,
+    /** Only these columns (`'title'` for the row titles); all if unset. */
+    columnIds?: string[]
+  ): BlockSnapshot | undefined {
     const snapshot = this._model.store
       .getTransformer()
       .blockToSnapshot(this._model);
@@ -2886,6 +2891,35 @@ export class DatabaseBlockDataSource extends DataSourceBase {
       props.cells = Object.fromEntries(
         Object.entries(props.cells).filter(([id]) => order.has(id))
       );
+    }
+    if (columnIds) {
+      const keep = new Set(columnIds);
+      const all = props as {
+        columns?: { id: string; name: string }[];
+        cells?: Record<string, Record<string, unknown>>;
+      };
+      // the hidden task columns stay, so indent levels and status survive
+      const hidden = new Set([
+        TASK_HIERARCHY_LEVEL_COLUMN_NAME,
+        TASK_PARENT_IDENTIFIER_COLUMN_NAME,
+        TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME,
+      ]);
+      const kept = (all.columns ?? []).filter(
+        column => keep.has(column.id) || hidden.has(column.name)
+      );
+      const keptIds = new Set(kept.map(column => column.id));
+      all.columns = kept;
+      for (const cells of Object.values(all.cells ?? {})) {
+        for (const id of Object.keys(cells)) {
+          if (!keptIds.has(id)) delete cells[id];
+        }
+      }
+      if (!keep.has('title')) {
+        for (const child of snapshot.children) {
+          const text = (child.props as { text?: { delta?: unknown[] } }).text;
+          if (text?.delta) text.delta = [];
+        }
+      }
     }
     if (viewId && props.views) {
       const views = props.views.filter(view => view.id === viewId);

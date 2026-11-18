@@ -33,6 +33,13 @@ type DbElement = HTMLElement & {
 };
 
 let written: Record<string, string> = {};
+
+/** The cells of one Markdown table line. */
+const markdownCells = (line: string) =>
+  line
+    .slice(1, -1)
+    .split('|')
+    .map(cell => cell.trim());
 const originalWrite = navigator.clipboard.write.bind(navigator.clipboard);
 
 async function addTaskTable(titles: string[], notes: string[] = []) {
@@ -127,11 +134,12 @@ describe('database table: copy rows (F-11)', () => {
   test('copying rows writes a Markdown table and an HTML table of the shown columns', async () => {
     await copySample();
     const lines = (written['text/plain'] ?? '').split('\n');
-    const cells = (line: string) =>
-      line
-        .slice(1, -1)
-        .split('|')
-        .map(cell => cell.trim());
+    // the columns line up: every line is as long as the header, with its
+    // | at the same places
+    const pipes = (line: string) =>
+      [...line].flatMap((ch, i) => (ch === '|' ? [i] : []));
+    expect(lines.map(pipes)).toEqual(lines.map(() => pipes(lines[0]!)));
+    const cells = markdownCells;
     const header = cells(lines[0]!);
     const notes = header.indexOf('Notes');
     const status = header.findIndex(name => /status|done/i.test(name));
@@ -291,5 +299,156 @@ describe('database table: copy rows (F-11)', () => {
     source.table.logic.clipboardController.copy();
     await wait(300);
     expect(written['text/plain']).toBe('- note a\n- note b');
+  });
+
+  test('copying a block of cells over several columns gives a table of just those columns', async () => {
+    const source = await addTaskTable(
+      ['A', 'B', 'C'],
+      ['note a', 'note b', 'note c']
+    );
+    const columns = Array.from(
+      source.table.querySelectorAll(
+        'data-view-table-row:first-of-type dv-table-view-cell-container'
+      )
+    ).map(el => (el as HTMLElement).dataset.columnId);
+    const titleIndex = columns.indexOf('title');
+    const notesIndex = columns.indexOf(source.notesId);
+    expect(notesIndex).toBeGreaterThan(titleIndex);
+    source.table.logic.selectionController.selection = {
+      selectionType: 'area',
+      groupKey: undefined,
+      focus: { rowIndex: 0, columnIndex: titleIndex },
+      rowsSelection: { start: 0, end: 1 },
+      columnsSelection: { start: titleIndex, end: notesIndex },
+      isEditing: false,
+    };
+    await wait(50);
+    source.table.logic.clipboardController.copy();
+    await wait(300);
+
+    const lines = (written['text/plain'] ?? '').split('\n');
+    const cells = markdownCells;
+    expect({
+      header: cells(lines[0]!).at(-1),
+      rows: lines.slice(2).map(line => {
+        const row = cells(line);
+        return [row[0], row.at(-1)];
+      }),
+      htmlRows: new DOMParser()
+        .parseFromString(written['text/html'] ?? '', 'text/html')
+        .querySelectorAll('table tbody tr').length,
+    }).toEqual({
+      header: 'Notes',
+      rows: [
+        ['A', 'note a'],
+        ['B', 'note b'],
+      ],
+      htmlRows: 2,
+    });
+
+    // into a page: a database with those two rows and the copied columns
+    const noteId = addNote(doc);
+    const paragraphId = doc.getModelById(noteId)!.children[0]!.id;
+    await wait(200);
+    const paragraphEl = document.querySelector(
+      `affine-paragraph[data-block-id="${paragraphId}"]`
+    ) as HTMLElement;
+    paragraphEl.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, composed: true })
+    );
+    editor.std.selection.setGroup('note', [
+      editor.std.selection.create(TextSelection, {
+        from: { blockId: paragraphId, index: 0, length: 0 },
+        to: null,
+      }),
+    ]);
+    await wait();
+    paragraphEl.dispatchEvent(clipboardEvent());
+    await wait(500);
+    const pasted = doc
+      .getModelById(noteId)!
+      .children.find(child => child.flavour === 'affine:database');
+    expect(pasted).toBeTruthy();
+    const names = (
+      pasted!.props as { columns: { name: string }[] }
+    ).columns.map(c => c.name);
+    expect({
+      rows: pasted!.children.map(row =>
+        (row.props as { text: Text }).text.toString()
+      ),
+      hasNotes: names.includes('Notes'),
+      columnsAfterNotes: names
+        .slice(names.indexOf('Notes') + 1)
+        .filter(name => !/hierarchy|parent|ancestor/i.test(name)),
+    }).toEqual({ rows: ['A', 'B'], hasNotes: true, columnsAfterNotes: [] });
+  });
+
+  test('a block of cells pasted into another table still fills its cells', async () => {
+    const source = await addTaskTable(['A', 'B'], ['note a', 'note b']);
+    const columnsOf = (table: HTMLElement) =>
+      Array.from(
+        table.querySelectorAll(
+          'data-view-table-row:first-of-type dv-table-view-cell-container'
+        )
+      ).map(el => (el as HTMLElement).dataset.columnId);
+    const sourceColumns = columnsOf(source.table);
+    const area = (
+      table: { logic: TableLogic },
+      columns: (string | undefined)[],
+      notesId: string,
+      rows: number
+    ) => {
+      table.logic.selectionController.selection = {
+        selectionType: 'area',
+        groupKey: undefined,
+        focus: { rowIndex: 0, columnIndex: columns.indexOf('title') },
+        rowsSelection: { start: 0, end: rows - 1 },
+        columnsSelection: {
+          start: columns.indexOf('title'),
+          end: columns.indexOf(notesId),
+        },
+        isEditing: false,
+      };
+    };
+    area(source.table, sourceColumns, source.notesId, 2);
+    await wait(50);
+    source.table.logic.clipboardController.copy();
+    await wait(300);
+
+    const target = await addTaskTable(['X', 'Y']);
+    const targetColumns = columnsOf(target.table);
+    target.table.logic.selectionController.selection = {
+      selectionType: 'area',
+      groupKey: undefined,
+      focus: { rowIndex: 0, columnIndex: targetColumns.indexOf('title') },
+      rowsSelection: { start: 0, end: 0 },
+      columnsSelection: {
+        start: targetColumns.indexOf('title'),
+        end: targetColumns.indexOf('title'),
+      },
+      isEditing: false,
+    };
+    await wait(50);
+    await target.table.logic.clipboardController._onPaste({
+      get: () => ({ raw: clipboardEvent() }),
+    });
+    await wait(300);
+    const rows = doc.getModelById(target.databaseId)!.children;
+    expect({
+      count: rows.length,
+      titles: rows.map(row => (row.props as { text: Text }).text.toString()),
+      notes: target.rowIds.map(
+        id =>
+          (
+            target.dataSource.cellValueGet(id, target.notesId) as
+              | Text
+              | undefined
+          )?.toString() ?? ''
+      ),
+    }).toEqual({
+      count: 2,
+      titles: ['A', 'B'],
+      notes: ['note a', 'note b'],
+    });
   });
 });

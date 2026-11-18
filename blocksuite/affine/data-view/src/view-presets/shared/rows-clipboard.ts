@@ -205,8 +205,12 @@ function shownColumns(view: SingleView) {
   );
 }
 
-function tableCells(view: SingleView, rowIds: string[]) {
-  const columns = shownColumns(view);
+function tableCells(view: SingleView, rowIds: string[], columnIds?: string[]) {
+  const columns = columnIds
+    ? columnIds
+        .map(id => view.propertiesRaw$.value.find(p => p.id === id))
+        .filter((p): p is NonNullable<typeof p> => !!p)
+    : shownColumns(view);
   const source = taskSource(view);
   const header = columns.map(column => column.name$.value);
   const rows = rowIds.map(rowId => {
@@ -223,24 +227,41 @@ function tableCells(view: SingleView, rowIds: string[]) {
 }
 
 /**
- * A Markdown table of the view's shown columns (a done column as `[x]` /
- * `[ ]`). Indent levels are not shown: a table cell can't hold them.
+ * A Markdown table of the view's shown columns, or of `columnIds` (a done
+ * column as `[x]` / `[ ]`), padded so the columns line up. Indent levels
+ * are not shown: a table cell can't hold them.
  */
-export function tableRowsToMarkdown(view: SingleView, rowIds: string[]) {
-  const { header, rows } = tableCells(view, rowIds);
-  const cell = (text: string) =>
+export function tableRowsToMarkdown(
+  view: SingleView,
+  rowIds: string[],
+  columnIds?: string[]
+) {
+  const { header, rows } = tableCells(view, rowIds, columnIds);
+  const escape = (text: string) =>
     text.replaceAll('|', '\\|').replaceAll(/\r?\n/g, '<br>');
-  const line = (cells: string[]) => `| ${cells.map(cell).join(' | ')} |`;
+  const table = [header, ...rows].map(cells => cells.map(escape));
+  const widths = header.map((_, i) =>
+    Math.max(3, ...table.map(cells => [...(cells[i] ?? '')].length))
+  );
+  const pad = (text: string, width: number) =>
+    text + ' '.repeat(width - [...text].length);
+  const line = (cells: string[]) =>
+    `| ${widths.map((width, i) => pad(cells[i] ?? '', width)).join(' | ')} |`;
+  const [head, ...body] = table;
   return [
-    line(header),
-    `|${header.map(() => ' --- ').join('|')}|`,
-    ...rows.map(line),
+    line(head!),
+    `| ${widths.map(width => '-'.repeat(width)).join(' | ')} |`,
+    ...body.map(line),
   ].join('\n');
 }
 
-/** An HTML table of the view's shown columns, for spreadsheets and rich text. */
-export function tableRowsToHtml(view: SingleView, rowIds: string[]) {
-  const { header, rows } = tableCells(view, rowIds);
+/** An HTML table of the view's shown columns (or `columnIds`), for spreadsheets and rich text. */
+export function tableRowsToHtml(
+  view: SingleView,
+  rowIds: string[],
+  columnIds?: string[]
+) {
+  const { header, rows } = tableCells(view, rowIds, columnIds);
   const cells = (tag: string, values: string[]) =>
     values
       .map(
@@ -272,7 +293,13 @@ type RowsClipboardLogic = {
 export function copyRowsToClipboard(
   logic: RowsClipboardLogic,
   rowIds: string[],
-  kind: 'table' | 'list' = 'list'
+  kind: 'table' | 'list' = 'list',
+  /**
+   * A block of cells (table): only these columns, and the cells' own
+   * clipboard type in `extra` instead of the rows, so pasting into a table
+   * fills cells rather than adding rows.
+   */
+  cells?: { columnIds: string[]; extra: Record<string, string> }
 ) {
   const view = logic.view;
   const rows = rowsToClipboardRows(view, rowIds);
@@ -287,13 +314,17 @@ export function copyRowsToClipboard(
   let html: string;
   let snapshot: string;
   if (kind === 'table') {
-    text = tableRowsToMarkdown(view, rowIds);
-    html = tableRowsToHtml(view, rowIds);
+    text = tableRowsToMarkdown(view, rowIds, cells?.columnIds);
+    html = tableRowsToHtml(view, rowIds, cells?.columnIds);
     const database = (
       view.manager.dataSource as {
-        rowsSnapshot?: (rowIds: string[], viewId?: string) => unknown;
+        rowsSnapshot?: (
+          rowIds: string[],
+          viewId?: string,
+          columnIds?: string[]
+        ) => unknown;
       }
-    ).rowsSnapshot?.(rowIds, view.id);
+    ).rowsSnapshot?.(rowIds, view.id, cells?.columnIds);
     snapshot = database
       ? JSON.stringify({
           snapshot: { type: 'slice', content: [database], ...ids },
@@ -321,12 +352,16 @@ export function copyRowsToClipboard(
       ...items,
       'text/plain': text,
       'text/html': html,
-      [BLOCKSUITE_DATABASE_ROWS]: JSON.stringify(rows),
+      ...(cells
+        ? cells.extra
+        : { [BLOCKSUITE_DATABASE_ROWS]: JSON.stringify(rows) }),
       [BLOCKSUITE_SNAPSHOT]: snapshot,
     }))
     .then(() => {
+      const count = cells ? rows.length * cells.columnIds.length : rows.length;
+      const what = cells ? 'cell' : 'row';
       notification.toast(
-        `${rows.length} row${rows.length > 1 ? 's' : ''} copied to clipboard`
+        `${count} ${what}${count > 1 ? 's' : ''} copied to clipboard`
       );
     })
     .catch(console.error);
