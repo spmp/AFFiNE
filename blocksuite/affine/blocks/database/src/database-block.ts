@@ -711,6 +711,11 @@ export class DatabaseBlockComponent extends CaptionedBlockComponent<DatabaseBloc
         },
         selection$: this.viewSelection$,
         setSelection: this.setSelection,
+        selectBlock: () => {
+          this.selection.setGroup('note', [
+            new BlockSelection({ blockId: this.blockId }),
+          ]);
+        },
         dataSource: this.dataSource.value,
         headerWidget: this.headerWidget,
         onDrag: this.onDrag,

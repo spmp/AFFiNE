@@ -44,6 +44,12 @@ export type DataViewRendererConfig = {
   dataSource: DataSource;
   selection$: ReadonlySignal<DataViewSelection | undefined>;
   setSelection: (selection: DataViewSelection | undefined) => void;
+  /**
+   * Select the block hosting this data view as a whole (block selection),
+   * leaving the view. Escape on selected rows does this, so that Enter can
+   * then add a paragraph after the block.
+   */
+  selectBlock?: () => void;
   eventTrace: EventTraceFn<DatabaseAllEvents>;
   detailPanelConfig: {
     openDetailPanel: (
