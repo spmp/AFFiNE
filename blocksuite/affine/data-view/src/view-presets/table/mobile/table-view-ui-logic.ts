@@ -20,6 +20,8 @@ import {
   DataViewUIBase,
   DataViewUILogicBase,
 } from '../../../core/view/data-view-base.js';
+import { installMobileRowSelect } from '../../shared/mobile-row-select.js';
+import { copyRowsToClipboard } from '../../shared/rows-clipboard.js';
 import { LEFT_TOOL_BAR_WIDTH } from '../consts.js';
 import type { TableViewSelectionWithType } from '../selection';
 import type { TableSingleView } from '../table-view-manager.js';
@@ -38,7 +40,12 @@ export class MobileTableViewUILogic extends DataViewUILogicBase<
     return this.view.readonly$.value;
   }
 
-  clearSelection = () => {};
+  /** Rows selected by long-press (mobile row selection, F-11). */
+  selectedRowIds$ = signal<string[]>([]);
+
+  clearSelection = () => {
+    this.selectedRowIds$.value = [];
+  };
 
   addRow = (position: InsertToPosition) => {
     if (this.readonly) return;
@@ -103,6 +110,24 @@ export class MobileTableViewUI extends DataViewUIBase<MobileTableViewUILogic> {
     super.connectedCallback();
     this.logic.ui$.value = this;
     this.classList.add(mobileTableViewWrapper);
+    this.disposables.add(
+      installMobileRowSelect({
+        host: this,
+        rowOf: target =>
+          target instanceof Element
+            ? (target.closest<HTMLElement>('mobile-table-row')?.dataset.rowId ??
+              undefined)
+            : undefined,
+        rowIds: () => this.logic.view.rowIds$.value,
+        selected: () => this.logic.selectedRowIds$.value,
+        setSelected: rowIds => {
+          this.logic.selectedRowIds$.value = rowIds;
+        },
+        copy: rowIds => copyRowsToClipboard(this.logic, rowIds, 'table'),
+        copyText: rowIds =>
+          copyRowsToClipboard(this.logic, rowIds, 'table', undefined, true),
+      })
+    );
   }
 
   private renderTable() {

@@ -1,6 +1,7 @@
 import type { DataViewSelection } from '@blocksuite/data-view';
 import {
   KanbanViewSelectionWithTypeSchema,
+  ListViewSelectionWithTypeSchema,
   TableViewSelectionWithTypeSchema,
 } from '@blocksuite/data-view/view-presets';
 import { BaseSelection, SelectionExtension } from '@blocksuite/store';
@@ -9,6 +10,7 @@ import { z } from 'zod';
 const ViewSelectionSchema = z.union([
   TableViewSelectionWithTypeSchema,
   KanbanViewSelectionWithTypeSchema,
+  ListViewSelectionWithTypeSchema,
 ]);
 
 const DatabaseSelectionSchema = z.object({

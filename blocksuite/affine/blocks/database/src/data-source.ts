@@ -42,7 +42,12 @@ import { propertyPresets } from '@blocksuite/data-view/property-presets';
 import { IS_MOBILE } from '@blocksuite/global/env';
 import { BlockSuiteError, ErrorCode } from '@blocksuite/global/exceptions';
 import type { BlockStdScope, EditorHost } from '@blocksuite/std';
-import { type BlockModel, nanoid, Text } from '@blocksuite/store';
+import {
+  type BlockModel,
+  type BlockSnapshot,
+  nanoid,
+  Text,
+} from '@blocksuite/store';
 import { computed, type ReadonlySignal, signal } from '@preact/signals-core';
 import { format } from 'date-fns/format';
 import { isValid } from 'date-fns/isValid';
@@ -2853,6 +2858,92 @@ export class DatabaseBlockDataSource extends DataSourceBase {
    * `recomputeHierarchyMetadataAfterMove` bookkeeping directly, without
    * ever attempting a block move.
    */
+  /** Sets a row's indent level, updating its parent and ancestors. */
+  setRowHierarchyLevel(rowId: string, level: number) {
+    this.setPendingHierarchyLevel(rowId, level);
+    this.applyPendingHierarchyLevel(rowId);
+  }
+
+  /**
+   * F-11: this database as a block snapshot holding only `rowIds` (in that
+   * order) and only the view `viewId`, without its filter, so pasting it
+   * gives a database of just the copied rows. Undefined if it can't be made.
+   */
+  rowsSnapshot(
+    rowIds: string[],
+    viewId?: string,
+    /** Only these columns (`'title'` for the row titles); all if unset. */
+    columnIds?: string[],
+    /**
+     * The copying view's data, used when `viewId` is not one of this
+     * database's own views (a view of a database-view-ref, such as the
+     * Journal Todo's): without it the pasted database had no view and
+     * showed nothing.
+     */
+    viewData?: unknown
+  ): BlockSnapshot | undefined {
+    const snapshot = this._model.store
+      .getTransformer()
+      .blockToSnapshot(this._model);
+    if (!snapshot) return;
+    const order = new Map(rowIds.map((id, i) => [id, i]));
+    snapshot.children = snapshot.children
+      .filter(child => order.has(child.id))
+      .sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+    const props = snapshot.props as {
+      cells?: Record<string, unknown>;
+      views?: { id: string; filter?: { conditions?: unknown[] } }[];
+    };
+    if (props.cells) {
+      props.cells = Object.fromEntries(
+        Object.entries(props.cells).filter(([id]) => order.has(id))
+      );
+    }
+    if (columnIds) {
+      const keep = new Set(columnIds);
+      const all = props as {
+        columns?: { id: string; name: string }[];
+        cells?: Record<string, Record<string, unknown>>;
+      };
+      // the hidden task columns stay, so indent levels and status survive
+      const hidden = new Set([
+        TASK_HIERARCHY_LEVEL_COLUMN_NAME,
+        TASK_PARENT_IDENTIFIER_COLUMN_NAME,
+        TASK_ANCESTOR_IDENTIFIERS_COLUMN_NAME,
+      ]);
+      const kept = (all.columns ?? []).filter(
+        column => keep.has(column.id) || hidden.has(column.name)
+      );
+      const keptIds = new Set(kept.map(column => column.id));
+      all.columns = kept;
+      for (const cells of Object.values(all.cells ?? {})) {
+        for (const id of Object.keys(cells)) {
+          if (!keptIds.has(id)) delete cells[id];
+        }
+      }
+      if (!keep.has('title')) {
+        for (const child of snapshot.children) {
+          const text = (child.props as { text?: { delta?: unknown[] } }).text;
+          if (text?.delta) text.delta = [];
+        }
+      }
+    }
+    if (viewId && props.views) {
+      const views = props.views.filter(view => view.id === viewId);
+      if (views.length) {
+        props.views = views;
+      } else if (viewData && typeof viewData === 'object') {
+        props.views = [
+          JSON.parse(JSON.stringify(viewData)) as (typeof props.views)[number],
+        ];
+      }
+      for (const view of props.views) {
+        if (view.filter?.conditions) view.filter.conditions = [];
+      }
+    }
+    return snapshot;
+  }
+
   applyPendingHierarchyLevel(rowId: string): void {
     const model = this.doc.getModelById(rowId);
     if (!model) return;

@@ -295,6 +295,7 @@ export class AffineToolbarWidget extends WidgetComponent {
       const dbViewSel = dbSel?.viewSelection;
       if (
         dbViewSel &&
+        'selectionType' in dbViewSel &&
         ((dbViewSel.selectionType === 'area' && dbViewSel.isEditing) ||
           (dbViewSel.selectionType === 'cell' && dbViewSel.isEditing))
       ) {
